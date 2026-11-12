@@ -1,0 +1,93 @@
+{
+  "measuredAt": "2026-11-12T22:07:36.894Z",
+  "machine": {
+    "cpu": "AMD Ryzen 5 7535HS with Radeon Graphics        ",
+    "cores": 12,
+    "ramGB": 16.4,
+    "node": "v24.15.0"
+  },
+  "dataset": {
+    "orders": 924,
+    "journals": 1629,
+    "movements": 3892,
+    "receipts": 580,
+    "allocations": 580,
+    "customers": 30,
+    "products": 38,
+    "audit": 40,
+    "serializedMB": 3.35
+  },
+  "ms": {
+    "seedFullBusiness": {
+      "n": 5,
+      "min": 324.4,
+      "p50": 364.887,
+      "p95": 468.988,
+      "max": 468.988
+    },
+    "postOnePosSale": {
+      "n": 100,
+      "min": 15.646,
+      "p50": 19.368,
+      "p95": 26.359,
+      "max": 28.1
+    },
+    "postOnePosSale_autoFreezeOff_forComparison": {
+      "n": 20,
+      "min": 157.164,
+      "p50": 183.647,
+      "p95": 215.281,
+      "max": 215.281
+    },
+    "integrityChecks": {
+      "n": 10,
+      "min": 35.37,
+      "p50": 39.86,
+      "p95": 46.971,
+      "max": 46.971
+    },
+    "reconciliationMatrix": {
+      "n": 10,
+      "min": 18.914,
+      "p50": 21.877,
+      "p95": 28.085,
+      "max": 28.085
+    },
+    "trialBalance": {
+      "n": 10,
+      "min": 1.411,
+      "p50": 1.635,
+      "p95": 3.283,
+      "max": 3.283
+    },
+    "profitEngine": {
+      "n": 10,
+      "min": 1.763,
+      "p50": 2.214,
+      "p95": 7.569,
+      "max": 7.569
+    },
+    "vatReport90d": {
+      "n": 10,
+      "min": 0.712,
+      "p50": 1.157,
+      "p95": 2.292,
+      "max": 2.292
+    },
+    "cashFlow90d": {
+      "n": 10,
+      "min": 2.744,
+      "p50": 3.498,
+      "p95": 5.337,
+      "max": 5.337
+    },
+    "serializeForPersist": {
+      "n": 10,
+      "min": 28.581,
+      "p50": 30.716,
+      "p95": 38.549,
+      "max": 38.549
+    }
+  },
+  "note": "In-memory engine on a developer laptop; no network, no database, no concurrency. Not evidence of production capacity."
+}

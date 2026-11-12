@@ -1,5 +1,5 @@
 import type { Bom, BomComponent, BomVersion, DB, ID, ModifierOption, Product, ProductionOrder } from './types';
-import { Ctx, audit, docNo, fail, nid, product } from './core';
+import { Ctx, audit, docNo, fail, nid, product, guard } from './core';
 import { cr, dr, invAccount, post, whDim } from './accounting';
 import { avgCost, globalAvgCost, moveStock } from './inventory';
 import { addDays, dayKey, r2, r3 } from '../lib/util';
@@ -33,6 +33,7 @@ export function createBom(
   d: DB, ctx: Ctx,
   p: { productId: ID; name: string; type: Bom['type']; yieldQty: number; components: BomComponent[]; laborCost: number; overheadCost: number; notes?: string },
 ): ID {
+  guard(d, ctx, 'production:edit');
   if (d.boms.some((b) => b.productId === p.productId)) fail('DUPLICATE', 'This product already has a BOM — create a new version instead');
   const id = nid(d, 'BM');
   d.boms.push({
@@ -43,6 +44,7 @@ export function createBom(
   return id;
 }
 export function newDraftVersion(d: DB, ctx: Ctx, bomId: ID): number {
+  guard(d, ctx, 'production:edit');
   const b = d.boms.find((x) => x.id === bomId) || fail('NOT_FOUND', 'BOM not found');
   if (b.versions.some((v) => v.status === 'draft')) fail('INVALID', 'A draft version already exists');
   const latest = [...b.versions].sort((a, c) => c.version - a.version)[0];
@@ -51,12 +53,14 @@ export function newDraftVersion(d: DB, ctx: Ctx, bomId: ID): number {
   return n;
 }
 export function updateDraft(d: DB, ctx: Ctx, bomId: ID, version: number, patch: Partial<Pick<BomVersion, 'yieldQty' | 'components' | 'laborCost' | 'overheadCost' | 'notes'>>) {
+  guard(d, ctx, 'production:edit');
   const b = d.boms.find((x) => x.id === bomId) || fail('NOT_FOUND', 'BOM not found');
   const v = b.versions.find((x) => x.version === version) || fail('NOT_FOUND', 'Version not found');
   if (v.status !== 'draft') fail('IMMUTABLE', `v${version} is ${v.status} and cannot be edited. Create a new version instead — historical costs must not change.`);
   Object.assign(v, patch);
 }
 export function activateVersion(d: DB, ctx: Ctx, bomId: ID, version: number, effectiveFrom: string) {
+  guard(d, ctx, 'production:approve');
   const b = d.boms.find((x) => x.id === bomId) || fail('NOT_FOUND', 'BOM not found');
   const v = b.versions.find((x) => x.version === version) || fail('NOT_FOUND', 'Version not found');
   if (v.status !== 'draft') fail('INVALID', 'Only draft versions can be activated');
@@ -107,6 +111,7 @@ export function estimateRecipeCost(d: DB, prod: Product, iso: string, warehouseI
 
 // ---------- production orders
 export function createProductionOrder(d: DB, ctx: Ctx, p: { bomId: ID; plannedQty: number; warehouseId: ID; note?: string }): ID {
+  guard(d, ctx, 'production:create');
   const b = d.boms.find((x) => x.id === p.bomId) || fail('NOT_FOUND', 'BOM not found');
   if (!(p.plannedQty > 0)) fail('INVALID', 'Planned quantity must be positive');
   const v = versionAt(b, ctx.now) || fail('NO_BOM', 'BOM has no active version');
@@ -120,6 +125,7 @@ export function createProductionOrder(d: DB, ctx: Ctx, p: { bomId: ID; plannedQt
 }
 
 export function recordProduction(d: DB, ctx: Ctx, id: ID, p: { outputQty: number; wasteQty?: number; note?: string }) {
+  guard(d, ctx, 'production:create');
   const po = d.productionOrders.find((x) => x.id === id) || fail('NOT_FOUND', 'Production order not found');
   if (po.status === 'completed' || po.status === 'cancelled') fail('INVALID', `Order is ${po.status}`);
   const waste = p.wasteQty ?? 0;
@@ -154,12 +160,14 @@ export function recordProduction(d: DB, ctx: Ctx, id: ID, p: { outputQty: number
   if (totalOut >= po.plannedQty - 1e-6) { po.status = 'completed'; po.completedAt = ctx.now; }
 }
 export function completeProduction(d: DB, ctx: Ctx, id: ID) {
+  guard(d, ctx, 'production:create');
   const po = d.productionOrders.find((x) => x.id === id) || fail('NOT_FOUND', 'Production order not found');
   if (!po.batches.length) fail('INVALID', 'Nothing has been produced yet');
   po.status = 'completed';
   po.completedAt = ctx.now;
 }
 export function cancelProduction(d: DB, ctx: Ctx, id: ID) {
+  guard(d, ctx, 'production:approve');
   const po = d.productionOrders.find((x) => x.id === id) || fail('NOT_FOUND', 'Production order not found');
   if (po.batches.length) fail('INVALID', 'Cannot cancel after production was recorded — close it instead');
   po.status = 'cancelled';

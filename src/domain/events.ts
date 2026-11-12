@@ -1,5 +1,5 @@
 import type { DB, EventDoc, EventSelection, ID } from './types';
-import { Ctx, audit, fail, nid } from './core';
+import { Ctx, audit, fail, nid, guard } from './core';
 import { addDays } from '../lib/util';
 
 const ekey = (eventId: ID, boardId: ID, n: number) => `${eventId}:${boardId}:${n}`;
@@ -10,6 +10,7 @@ export const pad2 = (n: number) => String(n).padStart(2, '0');
 export function createEvent(
   d: DB, ctx: Ctx, p: { name: string; description: string; boards: number; min: number; max: number; reservationMinutes: number; terms: string },
 ): ID {
+  guard(d, ctx, 'events:create');
   if (p.max <= p.min) fail('INVALID', 'Number range is invalid');
   if (p.boards < 1 || p.boards > 8) fail('INVALID', 'Boards must be between 1 and 8');
   const id = nid(d, 'EV');
@@ -25,6 +26,7 @@ function action(d: DB, ctx: Ctx, eventId: ID, a: 'release' | 'reset_board' | 're
 }
 
 export function setEventStatus(d: DB, ctx: Ctx, id: ID, status: EventDoc['status']) {
+  guard(d, ctx, 'events:edit');
   const e = d.events.find((x) => x.id === id) || fail('NOT_FOUND', 'Event not found');
   if (e.status === 'closed') fail('INVALID', 'A closed event cannot be changed');
   const map = { active: e.status === 'paused' ? 'resume' : 'activate', paused: 'pause', closed: 'close', draft: 'pause' } as const;
@@ -34,6 +36,7 @@ export function setEventStatus(d: DB, ctx: Ctx, id: ID, status: EventDoc['status
 }
 
 export function grantEntitlements(d: DB, ctx: Ctx, p: { eventId: ID; customerId: ID; orderId?: ID; promoId?: ID; count: number }) {
+  guard(d, ctx, 'events:edit');
   for (let i = 0; i < p.count; i++) d.entitlements.push({ id: nid(d, 'EN'), eventId: p.eventId, customerId: p.customerId, orderId: p.orderId, promoId: p.promoId, ts: ctx.now, status: 'available' });
 }
 
@@ -121,6 +124,7 @@ export function releaseSelection(d: DB, ctx: Ctx, selId: ID, reason: string) {
 }
 
 export function resetBoard(d: DB, ctx: Ctx, eventId: ID, boardId: ID, reason: string) {
+  guard(d, ctx, 'events:reset');
   if (!reason.trim()) fail('REASON', 'A reason is required');
   const ev = d.events.find((x) => x.id === eventId) || fail('NOT_FOUND', 'Event not found');
   const resetId = nid(d, 'RS');
@@ -131,6 +135,7 @@ export function resetBoard(d: DB, ctx: Ctx, eventId: ID, boardId: ID, reason: st
   return n;
 }
 export function resetEvent(d: DB, ctx: Ctx, eventId: ID, reason: string) {
+  guard(d, ctx, 'events:reset');
   if (!reason.trim()) fail('REASON', 'A reason is required');
   const ev = d.events.find((x) => x.id === eventId) || fail('NOT_FOUND', 'Event not found');
   const resetId = nid(d, 'RS');
@@ -143,6 +148,7 @@ export function resetEvent(d: DB, ctx: Ctx, eventId: ID, reason: string) {
 }
 
 export function recordWinner(d: DB, ctx: Ctx, p: { eventId: ID; boardId: ID; number: number; prize: string }) {
+  guard(d, ctx, 'events:edit');
   const ev = d.events.find((x) => x.id === p.eventId) || fail('NOT_FOUND', 'Event not found');
   if (!p.prize.trim()) fail('INVALID', 'Enter the prize');
   const selId = d.eventIndex[ekey(p.eventId, p.boardId, p.number)];

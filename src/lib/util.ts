@@ -127,13 +127,5 @@ export function download(filename: string, content: string | Blob, mime = 'text/
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-export function debounce<A extends unknown[]>(fn: (...a: A) => void, ms: number) {
-  let t: ReturnType<typeof setTimeout> | undefined;
-  return (...a: A) => {
-    if (t) clearTimeout(t);
-    t = setTimeout(() => fn(...a), ms);
-  };
-}
-
 export const cx = (...a: (string | false | null | undefined)[]) => a.filter(Boolean).join(' ');
 export const titleCase = (s: string) => s.replace(/[_-]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());

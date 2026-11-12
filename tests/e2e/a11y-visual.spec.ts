@@ -22,6 +22,7 @@ for (const theme of ['light', 'dark'] as const) {
 test('axe: customer app (LIFF) has no critical or serious violations', async ({ page }) => {
   await openApp(page, '/app');
   await page.locator('.phone-body .menu-item').nth(3).click();
+  await page.waitForTimeout(300);
   const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
   const bad = r.violations.filter((x) => x.impact === 'critical' || x.impact === 'serious').map((v) => `${v.id}: ${v.nodes[0].target.join(' ')}`);
   expect(bad, bad.join('\n')).toEqual([]);
@@ -60,3 +61,33 @@ for (const [name, route] of SHOTS) {
     });
   }
 }
+
+// The in-app release-gate view must state the honest verdict, be accessible, and not overflow on a phone.
+test('quality & release gates tab: honest verdict, axe-clean, no horizontal overflow on a phone', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openApp(page, '/blueprint');
+  await page.getByRole('tab', { name: 'Quality & release gates' }).click();
+  await expect(page.getByText('Not production-ready.')).toBeVisible();
+  await expect(page.getByText('Gate E — Business ready')).toBeVisible();
+  await expect(page.locator('.card', { hasText: 'Gate F — Production ready' }).getByText('not met')).toBeVisible();
+  await page.waitForTimeout(400);
+  const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+  const bad = r.violations.filter((x) => x.impact === 'critical' || x.impact === 'serious').map((v) => `${v.id}: ${v.nodes[0].target.join(' ')}`);
+  expect(bad, bad.join('\n')).toEqual([]);
+  const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(over).toBeLessThanOrEqual(1);
+});
+
+// Mobile layout hides labels (e.g. the user name), so accessibility must be checked at phone width too, not only on desktop.
+test('axe: no critical or serious WCAG violations on key screens at phone width (375 px)', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openApp(page, '/');
+  const report: string[] = [];
+  for (const p of PAGES) {
+    await go(page, p);
+    await page.waitForTimeout(500);
+    const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+    for (const v of r.violations.filter((x) => x.impact === 'critical' || x.impact === 'serious')) report.push(`${p} [${v.impact}] ${v.id}: ${v.help} (${v.nodes.length} nodes) e.g. ${v.nodes[0].target.join(' ')}`);
+  }
+  expect(report, report.join('\n')).toEqual([]);
+});

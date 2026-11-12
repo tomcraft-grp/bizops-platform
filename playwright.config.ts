@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test';
 
-// E2E runs against the PRODUCTION build served locally. It drives the system Microsoft Edge (no browser download needed).
+// E2E runs against the PRODUCTION build served locally. It drives the system Google Chrome (PW_CHANNEL=chrome; set PW_CHANNEL=msedge to use Edge). Edge headless failed to launch on the development machine.
 // The clock is pinned per test (see tests/e2e/helpers.ts) so the seeded business, dates and screenshots are reproducible.
 export default defineConfig({
   testDir: 'tests/e2e',
@@ -25,5 +25,5 @@ export default defineConfig({
     reuseExistingServer: true,
     timeout: 180_000,
   },
-  projects: [{ name: 'edge-desktop' }],
+  projects: [{ name: 'chrome-desktop' }],
 });

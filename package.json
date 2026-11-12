@@ -8,7 +8,13 @@
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "preview": "vite preview --host"
+    "preview": "vite preview --host",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:seed": "tsx scripts/seedtest.ts && tsx scripts/scenarios.ts",
+    "perf": "tsx scripts/perf.ts",
+    "qa:evidence": "tsx scripts/qa-evidence.ts",
+    "docs:accounting": "tsx scripts/gen-accounting-docs.ts"
   },
   "dependencies": {
     "immer": "10.1.1",

@@ -1,0 +1,1781 @@
+{
+  "config": {
+    "configFile": "C:\\Users\\ASUS\\bizops-platform\\playwright.config.ts",
+    "rootDir": "C:/Users/ASUS/bizops-platform/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": true,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 3
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "qa/results/e2e.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 15000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "C:/Users/ASUS/bizops-platform/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {},
+        "id": "chrome-desktop",
+        "name": "chrome-desktop",
+        "testDir": "C:/Users/ASUS/bizops-platform/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "version": "1.49.1",
+    "workers": 3,
+    "webServer": {
+      "command": "npm run build && npx vite preview --port 4173 --strictPort",
+      "url": "http://localhost:4173",
+      "reuseExistingServer": true,
+      "timeout": 180000
+    }
+  },
+  "suites": [
+    {
+      "title": "a11y-visual.spec.ts",
+      "file": "a11y-visual.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "axe: no critical or serious WCAG violations on key screens (light)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "status": "passed",
+                  "duration": 28741,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:05.788Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-1bd76beea0a8d592712c",
+          "file": "a11y-visual.spec.ts",
+          "line": 8,
+          "column": 3
+        },
+        {
+          "title": "axe: no critical or serious WCAG violations on key screens (dark)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 28145,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:05.795Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-9a799a4691b33b0769b7",
+          "file": "a11y-visual.spec.ts",
+          "line": 8,
+          "column": 3
+        },
+        {
+          "title": "axe: customer app (LIFF) has no critical or serious violations",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 3074,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:05.815Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-e027a4c5e7f88d8489c0",
+          "file": "a11y-visual.spec.ts",
+          "line": 22,
+          "column": 1
+        },
+        {
+          "title": "forms have visible labels and interactive controls have accessible names",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 4757,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:09.445Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-2241ddc442a04bc96b61",
+          "file": "a11y-visual.spec.ts",
+          "line": 31,
+          "column": 1
+        },
+        {
+          "title": "visual: dashboard @ desktop",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 2391,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:14.210Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-7e5a0866d268523852cc",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: dashboard @ mobile",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 2268,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:16.609Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-cffe335e55777b124365",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: pos @ desktop",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 3320,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:18.886Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-cc83d87f4598bfddffa3",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: pos @ mobile",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 2617,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:22.218Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-b7c38774f0ea551d45e0",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: orders @ desktop",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 2611,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:24.845Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-1296c56f97dbf0b7880c",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: orders @ mobile",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 2010,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:27.464Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-b53b64b463bf9d09875e",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: receivables @ desktop",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 2171,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:29.482Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-c8d4e381a261691bb473",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: receivables @ mobile",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 1943,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:31.661Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-fe42f3063c7e4ba321c2",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: events @ desktop",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 2271,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:33.611Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-6ca0d0378af786d5808d",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: events @ mobile",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 2063,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:34.334Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-94c623a0a0d037843416",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: accounting-setup @ desktop",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "status": "passed",
+                  "duration": 2172,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:34.946Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-5854f9522570585ec419",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: accounting-setup @ mobile",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 2026,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:35.889Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-e7c8c4ce64981591f51c",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: profit @ desktop",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 2113,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:36.406Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-c213e42a65be43e16145",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "visual: profit @ mobile",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "status": "passed",
+                  "duration": 1974,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:37.128Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-10cadf7ca480d09f8337",
+          "file": "a11y-visual.spec.ts",
+          "line": 56,
+          "column": 5
+        },
+        {
+          "title": "quality & release gates tab: honest verdict, axe-clean, no horizontal overflow on a phone",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 2953,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:37.922Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-f06cc040ccde5e79c906",
+          "file": "a11y-visual.spec.ts",
+          "line": 66,
+          "column": 1
+        },
+        {
+          "title": "axe: no critical or serious WCAG violations on key screens at phone width (375 px)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 23941,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:38.529Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "2a60d6bf81cbbfc6faef-114cab2451e2392fde37",
+          "file": "a11y-visual.spec.ts",
+          "line": 82,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "journeys.spec.ts",
+      "file": "journeys.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "critical journeys (QA addendum §3.4)",
+          "file": "journeys.spec.ts",
+          "line": 7,
+          "column": 6,
+          "specs": [
+            {
+              "title": "J6 POS sale: options, combo promotion, payment, receipt, orders list, persistence after refresh",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "status": "passed",
+                      "duration": 3253,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:39.133Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-a85a95acbbd7040d543d",
+              "file": "journeys.spec.ts",
+              "line": 8,
+              "column": 3
+            },
+            {
+              "title": "J7 double-clicking Complete sale creates exactly one order (idempotent checkout)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "status": "passed",
+                      "duration": 2283,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:40.911Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-93e769087b49e6db04f2",
+              "file": "journeys.spec.ts",
+              "line": 31,
+              "column": 3
+            },
+            {
+              "title": "J3 staff: a cashier sees only permitted modules, direct URLs are blocked, and cost is hidden",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "status": "passed",
+                      "duration": 2625,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:42.395Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-27b29ccfd54574080c42",
+              "file": "journeys.spec.ts",
+              "line": 43,
+              "column": 3
+            },
+            {
+              "title": "J8 one payment of ฿3,000 is allocated FIFO across open invoices and leaves the right balance",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "status": "passed",
+                      "duration": 1367,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:43.202Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-244a5d9f95c3ebdc8add",
+              "file": "journeys.spec.ts",
+              "line": 59,
+              "column": 3
+            },
+            {
+              "title": "J9 a payment slip is reviewed: approval creates a receipt, rejection needs a reason",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "status": "passed",
+                      "duration": 1566,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:44.575Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-8df03dc3becb2a7d3d26",
+              "file": "journeys.spec.ts",
+              "line": 75,
+              "column": 3
+            },
+            {
+              "title": "J7b marketplace sync: orders arrive, duplicates are ignored (idempotency), unmapped SKUs are parked",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "status": "passed",
+                      "duration": 1348,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:45.028Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-ff8cc0d1dac02735c6ab",
+              "file": "journeys.spec.ts",
+              "line": 92,
+              "column": 3
+            },
+            {
+              "title": "J13 event numbers: a taken number cannot be selected by another customer",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "status": "passed",
+                      "duration": 1773,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:46.150Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-cb7d4631c34f2785a849",
+              "file": "journeys.spec.ts",
+              "line": 101,
+              "column": 3
+            },
+            {
+              "title": "J10 points: redeeming a reward deducts points once and issues a code",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "status": "passed",
+                      "duration": 1343,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:46.384Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-913d24df8c736e6ab4a4",
+              "file": "journeys.spec.ts",
+              "line": 123,
+              "column": 3
+            },
+            {
+              "title": "J12 accounting: four-eyes approval of manual journals and mapping changes",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "status": "passed",
+                      "duration": 5247,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:47.736Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-ebdcf83ccbb630ed97a4",
+              "file": "journeys.spec.ts",
+              "line": 134,
+              "column": 3
+            },
+            {
+              "title": "J15 reports reconcile: every integrity and control-account check passes",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "status": "passed",
+                      "duration": 1437,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:47.931Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-0a27dbad45826c82c00e",
+              "file": "journeys.spec.ts",
+              "line": 159,
+              "column": 3
+            },
+            {
+              "title": "J16 printing: a sale queues receipt and tickets; the agent prints online printers; the offline bar printer fails",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "status": "passed",
+                      "duration": 3426,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:49.375Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-08e654334d49e83df140",
+              "file": "journeys.spec.ts",
+              "line": 171,
+              "column": 3
+            },
+            {
+              "title": "J18 backup and recovery: export, wipe, restore and verify the data is back",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "status": "passed",
+                      "duration": 4172,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:52.809Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-8c5b7947d52bd6290915",
+              "file": "journeys.spec.ts",
+              "line": 183,
+              "column": 3
+            },
+            {
+              "title": "J17 media upload: valid image accepted, disguised / infected / duplicate files rejected",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "status": "passed",
+                      "duration": 1696,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:53.004Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-5d73d95b8f39f3041e9b",
+              "file": "journeys.spec.ts",
+              "line": 206,
+              "column": 3
+            },
+            {
+              "title": "J14 customer app: a customer only sees their own balance, orders and slips (UI level)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "status": "passed",
+                      "duration": 1149,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:54.709Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-c1e1aa665dfad213362e",
+              "file": "journeys.spec.ts",
+              "line": 220,
+              "column": 3
+            },
+            {
+              "title": "keyboard and navigation: Ctrl+K search, Esc closes dialogs, browser back closes an order drawer",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "status": "passed",
+                      "duration": 1557,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:55.866Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-2aa0f72097ac063db73b",
+              "file": "journeys.spec.ts",
+              "line": 229,
+              "column": 3
+            },
+            {
+              "title": "accounting setup: checklist shows the honest state; COA protects used accounts; locked period rejects postings",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chrome-desktop",
+                  "projectName": "chrome-desktop",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "status": "passed",
+                      "duration": 2605,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-12T22:08:56.987Z",
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "aa09586c1d16412a1f00-ca10c8feaa18d304359f",
+              "file": "journeys.spec.ts",
+              "line": 245,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "perf.spec.ts",
+      "file": "perf.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "browser performance: cold start, warm reload, route changes, checkout, bundle size",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 180000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "status": "passed",
+                  "duration": 10352,
+                  "errors": [],
+                  "stdout": [
+                    {
+                      "text": "PERF {\"measuredAt\":\"2026-11-12T22:08:57.673Z\",\"browser\":\"Chrome (headless, Playwright)\",\"build\":\"vite preview of the production build\",\"coldStartMs\":901,\"warmReloadMs\":{\"runs\":[243,202,189],\"median\":202},\"lastNavigationTiming\":null,\"routeChangeMedianMs\":{\"/orders\":43,\"/receivables\":23,\"/inventory\":27,\"/accounting\":46,\"/accounting/setup\":36,\"/profit\":31,\"/reports\":34,\"/events\":24},\"completeSaleClickToConfirmationMs\":{\"runs\":[189,93,92],\"median\":93},\"bundle\":{\"file\":\"dist/index.html\",\"rawKB\":856.3,\"gzipKB\":254.5}}\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:57.444Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "73ed389be8d3d6a89cdb-78642ae4112930c1fe6e",
+          "file": "perf.spec.ts",
+          "line": 12,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "responsive.spec.ts",
+      "file": "responsive.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "no horizontal page overflow on every screen @ small-mobile-320",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 14525,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:08:59.608Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-2d1aed448c30d1347dba",
+          "file": "responsive.spec.ts",
+          "line": 13,
+          "column": 3
+        },
+        {
+          "title": "no horizontal page overflow on every screen @ small-mobile-360",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 14558,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:02.489Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-0aebac9c7c02afae9535",
+          "file": "responsive.spec.ts",
+          "line": 13,
+          "column": 3
+        },
+        {
+          "title": "no horizontal page overflow on every screen @ mobile-375",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "status": "passed",
+                  "duration": 14359,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:07.808Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-fae1af39ffd57cde21f5",
+          "file": "responsive.spec.ts",
+          "line": 13,
+          "column": 3
+        },
+        {
+          "title": "no horizontal page overflow on every screen @ mobile-430",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 14434,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:14.139Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-e305e973fa2418bd2206",
+          "file": "responsive.spec.ts",
+          "line": 13,
+          "column": 3
+        },
+        {
+          "title": "no horizontal page overflow on every screen @ large-mobile-600",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 14425,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:17.054Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-c8bc6febdcfe7fb49c48",
+          "file": "responsive.spec.ts",
+          "line": 13,
+          "column": 3
+        },
+        {
+          "title": "no horizontal page overflow on every screen @ tablet-768",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "status": "passed",
+                  "duration": 14290,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:22.174Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-22b92683d5329b8ac8d1",
+          "file": "responsive.spec.ts",
+          "line": 13,
+          "column": 3
+        },
+        {
+          "title": "no horizontal page overflow on every screen @ tablet-1024",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 14362,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:28.580Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-0c2c46d2eba00f75f0c5",
+          "file": "responsive.spec.ts",
+          "line": 13,
+          "column": 3
+        },
+        {
+          "title": "no horizontal page overflow on every screen @ laptop-1280",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 14319,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:31.487Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-47917de43d9edabeb69a",
+          "file": "responsive.spec.ts",
+          "line": 13,
+          "column": 3
+        },
+        {
+          "title": "no horizontal page overflow on every screen @ laptop-1440",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "status": "passed",
+                  "duration": 14388,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:36.470Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-f44e5ca470c55efa0985",
+          "file": "responsive.spec.ts",
+          "line": 13,
+          "column": 3
+        },
+        {
+          "title": "no horizontal page overflow on every screen @ desktop-1920",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "status": "passed",
+                  "duration": 14441,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:42.949Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-5ce3629e7f82101cfc83",
+          "file": "responsive.spec.ts",
+          "line": 13,
+          "column": 3
+        },
+        {
+          "title": "dialogs and drawers stay on-screen and scrollable @ small-mobile-320",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 1774,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:45.813Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-2fc55c18193d0a78ffc8",
+          "file": "responsive.spec.ts",
+          "line": 40,
+          "column": 3
+        },
+        {
+          "title": "dialogs and drawers stay on-screen and scrollable @ mobile-375",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 1771,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:47.594Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-7817152c819f63e70d8f",
+          "file": "responsive.spec.ts",
+          "line": 40,
+          "column": 3
+        },
+        {
+          "title": "dialogs and drawers stay on-screen and scrollable @ tablet-768",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 1720,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:49.371Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-fe1b2bf195382e97ea10",
+          "file": "responsive.spec.ts",
+          "line": 40,
+          "column": 3
+        },
+        {
+          "title": "touch targets on mobile are at least 24×24 CSS px on the primary screens (WCAG 2.2 target size)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "status": "passed",
+                  "duration": 3770,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:50.865Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-41dd1478c8aad723c3a1",
+          "file": "responsive.spec.ts",
+          "line": 62,
+          "column": 1
+        },
+        {
+          "title": "long names, large numbers, zero and negative values do not break layout",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chrome-desktop",
+              "projectName": "chrome-desktop",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "status": "passed",
+                  "duration": 1229,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-12T22:09:51.100Z",
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "e0223b006feb3d306446-4dac4191948511e1876c",
+          "file": "responsive.spec.ts",
+          "line": 85,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-12T22:08:04.016Z",
+    "duration": 113660.31899999999,
+    "expected": 52,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

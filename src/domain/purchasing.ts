@@ -1,5 +1,5 @@
 import type { DB, GRNLine, ID, PayMethod, PurchaseOrder, SupplierInvoice } from './types';
-import { Ctx, audit, docNo, fail, nid, product } from './core';
+import { Ctx, audit, docNo, fail, nid, product, guard } from './core';
 import { cashAccount, cr, dr, invAccount, post, purchaseVatRate } from './accounting';
 import { moveStock } from './inventory';
 import { addDays, r2, r3 } from '../lib/util';
@@ -10,6 +10,7 @@ export const poTotal = (po: PurchaseOrder) => r2(po.lines.reduce((s, l) => s + l
 export function createPO(
   d: DB, ctx: Ctx, p: { supplierId: ID; warehouseId: ID; lines: { productId: ID; qty: number; unitCost: number }[]; expectedAt?: string; note?: string; send?: boolean },
 ): ID {
+  guard(d, ctx, 'purchasing:create');
   const lines = p.lines.filter((l) => l.qty > 0);
   if (!lines.length) fail('INVALID', 'Add at least one line');
   if (!d.suppliers.some((s) => s.id === p.supplierId)) fail('NOT_FOUND', 'Supplier not found');
@@ -26,11 +27,13 @@ export function sendPO(d: DB, id: ID) {
   po.status = 'sent';
 }
 export function cancelPO(d: DB, ctx: Ctx, id: ID) {
+  guard(d, ctx, 'purchasing:edit');
   const po = d.purchaseOrders.find((x) => x.id === id) || fail('NOT_FOUND', 'PO not found');
   if (po.lines.some((l) => l.receivedQty > 0)) fail('INVALID', 'Goods were already received — close the PO instead');
   po.status = 'cancelled';
 }
 export function closePO(d: DB, ctx: Ctx, id: ID) {
+  guard(d, ctx, 'purchasing:edit');
   const po = d.purchaseOrders.find((x) => x.id === id) || fail('NOT_FOUND', 'PO not found');
   po.status = 'closed';
 }
@@ -39,6 +42,7 @@ export function receiveGoods(
   d: DB, ctx: Ctx,
   p: { poId: ID; lines: { productId: ID; qty: number; lot?: string; expiry?: string }[]; freight?: number; handling?: number; invoiceNo?: string; date?: string },
 ): ID {
+  guard(d, ctx, 'purchasing:edit');
   const po = d.purchaseOrders.find((x) => x.id === p.poId) || fail('NOT_FOUND', 'PO not found');
   if (['received', 'closed', 'cancelled'].includes(po.status)) fail('INVALID', `PO is ${po.status}`);
   const sup = d.suppliers.find((s) => s.id === po.supplierId)!;
@@ -96,6 +100,7 @@ export function paySupplier(
   d: DB, ctx: Ctx,
   p: { supplierId: ID; amount: number; method: PayMethod | 'deposit'; allocations?: { invoiceId: ID; amount: number }[] | 'fifo'; note?: string },
 ): ID {
+  guard(d, ctx, 'purchasing:approve');
   if (!(p.amount > 0)) fail('INVALID', 'Amount must be greater than zero');
   const open = d.apInvoices.filter((i) => i.supplierId === p.supplierId && apOpen(i) > 0.004).sort((a, b) => a.date.localeCompare(b.date));
   let allocs: { invoiceId: ID; amount: number }[] = [];
@@ -138,6 +143,7 @@ export function paySupplier(
 export function returnToSupplier(
   d: DB, ctx: Ctx, p: { supplierId: ID; warehouseId: ID; lines: { productId: ID; qty: number }[]; invoiceId?: ID; reason: string },
 ): ID {
+  guard(d, ctx, 'purchasing:approve');
   const sup = d.suppliers.find((s) => s.id === p.supplierId) || fail('NOT_FOUND', 'Supplier not found');
   const id = nid(d, 'SR');
   const rl = [];

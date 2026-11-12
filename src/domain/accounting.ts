@@ -1,5 +1,5 @@
 import type { Account, DB, FsLine, ID, Journal, JournalDim, JournalLine, MappingEntry, PayMethod, ProductKind, TaxCode, Expense } from './types';
-import { Ctx, audit, docNo, fail, nid } from './core';
+import { Ctx, audit, docNo, fail, nid, guard } from './core';
 import { dayKey, r2 } from '../lib/util';
 
 // ======================================================================================
@@ -229,11 +229,13 @@ export function postManualJournal(d: DB, ctx: Ctx, p: { date: string; memo: stri
 }
 
 export function closePeriod(d: DB, ctx: Ctx, throughDay: string) {
+  guard(d, ctx, 'accounting:close');
   if (d.meta.lockedUntil && throughDay < d.meta.lockedUntil) fail('INVALID', 'Use reopen to move the lock backwards');
   d.meta.lockedUntil = throughDay;
   audit(d, ctx, 'period.close', 'period', throughDay, `Accounting period locked through ${throughDay}`, 'critical');
 }
 export function reopenPeriod(d: DB, ctx: Ctx, throughDay: string | null, reason: string) {
+  guard(d, ctx, 'accounting:close');
   if (!reason.trim()) fail('REASON', 'A reason is required to reopen a period');
   d.meta.lockedUntil = throughDay;
   audit(d, ctx, 'period.reopen', 'period', throughDay ?? 'none', `Lock moved to ${throughDay ?? 'none'}: ${reason}`, 'critical');
@@ -243,6 +245,7 @@ export function addExpense(
   d: DB, ctx: Ctx,
   p: { date: string; account: string; vendor: string; amount: number; vat?: number; paidFrom: 'cash' | 'bank'; branchId?: ID; note?: string; mediaId?: ID },
 ): ID {
+  guard(d, ctx, 'accounting:create');
   if (!(p.amount > 0)) fail('INVALID', 'Amount must be greater than zero');
   const acct = findAcct(d, p.account);
   if (!acct || acct.type !== 'expense') fail('BAD_ACCOUNT', 'Choose an expense account');

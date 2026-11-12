@@ -38,7 +38,7 @@ export default function CustomerApp() {
           <div className="phone-top"><b>{db.org.name.split(' ')[0]} ☕</b><span style={{ fontSize: 12, opacity: 0.9 }}>LINE</span></div>
           {!me ? <Login onPick={login} /> : (
             <>
-              <div className="phone-body">
+              <div className="phone-body" role="region" aria-label="Customer app content" tabIndex={0}>
                 {tab === 'home' && <HomeTab id={me.id} go={setTab} />}
                 {tab === 'shop' && <ShopTab id={me.id} go={setTab} />}
                 {tab === 'rewards' && <RewardsTab id={me.id} />}
@@ -60,7 +60,7 @@ export default function CustomerApp() {
 function Login({ onPick }: { onPick: (id: ID) => void }) {
   const db = useDB();
   return (
-    <div className="phone-body">
+    <div className="phone-body" role="region" aria-label="Customer app content" tabIndex={0}>
       <div className="center" style={{ padding: '20px 0 6px' }}><div style={{ fontSize: 40 }}>☕</div><h2>Welcome</h2><div className="muted">Sign in with LINE (simulated)</div></div>
       <div className="col gap-4" style={{ overflow: 'auto' }}>
         {db.customers.filter((c) => c.group !== 'staff').slice(0, 30).map((c) => (

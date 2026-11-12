@@ -110,7 +110,7 @@ export function Shell() {
           <Popover width={340} trigger={(_o, t) => <Button variant="ghost" icon onClick={t} aria-label="Notifications" style={{ position: 'relative' }}><Bell size={18} />{alerts.total > 0 && <span style={{ position: 'absolute', top: 3, right: 3, width: 8, height: 8, borderRadius: 4, background: 'var(--crit)' }} />}</Button>}>
             {(close) => <Notifications close={close} />}
           </Popover>
-          <Popover width={300} trigger={(_o, t) => <button className="user-chip" onClick={t}><Avatar name={user.name} color={user.color} /><span className="nm" style={{ fontWeight: 600, fontSize: 13 }}>{user.name.split(' ')[0]}</span></button>}>
+          <Popover width={300} trigger={(_o, t) => <button className="user-chip" onClick={t} aria-label={`Switch user — signed in as ${user.name}`}><Avatar name={user.name} color={user.color} /><span className="nm" style={{ fontWeight: 600, fontSize: 13 }}>{user.name.split(' ')[0]}</span></button>}>
             {(close) => <UserMenu close={close} />}
           </Popover>
         </header>

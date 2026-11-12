@@ -1,0 +1,38 @@
+{
+  "measuredAt": "2026-11-12T22:10:04.407Z",
+  "browser": "Chrome (headless, Playwright)",
+  "build": "vite preview of the production build",
+  "coldStartMs": 892,
+  "warmReloadMs": {
+    "runs": [
+      172,
+      174,
+      183
+    ],
+    "median": 174
+  },
+  "lastNavigationTiming": null,
+  "routeChangeMedianMs": {
+    "/orders": 30,
+    "/receivables": 28,
+    "/inventory": 28,
+    "/accounting": 32,
+    "/accounting/setup": 38,
+    "/profit": 27,
+    "/reports": 30,
+    "/events": 23
+  },
+  "completeSaleClickToConfirmationMs": {
+    "runs": [
+      190,
+      91,
+      84
+    ],
+    "median": 91
+  },
+  "bundle": {
+    "file": "dist/index.html",
+    "rawKB": 856.3,
+    "gzipKB": 254.5
+  }
+}

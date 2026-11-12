@@ -93,6 +93,15 @@ export function currentUser(d: DB): User {
 export function can(d: DB, perm: string): boolean {
   return hasPerm(userPerms(d, currentUser(d)), perm);
 }
+/**
+ * Engine-level authorization: the SERVER-SIDE rule that must hold no matter which screen (or script) calls the function.
+ * The acting user comes from ctx (not from the UI); seeding mode is the only bypass.
+ */
+export function guard(d: DB, ctx: Ctx, perm: string) {
+  if (ctx.seed) return;
+  const u = d.users.find((x) => x.id === ctx.userId);
+  if (!u || !hasPerm(userPerms(d, u), perm)) fail('FORBIDDEN', `Your role does not have permission: ${perm}`);
+}
 export function requirePerm(d: DB, perm: string) {
   if (!can(d, perm)) fail('FORBIDDEN', `Your role does not have permission: ${perm}`);
 }

@@ -1,5 +1,5 @@
 import type { Customer, DB, ID, Org, Product, ProductKind, Supplier } from './types';
-import { Ctx, audit, fail, nid } from './core';
+import { Ctx, audit, fail, nid, guard } from './core';
 import { versionAt, bomForProduct } from './bom';
 import { onHand } from './inventory';
 import { r3 } from '../lib/util';
@@ -24,6 +24,7 @@ export function updateCustomer(d: DB, ctx: Ctx, id: ID, patch: Partial<Customer>
 }
 
 export function saveProduct(d: DB, ctx: Ctx, p: Partial<Product> & { name: string; sku: string; kind: ProductKind }): ID {
+  guard(d, ctx, 'catalog:edit');
   if (!p.name.trim() || !p.sku.trim()) fail('INVALID', 'Name and SKU are required');
   const dup = d.products.find((x) => x.sku.toLowerCase() === p.sku.toLowerCase() && x.id !== p.id);
   if (dup) fail('DUPLICATE', `SKU ${p.sku} is already used by ${dup.name}`);
@@ -44,6 +45,7 @@ export function saveProduct(d: DB, ctx: Ctx, p: Partial<Product> & { name: strin
 }
 
 export function saveSupplier(d: DB, ctx: Ctx, p: Partial<Supplier> & { name: string }): ID {
+  guard(d, ctx, 'purchasing:edit');
   if (!p.name.trim()) fail('INVALID', 'Supplier name is required');
   if (p.id) { Object.assign(d.suppliers.find((s) => s.id === p.id) || fail('NOT_FOUND', 'Supplier not found'), p); return p.id; }
   const id = 'S' + (d.suppliers.length + 1);
@@ -52,6 +54,7 @@ export function saveSupplier(d: DB, ctx: Ctx, p: Partial<Supplier> & { name: str
 }
 
 export function updateOrg(d: DB, ctx: Ctx, patch: Partial<Org>) {
+  guard(d, ctx, 'settings:edit');
   const before = JSON.stringify(d.org);
   Object.assign(d.org, patch);
   if (JSON.stringify(d.org) !== before) audit(d, ctx, 'settings.org', 'settings', undefined, `Organization settings changed: ${Object.keys(patch).join(', ')}`, 'warn');

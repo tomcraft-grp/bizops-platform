@@ -5,7 +5,7 @@ import { runIntegrityChecks } from '../src/domain/integrity';
 import type { Ctx } from '../src/domain/core';
 import type { DB, ID } from '../src/domain/types';
 
-setAutoFreeze(false);
+setAutoFreeze(true); // same as the app: state is frozen outside transactions
 
 /** A fixed "now": reproducible seed, reproducible dates (TZ is pinned in globalSetup) */
 export const NOW = new Date('2026-11-13T10:30:00+07:00');

@@ -249,7 +249,7 @@ export function DataTable<T>({ rows, cols, rowKey, onRow, pageSize = 12, search,
   return (
     <div>
       {(search || toolbar) && <div className="row wrap" style={{ padding: '12px 14px' }}>{search && <div style={{ width: 260, maxWidth: '100%' }}><SearchBox value={q} onChange={setQ} /></div>}<div className="grow" />{toolbar}</div>}
-      <div className={cx('table-wrap', max && 'max')}>
+      <div className={cx('table-wrap', max && 'max')} role="region" aria-label="Scrollable table" tabIndex={0}>
         <table className={cx('t', compact && 'compact')}>
           <thead><tr>{cols.map((c) => (
             <th key={c.key} className={cx(c.num && 'num', c.right && 'r', c.hideSm && 'hide-sm')} style={{ width: c.width, cursor: c.sort ? 'pointer' : undefined }}

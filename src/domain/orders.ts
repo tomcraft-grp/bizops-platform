@@ -1,5 +1,5 @@
 import type { DB, ID, ModifierOption, Order, OrderLine, OrderStatus, OrderType, ChannelCode, PayMethod, ReturnDoc, Product } from './types';
-import { Ctx, audit, docNo, fail, nid, product, order as getOrder } from './core';
+import { Ctx, audit, docNo, fail, nid, product, order as getOrder, guard } from './core';
 import { cr, dr, invAccount, post, saleTax } from './accounting';
 import { moveStock, onHand, reservedMap, bkey } from './inventory';
 import { consumeRecipe } from './bom';
@@ -257,6 +257,7 @@ export function advanceOrder(d: DB, ctx: Ctx, id: ID, note?: string, shipping?: 
 }
 
 export function cancelOrder(d: DB, ctx: Ctx, id: ID, reason: string) {
+  guard(d, ctx, 'orders:cancel');
   const o = getOrder(d, id);
   if (!reason.trim()) fail('REASON', 'A cancellation reason is required');
   if (o.recognizedAt) fail('USE_RETURN', 'This order has already shipped/been served — process a return instead');
@@ -281,6 +282,7 @@ export function returnOrder(
   d: DB, ctx: Ctx,
   p: { orderId: ID; lines: { lineId: ID; qty: number; restock: boolean }[]; reason: string; refund: 'none' | 'cash' | 'transfer' | 'credit' | 'platform' },
 ): ID {
+  guard(d, ctx, 'orders:cancel');
   const o = getOrder(d, p.orderId);
   if (!o.recognizedAt) fail('INVALID', 'Order has not shipped yet — cancel it instead');
   if (!p.reason.trim()) fail('REASON', 'A return reason is required');
@@ -340,6 +342,7 @@ export function returnOrder(
 
 // ---------- KDS
 export function setKds(d: DB, ctx: Ctx, orderId: ID, lineId: ID, status: 'new' | 'preparing' | 'ready' | 'done') {
+  guard(d, ctx, 'kds:edit');
   const o = getOrder(d, orderId);
   const l = o.lines.find((x) => x.id === lineId) || fail('NOT_FOUND', 'Line not found');
   if (!l!.kds) fail('INVALID', 'Line is not a prepared item');
@@ -352,6 +355,7 @@ export function setKds(d: DB, ctx: Ctx, orderId: ID, lineId: ID, status: 'new' |
   }
 }
 export function kdsAllDone(d: DB, ctx: Ctx, orderId: ID) {
+  guard(d, ctx, 'kds:edit');
   const o = getOrder(d, orderId);
   for (const l of o.lines) if (l.kds) setKds(d, ctx, orderId, l.id, 'done');
 }

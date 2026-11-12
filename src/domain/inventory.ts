@@ -1,5 +1,5 @@
 import type { Balance, DB, ID, Movement, MoveType, Transfer, StockCount } from './types';
-import { Ctx, audit, docNo, fail, nid, product } from './core';
+import { Ctx, audit, docNo, fail, nid, product, guard } from './core';
 import { cr, dr, invAccount, post, whDim } from './accounting';
 import { r2, r3 } from '../lib/util';
 
@@ -185,6 +185,7 @@ export function receiveTransfer(d: DB, ctx: Ctx, id: ID, recv: { productId: ID; 
 }
 
 export function closeTransferShort(d: DB, ctx: Ctx, id: ID, reason: string) {
+  guard(d, ctx, 'inventory:approve');
   const t = d.transfers.find((x) => x.id === id) || fail('NOT_FOUND', 'Transfer not found');
   if (t.status === 'received' || t.status === 'closed_short') fail('INVALID', 'Transfer is already complete');
   if (!reason.trim()) fail('REASON', 'A reason is required to close short');
@@ -221,6 +222,7 @@ export function inTransitValue(d: DB): number {
 
 // ---------- stock counts
 export function startCount(d: DB, ctx: Ctx, warehouseId: ID, note?: string): ID {
+  guard(d, ctx, 'inventory:edit');
   const id = nid(d, 'SC');
   const lines = d.products
     .filter((p) => p.kind !== 'menu' && (getBal(d, warehouseId, p.id).qty !== 0 || p.levels[warehouseId]))
@@ -229,6 +231,7 @@ export function startCount(d: DB, ctx: Ctx, warehouseId: ID, note?: string): ID 
   return id;
 }
 export function postCount(d: DB, ctx: Ctx, id: ID, counted: Record<ID, number | null>) {
+  guard(d, ctx, 'inventory:approve');
   const c: StockCount = d.counts.find((x) => x.id === id) || fail('NOT_FOUND', 'Count not found');
   if (c.status === 'posted') fail('INVALID', 'Count already posted');
   let adj = 0;

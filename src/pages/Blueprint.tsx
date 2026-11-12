@@ -2,11 +2,14 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CheckCircle2, CircleDashed, FlaskConical, Hammer } from 'lucide-react';
 import { Badge, Banner, Card, PageHead, Seg, Tabs } from '../ui/kit';
+import { QualityGates } from './QualityGates';
 
 type Status = 'built' | 'partial' | 'simulated' | 'planned';
 interface Row { area: string; ref: string; status: Status; built: string; gap?: string; to?: string }
 
 const ROWS: Row[] = [
+  { area: 'Accounting setup, chart of accounts & mapping', ref: '§23', status: 'partial', to: '/accounting/setup', built: 'Seven-stage setup checklist, hierarchical COA with Thai names, role-based versioned posting map, effective-dated tax codes, opening balances with source + four-eyes, control-account reconciliation matrix, period lock/reopen, manual-journal approvals, reports that reconcile to each other.', gap: 'Not reviewed by a Thai accountant. No WHT, e-Tax/PP.30 formats, fixed assets, WIP stage, platform-funded discount split, loyalty liability.' },
+  { area: 'QA, testing & release governance', ref: 'QA addendum §1–§22', status: 'partial', to: '/blueprint', built: 'Vitest unit/integration/authorization suites, Playwright E2E journeys, 10-viewport responsive matrix, axe accessibility, visual baselines, performance measurements, defect log, release gates (see the Quality & release gates tab).', gap: 'Chrome only; no UAT, real devices/printers, load test, security review or CI; Gates E and F not met.' },
   { area: 'Organization, identity & security', ref: '§5.1, §3', status: 'partial', to: '/team', built: 'Branches, warehouses, employees, RBAC with module × action matrix, branch scope, financial-sensitivity permissions (cost / profit), audit log, role switcher for demos.', gap: 'Real authentication, sessions & device management, LINE Login/LIFF, secrets management, tenant isolation via database constraints (this prototype is single-tenant and client-side).' },
   { area: 'Customer & CRM', ref: '§5.2', status: 'built', to: '/customers', built: 'Profiles, groups, spend-based tiers, purchase history, statements, aging, credit terms & limits, PDPA consent timestamps, customer credit ledger.' },
   { area: 'Product catalog', ref: '§5.3', status: 'partial', to: '/products', built: 'Products, SKUs, barcodes, categories, units, channel-specific prices, status, image gallery with thumbnails, marketplace mappings, bundles (via promotions), cost references and history.', gap: 'Variant matrix and unit-of-measure conversions (each SKU has one unit).' },
@@ -84,14 +87,14 @@ const ICON: Record<Status, JSX.Element> = { built: <CheckCircle2 size={14} />, p
 const TONE: Record<Status, 'good' | 'warn' | 'info' | ''> = { built: 'good', partial: 'warn', simulated: 'info', planned: '' };
 
 export default function Blueprint() {
-  const [tab, setTab] = useState<'tour' | 'coverage' | 'review' | 'decisions' | 'arch'>('tour');
+  const [tab, setTab] = useState<'tour' | 'coverage' | 'review' | 'decisions' | 'arch' | 'quality'>('tour');
   const [f, setF] = useState<Status | 'all'>('all');
   const rows = useMemo(() => ROWS.filter((r) => f === 'all' || r.status === f), [f]);
   const counts = (s: Status) => ROWS.filter((r) => r.status === s).length;
   return (
     <>
       <PageHead title="Blueprint & scope" desc="What this prototype covers against the requirements document, what was improved, and what still needs decisions or real integrations. Honest status, not marketing." />
-      <Tabs value={tab} onChange={setTab} tabs={[{ v: 'tour', label: 'Try these workflows' }, { v: 'coverage', label: 'Requirements coverage' }, { v: 'review', label: 'Improvements & plan gaps' }, { v: 'decisions', label: 'Decisions & scope' }, { v: 'arch', label: 'Architecture' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ v: 'tour', label: 'Try these workflows' }, { v: 'coverage', label: 'Requirements coverage' }, { v: 'review', label: 'Improvements & plan gaps' }, { v: 'decisions', label: 'Decisions & scope' }, { v: 'arch', label: 'Architecture' }, { v: 'quality', label: 'Quality & release gates' }]} />
       {tab === 'tour' && (
         <div className="grid g2">
           {TOUR.map((x, i) => (
@@ -131,6 +134,7 @@ export default function Blueprint() {
           </div>
         </div>
       )}
+      {tab === 'quality' && <QualityGates />}
       {tab === 'arch' && (
         <div className="grid g2">
           <Card title="What this prototype is"><div className="col gap-6"><div>A TypeScript React single-page app with a <b>transactional in-browser domain engine</b>: every business action runs as one atomic transaction (all-or-nothing), appends to immutable ledgers, and posts balanced journals. Data persists in IndexedDB. The production build is one self-contained HTML file.</div><div className="muted">It proves the workflows, rules and invariants — it is not a multi-user system and has no server.</div></div></Card>

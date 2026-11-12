@@ -1,5 +1,5 @@
 import type { Coupon, DB, ID, Order, PointEntry, RewardRedemption } from './types';
-import { Ctx, audit, docNo, fail, nid } from './core';
+import { Ctx, audit, docNo, fail, nid, guard } from './core';
 import { addDays, r2 } from '../lib/util';
 
 // ---------- customer value
@@ -83,6 +83,7 @@ export function reversePoints(d: DB, ctx: Ctx, o: Order, fraction: number, reaso
 }
 
 export function adjustPoints(d: DB, ctx: Ctx, cid: ID, pts: number, reason: string) {
+  guard(d, ctx, 'loyalty:edit');
   if (!pts || !Number.isFinite(pts)) fail('INVALID', 'Enter a non-zero number of points');
   if (!reason.trim()) fail('REASON', 'A reason is required for manual adjustments');
   if (!d.customers.some((c) => c.id === cid)) fail('NOT_FOUND', 'Customer not found');
@@ -138,11 +139,13 @@ export function redeemReward(d: DB, ctx: Ctx, p: { customerId: ID; rewardId: ID;
   return id;
 }
 export function fulfillRedemption(d: DB, ctx: Ctx, id: ID) {
+  guard(d, ctx, 'loyalty:edit');
   const r = d.rewardRedemptions.find((x) => x.id === id) || fail('NOT_FOUND', 'Redemption not found');
   if (r.status !== 'issued') fail('INVALID', `Already ${r.status}`);
   r.status = 'fulfilled';
 }
 export function cancelRedemption(d: DB, ctx: Ctx, id: ID, reason: string) {
+  guard(d, ctx, 'loyalty:edit');
   const r = d.rewardRedemptions.find((x) => x.id === id) || fail('NOT_FOUND', 'Redemption not found');
   if (r.status !== 'issued') fail('INVALID', `Cannot cancel a ${r.status} redemption`);
   if (r.couponId) {

@@ -1,0 +1,153 @@
+{
+  "generatedAt": "2026-11-12T22:10:28.922Z",
+  "commit": "a3ab7dc+uncommitted",
+  "typecheck": "passed",
+  "totals": {
+    "total": 269,
+    "passed": 269,
+    "failed": 0,
+    "skipped": 0
+  },
+  "byKind": {
+    "unit": {
+      "total": 217,
+      "passed": 217,
+      "failed": 0,
+      "skipped": 0
+    },
+    "e2e": {
+      "total": 17,
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0
+    },
+    "responsive": {
+      "total": 15,
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0
+    },
+    "a11y": {
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    "visual": {
+      "total": 14,
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0
+    },
+    "perf": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "files": [
+    {
+      "file": "accounting.test.ts",
+      "total": 43,
+      "passed": 43,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "authz.test.ts",
+      "total": 74,
+      "passed": 74,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "engine.test.ts",
+      "total": 57,
+      "passed": 57,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "platform.test.ts",
+      "total": 43,
+      "passed": 43,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "a11y-visual.spec.ts",
+      "total": 20,
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "journeys.spec.ts",
+      "total": 16,
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "perf.spec.ts",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "responsive.spec.ts",
+      "total": 15,
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "perf": {
+    "engine": {
+      "dataset": {
+        "orders": 924,
+        "journals": 1629,
+        "movements": 3892,
+        "receipts": 580,
+        "allocations": 580,
+        "customers": 30,
+        "products": 38,
+        "audit": 40,
+        "serializedMB": 3.35
+      },
+      "saleP50": 19.368,
+      "saleP95": 26.359,
+      "saleFreezeOffP50": 183.647,
+      "seedP50": 364.887,
+      "integrityP50": 39.86,
+      "machine": {
+        "cpu": "AMD Ryzen 5 7535HS with Radeon Graphics        ",
+        "cores": 12,
+        "ramGB": 16.4,
+        "node": "v24.15.0"
+      }
+    },
+    "browser": {
+      "coldStartMs": 892,
+      "warmReloadMedianMs": 174,
+      "routeChangeMedianMs": {
+        "/orders": 30,
+        "/receivables": 28,
+        "/inventory": 28,
+        "/accounting": 32,
+        "/accounting/setup": 38,
+        "/profit": 27,
+        "/reports": 30,
+        "/events": 23
+      },
+      "saleClickToConfirmMedianMs": 91,
+      "bundle": {
+        "file": "dist/index.html",
+        "rawKB": 856.3,
+        "gzipKB": 254.5
+      }
+    }
+  }
+}

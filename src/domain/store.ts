@@ -4,9 +4,11 @@ import type { DB } from './types';
 import { Ctx, AppError, currentUser, hasPerm, userPerms } from './core';
 import { buildSeed } from './seed';
 import { kvDel, kvGet, kvSet } from '../lib/idb';
-import { debounce } from '../lib/util';
 
-setAutoFreeze(false);
+// Structural sharing needs frozen state: with auto-freeze OFF immer re-walks the whole (multi-MB) ledger on every transaction.
+// Measured (qa/PERFORMANCE_TEST_REPORT.md): posting one POS sale ≈195 ms with freeze OFF vs ≈20 ms with freeze ON on the seeded dataset.
+// Consequence: state is read-only outside act() — any accidental in-place mutation now throws instead of silently corrupting the ledger.
+setAutoFreeze(true);
 const KEY = 'db';
 const VERSION = 5;
 
@@ -27,7 +29,11 @@ export const useStore = create<Store>(() => ({
   ui: { theme: savedTheme, branchScope: 'all', sidebarOpen: false, collapsed: savedCollapsed, searchOpen: false, toasts: [] },
 }));
 
-const persist = debounce((db: DB) => { void kvSet(KEY, db); }, 600);
+// Persist immediately, not debounced: a debounced write was found (E2E) to lose the last action
+// if the tab is refreshed right after it, before the timer fired. act() calls are discrete user
+// actions (button clicks, form submits), not per-keystroke, so writing on every one is cheap enough
+// (serialize ≈35ms on the seeded dataset — qa/PERFORMANCE_TEST_REPORT.md).
+const persist = (db: DB) => { void kvSet(KEY, db); };
 
 export async function boot() {
   let db: DB | undefined;

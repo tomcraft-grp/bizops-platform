@@ -1,5 +1,5 @@
 import type { ChannelCode, DB, ID, Order, PayMethod, Receipt, Settlement, SlipRequest } from './types';
-import { Ctx, audit, docNo, fail, nid } from './core';
+import { Ctx, audit, docNo, fail, nid, guard } from './core';
 import { cashAccount, cr, dr, post, reverseJournal } from './accounting';
 import { r2 } from '../lib/util';
 
@@ -50,6 +50,7 @@ export function createReceipt(
   d: DB, ctx: Ctx,
   p: { customerId?: ID; amount: number; method: PayMethod; reference?: string; slipId?: ID; allocations?: { orderId: ID; amount: number }[] | 'fifo'; note?: string },
 ): ID {
+  guard(d, ctx, 'receivables:create');
   if (!(p.amount > 0)) fail('INVALID', 'Payment amount must be greater than zero');
   const alloc = allocatedMap(d);
   let allocs: { orderId: ID; amount: number }[] = [];
@@ -85,6 +86,7 @@ export function createReceipt(
 
 /** Use existing unapplied credit (overpayments / refunds-to-credit) against an order */
 export function applyCredit(d: DB, ctx: Ctx, p: { customerId: ID; orderId: ID; amount: number }) {
+  guard(d, ctx, 'receivables:create');
   const o = d.orders.find((x) => x.id === p.orderId) || fail('NOT_FOUND', 'Order not found');
   const alloc = allocatedMap(d);
   const bal = orderBalance(o!, alloc[o!.id] || 0);
@@ -105,6 +107,7 @@ export function applyCredit(d: DB, ctx: Ctx, p: { customerId: ID; orderId: ID; a
 }
 
 export function voidReceipt(d: DB, ctx: Ctx, id: ID, reason: string) {
+  guard(d, ctx, 'receivables:cancel');
   if (!reason.trim()) fail('REASON', 'A reason is required to void a receipt');
   const r = d.receipts.find((x) => x.id === id) || fail('NOT_FOUND', 'Receipt not found');
   if (r.status === 'void') fail('ALREADY', 'Receipt is already void');
@@ -119,6 +122,7 @@ export function voidReceipt(d: DB, ctx: Ctx, id: ID, reason: string) {
 
 /** Move an order's overpayment onto the customer's credit balance */
 export function refundToCredit(d: DB, ctx: Ctx, orderId: ID, amount: number) {
+  guard(d, ctx, 'receivables:approve');
   const o = d.orders.find((x) => x.id === orderId) || fail('NOT_FOUND', 'Order not found');
   if (!o!.customerId) fail('NEEDS_CUSTOMER', 'Credit requires a customer');
   const bal = orderBalance(o!, allocatedMap(d)[orderId] || 0);
@@ -134,6 +138,7 @@ export function refundToCredit(d: DB, ctx: Ctx, orderId: ID, amount: number) {
   post(d, ctx, { memo: `Overpayment on ${o!.no} moved to customer credit`, refType: 'refund_credit', refId: orderId, lines: [dr('ar', amount), cr('customer_credit', amount)] });
 }
 export function refundCash(d: DB, ctx: Ctx, orderId: ID, amount: number, method: 'cash' | 'transfer') {
+  guard(d, ctx, 'receivables:approve');
   const o = d.orders.find((x) => x.id === orderId) || fail('NOT_FOUND', 'Order not found');
   const bal = orderBalance(o!, allocatedMap(d)[orderId] || 0);
   if (amount > -bal + 0.004) fail('INVALID', 'Amount exceeds the refundable overpayment');
@@ -160,6 +165,7 @@ export function submitSlip(
   return id;
 }
 export function approveSlip(d: DB, ctx: Ctx, id: ID, p?: { allocations?: { orderId: ID; amount: number }[] | 'fifo'; amount?: number }): ID {
+  guard(d, ctx, 'receivables:approve');
   const s = d.slips.find((x) => x.id === id) || fail('NOT_FOUND', 'Slip not found');
   if (s.status !== 'pending') fail('INVALID', `Slip is already ${s.status}`);
   const amount = p?.amount ?? s.amount;
@@ -187,6 +193,7 @@ export function approveSlip(d: DB, ctx: Ctx, id: ID, p?: { allocations?: { order
   return rid;
 }
 export function rejectSlip(d: DB, ctx: Ctx, id: ID, reason: string) {
+  guard(d, ctx, 'receivables:approve');
   if (!reason.trim()) fail('REASON', 'A rejection reason is required');
   const s = d.slips.find((x) => x.id === id) || fail('NOT_FOUND', 'Slip not found');
   if (s.status !== 'pending') fail('INVALID', `Slip is already ${s.status}`);
@@ -204,6 +211,7 @@ export const settleable = (d: DB, channel: ChannelCode) =>
 export function createSettlement(
   d: DB, ctx: Ctx, p: { channel: ChannelCode; orderIds: ID[]; actual?: { commission: number; paymentFee: number; shippingSubsidy: number } },
 ): ID {
+  guard(d, ctx, 'receivables:approve');
   const orders = p.orderIds.map((id) => d.orders.find((o) => o.id === id)).filter(Boolean) as Order[];
   if (!orders.length) fail('INVALID', 'Select at least one order');
   if (orders.some((o) => o.settlementId || o.channel !== p.channel)) fail('INVALID', 'An order is already settled or belongs to another channel');
@@ -226,6 +234,7 @@ export function createSettlement(
   return id;
 }
 export function receiveSettlement(d: DB, ctx: Ctx, id: ID, receivedAmount?: number) {
+  guard(d, ctx, 'receivables:approve');
   const st = d.settlements.find((x) => x.id === id) || fail('NOT_FOUND', 'Settlement not found');
   if (st.status === 'received') fail('ALREADY', 'Settlement already received');
   const received = r2(receivedAmount ?? st.net);

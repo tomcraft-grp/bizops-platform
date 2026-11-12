@@ -79,7 +79,7 @@ function Roles() {
       <Card flush><div className="col gap-4" style={{ padding: 8 }}>{db.roles.map((r) => <button key={r.id} className={cx('menu-item', r.id === rid && 'on')} onClick={() => setRid(r.id)}><div><div style={{ fontWeight: 600 }}>{r.name}</div><div className="muted" style={{ fontSize: 11.5 }}>{db.users.filter((u) => u.roleId === r.id).length} employee(s)</div></div></button>)}</div></Card>
       <Card title={role.name} sub={role.description}>
         {all && <Banner tone="info"><Lock size={14} style={{ verticalAlign: -2 }} /> Owner has every permission and cannot be restricted.</Banner>}
-        <div className="table-wrap mt8"><table className="t compact"><thead><tr><th>Module</th>{actions.map((a) => <th key={a} className="center">{a}</th>)}</tr></thead>
+        <div className="table-wrap mt8" role="region" aria-label="Scrollable table" tabIndex={0}><table className="t compact"><thead><tr><th>Module</th>{actions.map((a) => <th key={a} className="center">{a}</th>)}</tr></thead>
           <tbody>{MODULES.map((m) => <tr key={m.key}><td><b>{m.label}</b></td>{actions.map((a) => <td key={a} className="center">{m.actions.includes(a) ? <input type="checkbox" aria-label={`${m.label} ${a}`} checked={hasPerm(role.permissions, `${m.key}:${a}`)} disabled={all || !canEdit} onChange={() => toggle(m.key, a, m.actions)} /> : ''}</td>)}</tr>)}</tbody></table></div>
         <div className="muted mt8" style={{ fontSize: 12.5 }}>“finance: cost / profit” controls financial sensitivity — without them product cost, margins and profit are hidden everywhere. Changes apply immediately and are written to the audit log.</div>
       </Card>

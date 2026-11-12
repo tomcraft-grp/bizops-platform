@@ -1,5 +1,5 @@
 import type { Account, DB, FsLine, ID, JournalDraft, OpeningSet, TaxCode } from './types';
-import { Ctx, audit, docNo, fail, nid } from './core';
+import { Ctx, audit, docNo, fail, nid, guard } from './core';
 import {
   ROLE_DEFS, ROLE_KEYS, balancesBetween, cr, dr, findAcct, isControl, natBal, netDebit, post, postManualJournal, roleCode, roleLabel, sumAccounts, sumNetDebit,
 } from './accounting';
@@ -43,6 +43,7 @@ export function validateCoa(d: DB): CoaIssue[] {
 }
 
 export function saveAccount(d: DB, ctx: Ctx, p: Partial<Account> & { code: string; name: string }, isNew: boolean) {
+  guard(d, ctx, 'accounting:create');
   const code = p.code.trim();
   if (!/^[0-9A-Za-z\-.]{2,12}$/.test(code)) fail('INVALID', 'Account code must be 2–12 characters (letters, digits, - .)');
   if (!p.name.trim()) fail('INVALID', 'Account name is required');
@@ -78,6 +79,7 @@ export function saveAccount(d: DB, ctx: Ctx, p: Partial<Account> & { code: strin
 }
 
 export function deactivateAccount(d: DB, ctx: Ctx, code: string, reason: string) {
+  guard(d, ctx, 'accounting:create');
   const a = findAcct(d, code) || fail('NOT_FOUND', 'Account not found');
   if (!reason.trim()) fail('REASON', 'A reason is required');
   const role = ROLE_DEFS.find((r) => roleCode(d, r.key) === code);
@@ -90,6 +92,7 @@ export function deactivateAccount(d: DB, ctx: Ctx, code: string, reason: string)
   audit(d, ctx, 'coa.deactivate', 'account', code, `${code} deactivated: ${reason}`, 'warn');
 }
 export function reactivateAccount(d: DB, ctx: Ctx, code: string) {
+  guard(d, ctx, 'accounting:create');
   const a = findAcct(d, code) || fail('NOT_FOUND', 'Account not found');
   a!.active = true;
   a!.inactiveFrom = undefined;
@@ -110,6 +113,7 @@ export function coaToRows(d: DB): string[][] {
 }
 /** Atomic import: validates every row first; either all rows apply or none */
 export function importCoaRows(d: DB, ctx: Ctx, rows: string[][]) {
+  guard(d, ctx, 'accounting:create');
   if (rows.length < 2) fail('INVALID', 'The file has no data rows');
   const head = rows[0].map((h) => h.trim().toLowerCase());
   const ix = (n: string) => head.indexOf(n);
@@ -150,12 +154,14 @@ function checkRoleTarget(d: DB, role: string, toCode: string) {
 }
 
 export function setMappingDirect(d: DB, ctx: Ctx, role: string, toCode: string) {
+  guard(d, ctx, 'accounting:approve');
   if (d.setup.status === 'approved') fail('CHANGE_CONTROL', 'The accounting setup is approved. Propose the change and have a second authorized person approve it.');
   checkRoleTarget(d, role, toCode);
   d.postingMap[role] = [{ code: toCode, from: '2020-01-01T00:00:00.000Z' }];
   audit(d, ctx, 'mapping.set', 'mapping', role, `${roleLabel(role)} → ${toCode} (setup in draft)`, 'warn');
 }
 export function proposeMapping(d: DB, ctx: Ctx, p: { role: string; toCode: string; effectiveFrom: string; reason: string }): ID {
+  guard(d, ctx, 'accounting:create');
   checkRoleTarget(d, p.role, p.toCode);
   if (!p.reason.trim()) fail('REASON', 'A reason is required');
   if (d.meta.lockedUntil && dayKey(p.effectiveFrom) <= d.meta.lockedUntil) fail('PERIOD_LOCKED', `The effective date must be after the locked period (${d.meta.lockedUntil})`);
@@ -167,6 +173,7 @@ export function proposeMapping(d: DB, ctx: Ctx, p: { role: string; toCode: strin
   return id;
 }
 export function decideMapping(d: DB, ctx: Ctx, id: ID, approve: boolean, note: string) {
+  guard(d, ctx, 'accounting:approve');
   const c = d.mappingChanges.find((x) => x.id === id) || fail('NOT_FOUND', 'Change not found');
   if (c!.status !== 'pending') fail('INVALID', `Change is already ${c!.status}`);
   if (c!.proposedBy === ctx.userId) fail('SELF_APPROVAL', 'The person who proposed a mapping change cannot approve it (four-eyes control).');
@@ -187,6 +194,7 @@ export function decideMapping(d: DB, ctx: Ctx, id: ID, approve: boolean, note: s
 // Tax register
 // ======================================================================================
 export function saveTaxCode(d: DB, ctx: Ctx, p: { code: string; name: string; kind: TaxCode['kind']; rate: number; creditable: boolean; effectiveFrom: string; note?: string }) {
+  guard(d, ctx, 'accounting:create');
   if (!(p.rate >= 0 && p.rate <= 1)) fail('INVALID', 'Rate must be between 0% and 100%');
   if (!p.name.trim() || !p.code.trim()) fail('INVALID', 'Code and name are required');
   if (d.meta.lockedUntil && dayKey(p.effectiveFrom) <= d.meta.lockedUntil) fail('PERIOD_LOCKED', 'The effective date must be after the locked period');
@@ -202,6 +210,7 @@ export function saveTaxCode(d: DB, ctx: Ctx, p: { code: string; name: string; ki
 // Manual journals: draft → submitted → approved (posted). Maker ≠ checker unless approval is switched off.
 // ======================================================================================
 export function saveDraft(d: DB, ctx: Ctx, p: { id?: ID; date: string; memo: string; lines: JournalDraft['lines'] }): ID {
+  guard(d, ctx, 'accounting:create');
   if (!p.memo.trim()) fail('INVALID', 'A memo is required');
   if (p.id) {
     const x = d.journalDrafts.find((y) => y.id === p.id) || fail('NOT_FOUND', 'Draft not found');
@@ -214,6 +223,7 @@ export function saveDraft(d: DB, ctx: Ctx, p: { id?: ID; date: string; memo: str
   return id;
 }
 export function submitDraft(d: DB, ctx: Ctx, id: ID) {
+  guard(d, ctx, 'accounting:create');
   const x = d.journalDrafts.find((y) => y.id === id) || fail('NOT_FOUND', 'Draft not found');
   const td = r2(x!.lines.reduce((s, l) => s + l.debit, 0)), tc = r2(x!.lines.reduce((s, l) => s + l.credit, 0));
   if (td <= 0 || Math.abs(td - tc) > 0.005) fail('UNBALANCED', `Debits (${td}) must equal credits (${tc}) before submitting`);
@@ -222,6 +232,7 @@ export function submitDraft(d: DB, ctx: Ctx, id: ID) {
   x!.submittedAt = ctx.now;
 }
 export function approveDraft(d: DB, ctx: Ctx, id: ID): ID {
+  guard(d, ctx, 'accounting:approve');
   const x = d.journalDrafts.find((y) => y.id === id) || fail('NOT_FOUND', 'Draft not found');
   if (x!.status !== 'submitted') fail('INVALID', 'Only submitted drafts can be approved');
   if (d.org.requireJournalApproval && x!.createdBy === ctx.userId) fail('SELF_APPROVAL', 'You prepared this journal; a different authorized person must approve it.');
@@ -233,6 +244,7 @@ export function approveDraft(d: DB, ctx: Ctx, id: ID): ID {
   return jid;
 }
 export function rejectDraft(d: DB, ctx: Ctx, id: ID, reason: string) {
+  guard(d, ctx, 'accounting:approve');
   const x = d.journalDrafts.find((y) => y.id === id) || fail('NOT_FOUND', 'Draft not found');
   if (x!.status !== 'submitted') fail('INVALID', 'Only submitted drafts can be rejected');
   if (!reason.trim()) fail('REASON', 'A reason is required');
@@ -251,6 +263,7 @@ export const MOVEMENT_LABEL: Record<MovementKind, string> = {
   interest_received: 'Interest received', owner_contribution: 'Owner contribution', owner_withdrawal: 'Owner withdrawal / drawings',
 };
 export function postMovement(d: DB, ctx: Ctx, p: { kind: MovementKind; amount: number; account: 'cash' | 'bank'; toAccount?: 'cash' | 'bank'; date: string; memo: string }): ID {
+  guard(d, ctx, 'accounting:create');
   if (!(p.amount > 0)) fail('INVALID', 'Amount must be greater than zero');
   const a = p.amount;
   const lines = {
@@ -272,6 +285,7 @@ export function postMovement(d: DB, ctx: Ctx, p: { kind: MovementKind; amount: n
 // ======================================================================================
 const SUBLEDGER_CONTROLS = ['ar', 'platform', 'ap', 'inventory', 'customer_credit', 'supplier_deposit'];
 export function saveOpeningSet(d: DB, ctx: Ctx, p: { id?: ID; asOf: string; source: string; lines: OpeningSet['lines']; note?: string }): ID {
+  guard(d, ctx, 'accounting:create');
   if (!p.source.trim()) fail('INVALID', 'A source document / reference is required');
   if (p.id) {
     const x = d.openingSets.find((y) => y.id === p.id) || fail('NOT_FOUND', 'Opening set not found');
@@ -297,6 +311,9 @@ export function validateOpening(d: DB, x: OpeningSet) {
   return issues;
 }
 export function reviewOpening(d: DB, ctx: Ctx, id: ID) {
+  // Review is a read-and-confirm step (it posts nothing): anyone who may see the books can be the independent checker.
+  // Posting the opening journal (approveOpening) still needs accounting:approve.
+  guard(d, ctx, 'accounting:view');
   const x = d.openingSets.find((y) => y.id === id) || fail('NOT_FOUND', 'Opening set not found');
   if (x!.status !== 'draft') fail('INVALID', `Opening set is ${x!.status}`);
   if (x!.preparedBy === ctx.userId) fail('SELF_APPROVAL', 'The preparer cannot review their own opening balances.');
@@ -306,6 +323,7 @@ export function reviewOpening(d: DB, ctx: Ctx, id: ID) {
   x!.reviewedBy = ctx.userId;
 }
 export function approveOpening(d: DB, ctx: Ctx, id: ID): ID {
+  guard(d, ctx, 'accounting:approve');
   const x = d.openingSets.find((y) => y.id === id) || fail('NOT_FOUND', 'Opening set not found');
   if (x!.status !== 'reviewed') fail('INVALID', 'Opening balances must be reviewed before approval');
   if (x!.preparedBy === ctx.userId) fail('SELF_APPROVAL', 'The preparer cannot approve their own opening balances.');
@@ -424,6 +442,7 @@ function taxCheck(d: DB): string | undefined {
   return undefined;
 }
 export function approveSetup(d: DB, ctx: Ctx, p: { note: string; accountantReviewed: boolean }) {
+  guard(d, ctx, 'accounting:approve');
   const blockers = setupChecks(d).filter((c) => c.stage !== 'approval' && c.status === 'fail');
   if (blockers.length) fail('SETUP_INCOMPLETE', `Cannot approve: ${blockers.map((b) => b.title).join('; ')}`);
   d.setup.version += d.setup.status === 'approved' ? 1 : 0;
@@ -436,12 +455,14 @@ export function approveSetup(d: DB, ctx: Ctx, p: { note: string; accountantRevie
   audit(d, ctx, 'setup.approve', 'setup', String(d.setup.version), `Accounting setup v${d.setup.version} approved. ${p.note}`, 'critical');
 }
 export function reopenSetup(d: DB, ctx: Ctx, reason: string) {
+  guard(d, ctx, 'accounting:approve');
   if (!reason.trim()) fail('REASON', 'A reason is required');
   d.setup.status = 'draft';
   d.setup.history.push({ ts: ctx.now, by: ctx.userId, action: 'reopen', detail: reason });
   audit(d, ctx, 'setup.reopen', 'setup', String(d.setup.version), `Setup reopened for editing: ${reason}`, 'critical');
 }
 export function assignStageOwner(d: DB, ctx: Ctx, stage: string, userId: ID) {
+  guard(d, ctx, 'accounting:approve');
   d.setup.stageOwners[stage] = userId;
   audit(d, ctx, 'setup.owner', 'setup', stage, `Owner of ${stage} → ${d.users.find((u) => u.id === userId)?.name}`, 'info');
 }

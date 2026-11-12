@@ -1,0 +1,29 @@
+﻿posting_role,label,default_account,current_account,current_account_name,effective_from,expected_fs_line,business_events_using_this_role
+cash,Cash on hand,1100,1100,Cash on hand,2020-01-01,cash,"Cash receipts, refunds, cash expenses"
+bank,Bank – operating,1110,1110,Bank – operating account,2020-01-01,cash,"Transfers, QR, card, settlements, supplier payments"
+platform_ar,Platform receivable,1120,1120,Platform receivables (marketplace / delivery),2020-01-01,receivables,Marketplace / delivery sales and settlements
+ar,Customer receivable,1130,1130,Accounts receivable – customers,2020-01-01,receivables,"Credit sales, customer payments, credit notes"
+supplier_deposit,Supplier deposit / advance,1140,1140,Supplier deposits / prepayments,2020-01-01,other_assets | receivables,Supplier prepayments and their use
+inv_materials,Inventory – raw & packaging,1200,1200,Inventory – raw materials & packaging,2020-01-01,inventory,"Purchases of materials, consumption"
+inv_goods,Inventory – goods & finished,1210,1210,Inventory – merchandise & finished goods,2020-01-01,inventory,"Purchases for resale, production output, sales"
+inv_transit,Inventory in transit,1250,1250,Inventory in transit,2020-01-01,inventory,Warehouse transfers
+input_vat,Input VAT,1300,1300,Input VAT,2020-01-01,tax_asset,"Purchases, expenses"
+ap,Accounts payable,2100,2100,Accounts payable – suppliers,2020-01-01,payables,"Goods receipts, supplier payments, supplier returns"
+output_vat,Output VAT,2200,2200,Output VAT,2020-01-01,tax_payable,"Sales, returns"
+customer_credit,Customer credit liability,2300,2300,Customer credit & unapplied receipts,2020-01-01,customer_liabilities,"Overpayments, refunds kept as credit, prepaid orders"
+loans,Loans payable,2400,2400,Loans payable,2020-01-01,loans,Loan received / repaid
+owner_capital,Owner's capital,3010,3010,Owner's capital,2020-01-01,equity,"Owner contributions, opening capital"
+owner_drawings,Owner drawings,3200,3200,Owner drawings,2020-01-01,equity,Owner withdrawals
+sales,Sales revenue,4010,4010,Sales revenue,2020-01-01,revenue,All sales
+sales_discount,Sales discounts (contra),4100,4100,Sales discounts,2020-01-01,contra_revenue,Business-funded discounts
+sales_returns,Sales returns (contra),4200,4200,Sales returns & credit notes,2020-01-01,contra_revenue,Returns and credit notes
+cogs,Cost of goods sold,5010,5010,Cost of goods sold,2020-01-01,cogs,Recognition of sales cost
+waste,Waste & spoilage,5100,5100,Production waste & spoilage,2020-01-01,cogs,"Production waste, wasted stock"
+inv_adjust,Inventory adjustments / shrinkage,5200,5200,Inventory adjustments & shrinkage,2020-01-01,cogs,"Counts, corrections, transfer losses"
+conversion_absorbed,Labor & overhead absorbed,5400,5400,Labor & overhead absorbed (contra),2020-01-01,cogs,Production & recipe conversion cost
+fee_commission,Marketplace commission,6100,6100,Marketplace commission,2020-01-01,channel_costs,Settlements
+fee_payment,Payment processing fees,6110,6110,Payment processing fees,2020-01-01,channel_costs,Settlements
+fee_shipping,Shipping subsidy,6120,6120,Shipping subsidy (seller-paid),2020-01-01,channel_costs,Settlements
+settlement_variance,Settlement variance / bank charges,6400,6400,Bank charges & settlement variance,2020-01-01,opex | other_expense,Platform payout differences
+interest_expense,Interest expense,7200,7200,Interest expense,2020-01-01,other_expense,Loan interest
+interest_income,Interest income,7100,7100,Interest income,2020-01-01,other_income,Bank interest

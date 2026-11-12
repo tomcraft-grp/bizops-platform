@@ -1,5 +1,5 @@
 import type { DB, DocType, ID, Order, OrderType, PrintJob, Station } from './types';
-import { Ctx, audit, fail, nid } from './core';
+import { Ctx, audit, fail, nid, guard } from './core';
 import { dateTimeFmt, money, qtyFmt, r2 } from '../lib/util';
 
 // ---------- routing: Organization → Branch → Station → Order type → Document type
@@ -59,6 +59,7 @@ export function processPrintQueue(d: DB, ctx: Ctx): number {
   return n;
 }
 export function retryJob(d: DB, ctx: Ctx, id: ID) {
+  guard(d, ctx, 'printing:edit');
   const j = d.printJobs.find((x) => x.id === id) || fail('NOT_FOUND', 'Job not found');
   if (j.status !== 'failed' && j.status !== 'cancelled') fail('INVALID', 'Only failed jobs can be retried');
   j.status = 'queued';
@@ -77,6 +78,7 @@ export function cancelJob(d: DB, id: ID) {
   j.status = 'cancelled';
 }
 export function reprintJob(d: DB, ctx: Ctx, id: ID, reason: string): ID {
+  guard(d, ctx, 'printing:edit');
   if (!reason.trim()) fail('REASON', 'A reprint reason is required');
   const j = d.printJobs.find((x) => x.id === id) || fail('NOT_FOUND', 'Job not found');
   audit(d, ctx, 'print.reprint', 'print_job', id, reason);

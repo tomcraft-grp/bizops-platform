@@ -215,7 +215,7 @@ function Mapping() {
           ]} />
       </Card>
       <Card flush title="Posting rules (event → debit / credit)" sub="Resolved through the mapping above. Every rule is balanced and posts idempotently.">
-        <div className="table-wrap"><table className="t compact"><thead><tr><th>Business event</th><th>Debit</th><th>Credit</th><th>Note</th></tr></thead>
+        <div className="table-wrap" role="region" aria-label="Scrollable table" tabIndex={0}><table className="t compact"><thead><tr><th>Business event</th><th>Debit</th><th>Credit</th><th>Note</th></tr></thead>
           <tbody>{EVENTS.map((e) => <tr key={e.event}><td><b>{e.event}</b></td><td>{e.dr.map((x) => <div key={x}><span className="mono">{resolve(x)}</span> <span className="muted">{x}</span></div>)}</td><td>{e.cr.map((x) => <div key={x}><span className="mono">{resolve(x)}</span> <span className="muted">{x}</span></div>)}</td><td className="muted">{e.note}</td></tr>)}</tbody></table></div>
       </Card>
       {edit && <MapModal role={edit} onClose={() => setEdit(null)} />}

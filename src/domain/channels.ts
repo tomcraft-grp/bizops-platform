@@ -1,5 +1,5 @@
 import type { ChannelCode, DB, ID } from './types';
-import { Ctx, fail, nid } from './core';
+import { Ctx, fail, nid, guard } from './core';
 import { createOrder } from './orders';
 import { CHANNELS } from './meta';
 import { r2 } from '../lib/util';
@@ -62,6 +62,7 @@ export function importExternalOrder(d: DB, ctx: Ctx, channel: ChannelCode, ex: E
 }
 
 export function mapSku(d: DB, ctx: Ctx, mappingId: ID, productId: ID | null) {
+  guard(d, ctx, 'channels:edit');
   const m = d.mappings.find((x) => x.id === mappingId) || fail('NOT_FOUND', 'Mapping not found');
   m.productId = productId;
   const p = productId ? d.products.find((x) => x.id === productId) : undefined;
@@ -77,12 +78,14 @@ export function mapSku(d: DB, ctx: Ctx, mappingId: ID, productId: ID | null) {
   return retried;
 }
 export function retryExternal(d: DB, ctx: Ctx, id: ID) {
+  guard(d, ctx, 'channels:edit');
   const e = d.externalOrders.find((x) => x.id === id) || fail('NOT_FOUND', 'Record not found');
   return importExternalOrder(d, ctx, e.channel, e.raw as unknown as ExtOrder, e.source);
 }
 
 /** CSV fallback. Columns: order_id, sku, name, qty, price, voucher(optional), created_at(optional) */
 export function importCSVRows(d: DB, ctx: Ctx, channel: ChannelCode, rows: string[][]) {
+  guard(d, ctx, 'channels:edit');
   if (rows.length < 2) fail('INVALID', 'The file has no data rows');
   const head = rows[0].map((h) => h.trim().toLowerCase());
   const col = (n: string) => head.indexOf(n);
@@ -109,6 +112,7 @@ export function importCSVRows(d: DB, ctx: Ctx, channel: ChannelCode, rows: strin
 
 /** Simulated connector: pulls a batch of "new" orders as a real API poll would (incl. a duplicate delivery and an unmapped SKU) */
 export function simulateSync(d: DB, ctx: Ctx, channel: ChannelCode, rnd: () => number, count = 6) {
+  guard(d, ctx, 'channels:edit');
   const maps = d.mappings.filter((m) => m.channel === channel && m.productId);
   if (!maps.length) fail('NO_MAPPINGS', 'No SKU mappings exist for this channel');
   const res = { imported: 0, duplicates: 0, errors: 0 };
