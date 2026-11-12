@@ -64,7 +64,7 @@ function Login({ onPick }: { onPick: (id: ID) => void }) {
       <div className="center" style={{ padding: '20px 0 6px' }}><div style={{ fontSize: 40 }}>☕</div><h2>Welcome</h2><div className="muted">Sign in with LINE (simulated)</div></div>
       <div className="col gap-4" style={{ overflow: 'auto' }}>
         {db.customers.filter((c) => c.group !== 'staff').slice(0, 30).map((c) => (
-          <button key={c.id} className="menu-item" onClick={() => onPick(c.id)}><span className="avatar" style={{ background: '#06c755' }}>{c.name[0]}</span><div className="grow"><div style={{ fontWeight: 600 }}>{c.name}</div><div className="muted" style={{ fontSize: 12 }}>{c.group === 'wholesale' ? 'Wholesale account' : `${pointsBalance(db, c.id)} pts`}</div></div></button>
+          <button key={c.id} className="menu-item" onClick={() => onPick(c.id)}><span className="avatar" style={{ background: '#047a3b', color: '#fff' }}>{c.name[0]}</span><div className="grow"><div style={{ fontWeight: 600 }}>{c.name}</div><div className="muted" style={{ fontSize: 12 }}>{c.group === 'wholesale' ? 'Wholesale account' : `${pointsBalance(db, c.id)} pts`}</div></div></button>
         ))}
       </div>
     </div>

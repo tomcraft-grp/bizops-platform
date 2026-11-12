@@ -3,7 +3,8 @@
 import type { ChannelCode, DB, ID, Order, OrderStatus, Product } from './types';
 import type { Ctx } from './core';
 import { emptyDB, buildProducts, buildBoms, buildCustomers, buildPromotions, buildMappings } from './seedData';
-import { addExpense, closePeriod, dr, cr, post } from './accounting';
+import { addExpense, closePeriod } from './accounting';
+import { approveOpening, approveSetup, proposeMapping, reviewOpening, saveDraft, saveOpeningSet, submitDraft } from './setup';
 import { adjustStock, closeTransferShort, createTransfer, onHand, postCount, receiveTransfer, startCount, reservedMap, bkey } from './inventory';
 import { createPO, paySupplier, receiveGoods } from './purchasing';
 import { createProductionOrder, recordProduction, completeProduction, versionAt, bomForProduct } from './bom';
@@ -46,7 +47,9 @@ export function buildSeed(now = new Date()): DB & { _seedErrors?: string[] } {
 
   // opening capital
   const c0 = cx(at(-SEED_DAYS - 1, 8));
-  post(d, c0, { memo: 'Owner capital contribution', refType: 'opening', lines: [dr('1100', 100000), dr('1110', 1900000), cr('3000', 2000000)] });
+  const ob = saveOpeningSet(d, { ...c0, userId: 'U9' }, { asOf: c0.now, source: 'Owner capital: cash count + bank statement, day before first trading', lines: [{ account: '1100', debit: 100000, credit: 0 }, { account: '1110', debit: 1900000, credit: 0 }, { account: '3010', debit: 0, credit: 2000000 }] });
+  reviewOpening(d, { ...c0, userId: 'U2' }, ob);
+  approveOpening(d, { ...c0, userId: 'U1' }, ob);
 
   // ---------- supply simulation helpers
   const dueInvoices: { invoiceId: ID; supplierId: ID; due: string }[] = [];
@@ -436,6 +439,14 @@ export function buildSeed(now = new Date()): DB & { _seedErrors?: string[] } {
   closePeriod(d, lateCtx, dayKey(eom));
   const cut = dayKey(addDays(now, -9));
   for (const j of d.journals) j.lines.forEach((l, i) => { if ((l.account === '1110' || l.account === '1100') && dayKey(j.date) < cut) d.reconciled[`${j.id}:${i}`] = true; });
+  // accounting setup: approved for the demo, with workflow items left in flight so the controls can be tried
+  safe('setup', () => {
+    approveSetup(d, { ...lateCtx, now: addDays(now, -SEED_DAYS - 1).toISOString(), userId: 'U1' }, { note: 'Prototype demo approval. Chart of accounts, tax codes and mappings are ILLUSTRATIVE and have NOT been reviewed by a qualified Thai accountant.', accountantReviewed: false });
+    proposeMapping(d, { ...lateCtx, userId: 'U9' }, { role: 'settlement_variance', toCode: '6300', effectiveFrom: addDays(now, 1).toISOString(), reason: 'Report marketplace payout differences separately from bank charges' });
+    const dj = saveDraft(d, { ...lateCtx, userId: 'U9' }, { date: now.toISOString(), memo: 'Accrue November electricity (bill not yet received)', lines: [{ account: '6210', debit: 2300, credit: 0 }, { account: '2110', debit: 0, credit: 2300 }] });
+    submitDraft(d, { ...lateCtx, userId: 'U9' }, dj);
+    saveOpeningSet(d, { ...lateCtx, userId: 'U9' }, { asOf: addDays(now, -SEED_DAYS - 1).toISOString(), source: 'Fixed-asset register (espresso machine, grinders) — pending valuation', lines: [{ account: '1500', debit: 85000, credit: 0 }, { account: '3010', debit: 0, credit: 85000 }], note: 'Draft: waiting for reviewer' });
+  });
   audit(d, lateCtx, 'seed', 'system', undefined, 'Demo data generated', 'info');
   d.meta.currentUserId = 'U1';
   d._seedErrors = errors;

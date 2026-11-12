@@ -1,6 +1,6 @@
 import type { DB, ID, ModifierOption, Order, OrderLine, OrderStatus, OrderType, ChannelCode, PayMethod, ReturnDoc, Product } from './types';
 import { Ctx, audit, docNo, fail, nid, product, order as getOrder } from './core';
-import { cr, dr, invAccount, post } from './accounting';
+import { cr, dr, invAccount, post, saleTax } from './accounting';
 import { moveStock, onHand, reservedMap, bkey } from './inventory';
 import { consumeRecipe } from './bom';
 import { couponDiscount, evaluatePromotions } from './promotions';
@@ -133,11 +133,12 @@ export function createOrder(d: DB, ctx: Ctx, input: NewOrderInput): ID {
     : { commission: 0, paymentFee: 0, shippingSubsidy: 0, estimated: false };
 
   const id = nid(d, 'O');
+  const tax = saleTax(d, ctx.now);
   const o: Order = {
     id, no: docNo(d, ({ POS: 'POS', LINE: 'LIN', SHOPEE: 'SHO', LAZADA: 'LAZ', TIKTOK: 'TIK', LINEMAN: 'LMN' } as Record<string, string>)[input.channel]), channel: input.channel, branchId: input.branchId, warehouseId, customerId: input.customerId,
     externalId: input.externalId, orderType: input.orderType ?? (input.channel === 'POS' ? 'takeaway' : input.channel === 'LINEMAN' ? 'delivery' : 'online'),
     status: 'new', statusLog: [{ ts: ctx.now, status: 'new', by: ctx.userId }], createdAt: ctx.now, lines, subtotal, discountTotal, total,
-    platformVoucher: input.platformVoucher ?? 0, vatRate: d.org.vatRegistered ? d.org.vatRate : 0, collectedBy: chMeta.collectedBy, payLater: input.payLater,
+    platformVoucher: input.platformVoucher ?? 0, vatRate: tax.rate, taxCode: tax.code, taxRuleVersion: tax.version, collectedBy: chMeta.collectedBy, payLater: input.payLater,
     promotions: pr.applied, couponId, pointsEarned: 0, bonusMult: pr.bonusMultiplier, bonusFixed: pr.bonusPoints, fees, creditNoted: 0, refundsPaid: 0,
     idempotencyKey: input.idempotencyKey, note: input.note, createdBy: ctx.userId, shipping: input.shipping, tableNo: input.tableNo,
   };
@@ -219,14 +220,16 @@ function recognize(d: DB, ctx: Ctx, o: Order, status: OrderStatus) {
   const grossEx = r2(o.subtotal / (1 + vat));
   const discEx = r2(o.discountTotal / (1 + vat));
   const vatAmt = r2(o.total + discEx - grossEx);
-  const ar = o.collectedBy === 'platform' ? '1120' : '1130';
+  const ar = o.collectedBy === 'platform' ? 'platform_ar' : 'ar';
   post(d, ctx, {
-    memo: `Sale ${o.no} (${o.channel})`, refType: 'order', refId: o.id,
+    memo: `Sale ${o.no} (${o.channel})`, refType: 'order', refId: o.id, dim: { branchId: o.branchId, channel: o.channel },
     lines: [
-      dr(ar, o.total), dr('4100', discEx), cr('4000', grossEx), cr('2200', vatAmt),
-      dr('5000', materialsTotal + conversionTotal), ...Object.entries(invCredits).map(([a, v]) => cr(a, v)), cr('5400', conversionTotal),
+      dr(ar, o.total), dr('sales_discount', discEx), cr('sales', grossEx), cr('output_vat', vatAmt),
+      dr('cogs', materialsTotal + conversionTotal), ...Object.entries(invCredits).map(([a, v]) => cr(a, v)), cr('conversion_absorbed', conversionTotal),
     ],
   });
+  o.taxBase = r2(grossEx - discEx);
+  o.vatAmount = vatAmt;
   o.recognizedAt = ctx.now;
   o.status = status;
   o.statusLog.push({ ts: ctx.now, status, by: ctx.userId });
@@ -264,7 +267,7 @@ export function cancelOrder(d: DB, ctx: Ctx, id: ID, reason: string) {
     if (!o.customerId) fail('NEEDS_CUSTOMER', 'A paid order without a customer must be refunded manually before cancelling');
     const paid = d.allocations.filter((a) => a.orderId === id && a.active && a.amount > 0);
     for (const a of paid) d.allocations.push({ id: nid(d, 'AL'), receiptId: a.receiptId, orderId: id, amount: -a.amount, ts: ctx.now, active: true, kind: 'reversal' });
-    post(d, ctx, { memo: `Cancelled ${o.no}: payment moved to customer credit`, refType: 'cancel_credit', refId: id, lines: [dr('1130', alloc), cr('2300', alloc)] });
+    post(d, ctx, { memo: `Cancelled ${o.no}: payment moved to customer credit`, refType: 'cancel_credit', refId: id, lines: [dr('ar', alloc), cr('customer_credit', alloc)] });
   }
   d.redemptions = d.redemptions.filter((r) => r.orderId !== id); // frees promo usage & budget
   if (o.couponId) { const c = d.coupons.find((x) => x.id === o.couponId); if (c) { c.status = 'issued'; c.usedOrderId = undefined; } }
@@ -305,10 +308,10 @@ export function returnOrder(
   costRev = r2(costRev);
   const net = r2(amount / (1 + o.vatRate));
   const vatAmt = r2(amount - net);
-  const ar = o.collectedBy === 'platform' ? '1120' : '1130';
+  const ar = o.collectedBy === 'platform' ? 'platform_ar' : 'ar';
   post(d, ctx, {
-    memo: `Return/credit note on ${o.no}: ${p.reason}`, refType: 'return', refId: o.id,
-    lines: [dr('4200', net), dr('2200', vatAmt), cr(ar, amount), ...Object.entries(debit).map(([a, v]) => dr(a, v)), cr('5000', costRev)],
+    memo: `Return/credit note on ${o.no}: ${p.reason}`, refType: 'return', refId: o.id, dim: { branchId: o.branchId, channel: o.channel },
+    lines: [dr('sales_returns', net), dr('output_vat', vatAmt), cr(ar, amount), ...Object.entries(debit).map(([a, v]) => dr(a, v)), cr('cogs', costRev)],
   });
   o.creditNoted = r2(o.creditNoted + amount);
   reversePoints(d, ctx, o, o.total ? amount / o.total : 0, 'Return');

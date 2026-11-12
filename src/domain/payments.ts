@@ -76,7 +76,7 @@ export function createReceipt(
   const id = nid(d, 'RC');
   const jid = post(d, ctx, {
     memo: `Receipt${p.reference ? ' ' + p.reference : ''} (${p.method})`, refType: 'receipt', refId: id,
-    lines: [dr(cashAccount(p.method), p.amount), cr('1130', allocTotal), cr('2300', unapplied)],
+    lines: [dr(cashAccount(p.method), p.amount), cr('ar', allocTotal), cr('customer_credit', unapplied)],
   });
   d.receipts.push({ id, no: docNo(d, 'RCP'), ts: ctx.now, customerId: p.customerId, amount: p.amount, method: p.method, reference: p.reference, slipId: p.slipId, status: 'posted', journalId: jid, note: p.note, createdBy: ctx.userId });
   for (const a of allocs) d.allocations.push({ id: nid(d, 'AL'), receiptId: id, orderId: a.orderId, amount: a.amount, ts: ctx.now, active: true, kind: 'payment' });
@@ -100,7 +100,7 @@ export function applyCredit(d: DB, ctx: Ctx, p: { customerId: ID; orderId: ID; a
     left = r2(left - take);
     if (left <= 0.004) break;
   }
-  post(d, ctx, { memo: `Customer credit applied to ${o!.no}`, refType: 'credit_applied', refId: o!.id, lines: [dr('2300', amt), cr('1130', amt)] });
+  post(d, ctx, { memo: `Customer credit applied to ${o!.no}`, refType: 'credit_applied', refId: o!.id, lines: [dr('customer_credit', amt), cr('ar', amt)] });
   return amt;
 }
 
@@ -131,14 +131,14 @@ export function refundToCredit(d: DB, ctx: Ctx, orderId: ID, amount: number) {
     left = r2(left - take);
     if (left <= 0.004) break;
   }
-  post(d, ctx, { memo: `Overpayment on ${o!.no} moved to customer credit`, refType: 'refund_credit', refId: orderId, lines: [dr('1130', amount), cr('2300', amount)] });
+  post(d, ctx, { memo: `Overpayment on ${o!.no} moved to customer credit`, refType: 'refund_credit', refId: orderId, lines: [dr('ar', amount), cr('customer_credit', amount)] });
 }
 export function refundCash(d: DB, ctx: Ctx, orderId: ID, amount: number, method: 'cash' | 'transfer') {
   const o = d.orders.find((x) => x.id === orderId) || fail('NOT_FOUND', 'Order not found');
   const bal = orderBalance(o!, allocatedMap(d)[orderId] || 0);
   if (amount > -bal + 0.004) fail('INVALID', 'Amount exceeds the refundable overpayment');
   o!.refundsPaid = r2(o!.refundsPaid + amount);
-  post(d, ctx, { memo: `Refund paid for ${o!.no} (${method})`, refType: 'refund_paid', refId: orderId, lines: [dr('1130', amount), cr(cashAccount(method), amount)] });
+  post(d, ctx, { memo: `Refund paid for ${o!.no} (${method})`, refType: 'refund_paid', refId: orderId, lines: [dr('ar', amount), cr(cashAccount(method), amount)] });
 }
 
 // ---------- payment evidence (slips)
@@ -222,7 +222,7 @@ export function createSettlement(
     net: r2(gross - a.commission - a.paymentFee - a.shippingSubsidy), status: 'pending',
   };
   d.settlements.push(st);
-  for (const o of orders) o.settlementId = id;
+  for (const o of orders) { o.settlementId = id; o.settledAmount = r2(o.total - o.creditNoted); }
   return id;
 }
 export function receiveSettlement(d: DB, ctx: Ctx, id: ID, receivedAmount?: number) {
@@ -231,10 +231,10 @@ export function receiveSettlement(d: DB, ctx: Ctx, id: ID, receivedAmount?: numb
   const received = r2(receivedAmount ?? st.net);
   const variance = r2(received - st.net);
   post(d, ctx, {
-    memo: `Settlement ${st.no} (${st.channel})`, refType: 'settlement', refId: st.id,
+    memo: `Settlement ${st.no} (${st.channel})`, refType: 'settlement', refId: st.id, dim: { channel: st.channel },
     lines: [
-      dr('1110', received), dr('6100', st.commission), dr('6110', st.paymentFee), dr('6120', st.shippingSubsidy),
-      cr('1120', st.gross), variance < 0 ? dr('6400', -variance) : cr('6400', variance),
+      dr('bank', received), dr('fee_commission', st.commission), dr('fee_payment', st.paymentFee), dr('fee_shipping', st.shippingSubsidy),
+      cr('platform_ar', st.gross), variance < 0 ? dr('settlement_variance', -variance) : cr('settlement_variance', variance),
     ],
   });
   // make order-level economics final: distribute actual fees over the settled orders by value

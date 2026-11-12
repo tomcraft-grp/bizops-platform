@@ -1,6 +1,6 @@
 import type { Balance, DB, ID, Movement, MoveType, Transfer, StockCount } from './types';
 import { Ctx, audit, docNo, fail, nid, product } from './core';
-import { cr, dr, invAccount, post } from './accounting';
+import { cr, dr, invAccount, post, whDim } from './accounting';
 import { r2, r3 } from '../lib/util';
 
 export const bkey = (wh: ID, pid: ID) => `${wh}|${pid}`;
@@ -124,9 +124,9 @@ export function adjustStock(
     productId: p.productId, warehouseId: p.warehouseId, qty: p.qty, type, refType: 'adjustment', refId: 'ADJ',
     note: p.reason, unitCost: p.unitCost, lot: p.lot, expiry: p.expiry,
   });
-  const loss = p.kind === 'waste' ? '5100' : '5200';
+  const loss = p.kind === 'waste' ? 'waste' : 'inv_adjust';
   post(d, ctx, {
-    memo: `${p.kind === 'waste' ? 'Waste' : 'Stock adjustment'}: ${prod.name} (${p.reason})`, refType: 'stock_adjust', refId: m.id,
+    memo: `${p.kind === 'waste' ? 'Waste' : 'Stock adjustment'}: ${prod.name} (${p.reason})`, refType: 'stock_adjust', refId: m.id, dim: whDim(d, p.warehouseId),
     lines: m.value < 0 ? [dr(loss, -m.value), cr(invAccount(prod.kind), -m.value)] : [dr(invAccount(prod.kind), m.value), cr(loss, m.value)],
   });
   audit(d, ctx, 'stock.' + (p.kind ?? 'adjust'), 'product', p.productId, `${p.qty > 0 ? '+' : ''}${p.qty} ${prod.unit} — ${p.reason}`, 'warn');
@@ -153,7 +153,7 @@ export function createTransfer(
   const t: Transfer = { id, no: docNo(d, 'TRF'), fromWh: p.fromWh, toWh: p.toWh, status: 'in_transit', lines: tl, createdAt: ctx.now, note: p.note, createdBy: ctx.userId };
   d.transfers.push(t);
   const total = Object.values(byAcct).reduce((s, v) => s + v, 0);
-  post(d, ctx, { memo: `Transfer ${t.no} dispatched`, refType: 'transfer', refId: id, lines: [dr('1250', total), ...Object.entries(byAcct).map(([a, v]) => cr(a, v))] });
+  post(d, ctx, { memo: `Transfer ${t.no} dispatched`, refType: 'transfer', refId: id, lines: [dr('inv_transit', total), ...Object.entries(byAcct).map(([a, v]) => cr(a, v))] });
   return id;
 }
 
@@ -178,7 +178,7 @@ export function receiveTransfer(d: DB, ctx: Ctx, id: ID, recv: { productId: ID; 
   }
   if (!any) fail('INVALID', 'Enter a received quantity');
   const total = Object.values(byAcct).reduce((s, v) => s + v, 0);
-  post(d, ctx, { memo: `Transfer ${t.no} received`, refType: 'transfer', refId: t.id, lines: [...Object.entries(byAcct).map(([a, v]) => dr(a, v)), cr('1250', total)] });
+  post(d, ctx, { memo: `Transfer ${t.no} received`, refType: 'transfer', refId: t.id, lines: [...Object.entries(byAcct).map(([a, v]) => dr(a, v)), cr('inv_transit', total)] });
   const done = t.lines.every((l) => l.qty - l.receivedQty - (l.shortClosed || 0) < 1e-6);
   t.status = done ? 'received' : 'partial';
   if (done) t.receivedAt = ctx.now;
@@ -197,7 +197,7 @@ export function closeTransferShort(d: DB, ctx: Ctx, id: ID, reason: string) {
       l.valueReceived = l.value;
     }
   }
-  post(d, ctx, { memo: `Transfer ${t.no} closed short: ${reason}`, refType: 'transfer', refId: t.id, lines: [dr('5200', loss), cr('1250', loss)] });
+  post(d, ctx, { memo: `Transfer ${t.no} closed short: ${reason}`, refType: 'transfer', refId: t.id, lines: [dr('inv_adjust', loss), cr('inv_transit', loss)] });
   t.status = 'closed_short';
   t.receivedAt = ctx.now;
   audit(d, ctx, 'transfer.close_short', 'transfer', t.id, `${t.no}: ${reason} (loss ${loss})`, 'warn');
@@ -242,8 +242,8 @@ export function postCount(d: DB, ctx: Ctx, id: ID, counted: Record<ID, number | 
     const prod = product(d, l.productId);
     const m = moveStock(d, ctx, { productId: l.productId, warehouseId: c.warehouseId, qty: diff, type: 'count', refType: 'count', refId: c.id, note: `Count ${c.no}`, allowNegative: true });
     post(d, ctx, {
-      memo: `Stock count ${c.no}: ${prod.name}`, refType: 'count', refId: c.id,
-      lines: m.value < 0 ? [dr('5200', -m.value), cr(invAccount(prod.kind), -m.value)] : [dr(invAccount(prod.kind), m.value), cr('5200', m.value)],
+      memo: `Stock count ${c.no}: ${prod.name}`, refType: 'count', refId: c.id, dim: whDim(d, c.warehouseId),
+      lines: m.value < 0 ? [dr('inv_adjust', -m.value), cr(invAccount(prod.kind), -m.value)] : [dr(invAccount(prod.kind), m.value), cr('inv_adjust', m.value)],
     });
     adj++;
   }

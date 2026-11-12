@@ -41,7 +41,7 @@ export default function Events() {
     <>
       <PageHead title="Events — number selection" desc="Purchase-linked picks on boards of numbers 00–99. Claims are protected by a unique (event, board, number) constraint, so two customers can never hold the same number — whatever the screen shows."
         actions={<>
-          <Select sm style={{ width: 'auto' }} value={ev.id} onChange={(e) => setSp({ e: e.target.value })}>{db.events.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.status})</option>)}</Select>
+          <Select sm aria-label="Event" style={{ width: 'auto' }} value={ev.id} onChange={(e) => setSp({ e: e.target.value })}>{db.events.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.status})</option>)}</Select>
           {canCreate && <Button onClick={() => setCreate(true)}><Plus size={15} /> New event</Button>}
         </>} />
       <div className="mb16"><Banner tone="warn"><b>Legal review required before launch.</b> Purchase-linked prize events can fall under Thai gambling / lottery and consumer-promotion rules. Eligibility, prize and marketing terms must be approved by qualified counsel; this prototype only demonstrates the mechanics.</Banner></div>
@@ -57,7 +57,7 @@ export default function Events() {
         <div className="grid g-main">
           <Card title={<span className="row gap-6"><i className="ch-dot" style={{ background: board.color, width: 12, height: 12 }} />{board.name}</span>} sub={`${Object.keys(occ).length} of ${ev.max - ev.min + 1} numbers taken`}
             actions={<Seg value={board.id} onChange={setBoardId} options={ev.boards.map((b) => ({ v: b.id, label: b.name }))} />}>
-            <div className="number-grid" role="grid" aria-label={`${board.name} numbers`}>
+            <div className="number-grid" role="group" aria-label={`${board.name} numbers`}>
               {Array.from({ length: ev.max - ev.min + 1 }, (_, i) => ev.min + i).map((n) => {
                 const s = occ[n];
                 const mine = s && ev.winners.some((w) => w.boardId === board.id && w.number === n);

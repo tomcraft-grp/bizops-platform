@@ -1,5 +1,5 @@
 import type { Bom, BomComponent, ChannelAccount, ChannelMapping, Customer, DB, ModifierGroup, Printer, PrintRule, Product, Promotion, Reward, Role, Supplier, User } from './types';
-import { CHART } from './accounting';
+import { CHART, defaultPostingMap, defaultTaxCodes } from './accounting';
 import { addDays } from '../lib/util';
 
 type Lv = Record<string, { min: number; max: number }>;
@@ -230,11 +230,12 @@ export const PRINT_RULES: PrintRule[] = [
 
 export function emptyDB(nowIso: string): DB {
   return {
-    version: 4,
+    version: 5,
     meta: { seq: {}, lockedUntil: null, currentUserId: 'U1', seededAt: nowIso, idem: {} },
     org: {
       name: 'Sabaidee Roasters & Café', legalName: 'Sabaidee Roasters Co., Ltd.', taxId: '0105559012345', address: '88 Phahonyothin Rd, Ari, Bangkok 10400', phone: '02-555-0188',
       vatRate: 0.07, vatRegistered: true, currency: 'THB', costingMethod: 'WAC', allowNegativeStock: false, allocateOpex: 'none', receiptFooter: 'Thank you · ขอบคุณที่อุดหนุน ☕', promptPayId: '0812345678', pointValue: 0.2,
+      fiscalYearStart: '01-01', accountingBasis: 'accrual', taxInclusivePricing: true, defaultTaxCode: 'VAT7', requireJournalApproval: true,
     },
     branches: [
       { id: 'B1', code: 'ARI', name: 'Ari Flagship Café', type: 'kitchen', defaultWarehouseId: 'W1', address: '88 Phahonyothin Rd, Ari' },
@@ -257,7 +258,9 @@ export function emptyDB(nowIso: string): DB {
       tiers: [{ name: 'Silver', minSpend: 0, multiplier: 1, color: '#898781' }, { name: 'Gold', minSpend: 8000, multiplier: 1.25, color: '#eda100' }, { name: 'Platinum', minSpend: 25000, multiplier: 1.5, color: '#6250d6' }],
     },
     events: [], entitlements: [], selections: [], eventActions: [], eventIndex: {},
-    accounts: CHART, journals: [], expenses: [], reconciled: {},
+    accounts: CHART.map((a) => ({ ...a })), journals: [], expenses: [], reconciled: {},
+    taxCodes: defaultTaxCodes(), postingMap: defaultPostingMap(), mappingChanges: [], journalDrafts: [], openingSets: [],
+    setup: { version: 0, status: 'draft', accountantReviewed: false, note: '', stageOwners: { profile: 'U1', coa: 'U9', tax: 'U9', mapping: 'U9', opening: 'U9', recon: 'U9', approval: 'U1' }, history: [] },
     printers: PRINTERS, printRules: PRINT_RULES, printJobs: [], media: [], mediaAccess: [], audit: [],
   };
 }

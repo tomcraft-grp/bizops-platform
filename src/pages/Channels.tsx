@@ -40,7 +40,7 @@ export default function Channels() {
       ]} />
 
       {tab === 'overview' && (
-        <div className="grid g-auto" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))' }}>
+        <div className="grid g-auto" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(330px, 100%), 1fr))' }}>
           {db.channelAccounts.map((a) => {
             const m = CHANNELS[a.channel];
             const orders = db.orders.filter((o) => o.channel === a.channel && dayKey(o.createdAt) >= week);

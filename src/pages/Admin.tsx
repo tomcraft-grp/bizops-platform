@@ -110,7 +110,7 @@ function SettingsInner() {
   const confirm = useConfirm();
   const canEdit = useHas('settings:edit');
   const file = useRef<HTMLInputElement>(null);
-  const [f, setF] = useState({ name: db.org.name, legalName: db.org.legalName, taxId: db.org.taxId, address: db.org.address, phone: db.org.phone, vatRate: db.org.vatRate * 100, vatRegistered: db.org.vatRegistered, promptPayId: db.org.promptPayId, allowNegativeStock: db.org.allowNegativeStock, allocateOpex: db.org.allocateOpex });
+  const [f, setF] = useState({ name: db.org.name, legalName: db.org.legalName, taxId: db.org.taxId, address: db.org.address, phone: db.org.phone, vatRegistered: db.org.vatRegistered, promptPayId: db.org.promptPayId, allowNegativeStock: db.org.allowNegativeStock, allocateOpex: db.org.allocateOpex });
   return (
     <>
       <PageHead title="Settings" desc="Organization, tax, costing and data controls. Critical settings are restricted to Owners and every change is audited." />
@@ -120,10 +120,10 @@ function SettingsInner() {
             <Field label="Trading name"><Input value={f.name} disabled={!canEdit} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field><Field label="Legal name"><Input value={f.legalName} disabled={!canEdit} onChange={(e) => setF({ ...f, legalName: e.target.value })} /></Field>
             <Field label="Tax ID"><Input value={f.taxId} disabled={!canEdit} onChange={(e) => setF({ ...f, taxId: e.target.value })} /></Field><Field label="Phone"><Input value={f.phone} disabled={!canEdit} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
             <Field label="Address" full><Input value={f.address} disabled={!canEdit} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
-            <Field label="VAT rate %"><NumInput value={f.vatRate} disabled={!canEdit} onChange={(n) => setF({ ...f, vatRate: n || 0 })} /></Field><Field label="PromptPay ID (phone / tax ID)"><Input value={f.promptPayId} disabled={!canEdit} onChange={(e) => setF({ ...f, promptPayId: e.target.value })} /></Field>
+            <Field label="PromptPay ID (phone / tax ID)"><Input value={f.promptPayId} disabled={!canEdit} onChange={(e) => setF({ ...f, promptPayId: e.target.value })} /></Field>
             <div className="full"><Check checked={f.vatRegistered} onChange={(v) => canEdit && setF({ ...f, vatRegistered: v })}>VAT-registered (prices include VAT; output VAT is posted)</Check></div>
           </div>
-          <div className="mt16"><Button variant="primary" disabled={!canEdit} onClick={() => run((d, c) => updateOrg(d, c, { name: f.name, legalName: f.legalName, taxId: f.taxId, address: f.address, phone: f.phone, vatRate: f.vatRate / 100, vatRegistered: f.vatRegistered, promptPayId: f.promptPayId }), { ok: 'Saved (audited). VAT changes apply to new orders only.', perm: 'settings:edit' })}>Save</Button></div>
+          <div className="mt16"><Button variant="primary" disabled={!canEdit} onClick={() => run((d, c) => updateOrg(d, c, { name: f.name, legalName: f.legalName, taxId: f.taxId, address: f.address, phone: f.phone, vatRegistered: f.vatRegistered, promptPayId: f.promptPayId }), { ok: 'Saved (audited). VAT changes apply to new orders only.', perm: 'settings:edit' })}>Save</Button></div>
         </Card>
         <Card title="Costing & inventory policy">
           <div className="col">

@@ -1,6 +1,7 @@
 import { produce } from 'immer';
 import type { DB } from './types';
-import { balancesBetween, natBal, netDebit } from './accounting';
+import { balancesBetween } from './accounting';
+import { reconciliationMatrix } from './setup';
 import { inTransitValue, reconcileStock, stockValue } from './inventory';
 import { reconcilePoints } from './loyalty';
 import { verifyEventUniqueness, claimNumber, grantEntitlements, createEvent, setEventStatus } from './events';
@@ -28,39 +29,21 @@ export function runIntegrityChecks(d: DB, now: string): Check[] {
   const rs = reconcileStock(d);
   out.push({ id: 'stock', title: 'Stock balances reconcile to the movement ledger', what: 'Projection (balances) must equal Σ movements per product/warehouse', status: ok(!rs.diffs.length), detail: `${rs.checked} product-warehouse balances checked · ${d.movements.length} movements · ${rs.diffs.length} differences`, evidence: rs.diffs.slice(0, 5).map((x) => `${x.key}: ledger ${x.ledgerQty} vs balance ${x.balQty}`) });
 
-  // 3. GL inventory vs stock valuation
-  const gl = (c: string) => netDebit(bal[c]);
-  const glInv = r2(gl('1200') + gl('1210') + gl('1250'));
-  const stk = r2(stockValue(d) + inTransitValue(d));
-  out.push({ id: 'inv-gl', title: 'Inventory GL = stock valuation + in-transit', what: 'Accounts 1200 + 1210 + 1250 vs Σ stock value in the warehouses', status: ok(Math.abs(glInv - stk) < 1, true), detail: `GL ${glInv.toLocaleString()} · Stock ledger ${stk.toLocaleString()} · difference ${r2(glInv - stk)}` });
-
   // 4. negative stock
   const neg = Object.entries(d.balances).filter(([, b]) => b.qty < -0.0005);
   out.push({ id: 'neg', title: 'No negative stock balances', what: 'Negative quantities indicate unrecorded receipts or overselling', status: ok(!neg.length, true), detail: neg.length ? `${neg.length} negative balances` : 'None', evidence: neg.slice(0, 5).map(([k, b]) => `${k}: ${b.qty}`) });
 
-  // 5. AR sub-ledger vs control
+  // 3/5/6/8. every control account reconciles to its subledger (single source: reconciliationMatrix)
   const alloc = allocatedMap(d);
-  let sub = 0;
-  for (const o of d.orders) {
-    if (o.collectedBy !== 'merchant') continue;
-    sub += (o.recognizedAt ? o.total - o.creditNoted : 0) - (alloc[o.id] || 0) + o.refundsPaid;
+  for (const r of reconciliationMatrix(d)) {
+    if (r.key === 'cash_bank') continue;
+    out.push({ id: 'recon-' + r.key, title: r.title + ': subledger = GL control', what: r.subLabel + ' vs accounts ' + r.accounts, status: ok(Math.abs(r.diff) < 0.05, r.key === 'ap'), detail: 'GL ' + r.gl.toLocaleString() + ' · subledger ' + r.sub.toLocaleString() + ' · difference ' + r.diff });
   }
-  sub = r2(sub);
-  out.push({ id: 'ar', title: 'Customer receivables sub-ledger = GL 1130', what: 'Σ order balances (incl. unrecognised prepayments) vs control account', status: ok(Math.abs(sub - gl('1130')) < 0.05), detail: `Order ledger ${sub.toLocaleString()} · GL ${gl('1130').toLocaleString()}` });
-
-  // 6. customer credit
-  const unapplied = r2(d.receipts.reduce((s, r) => s + receiptUnapplied(d, r), 0));
-  const credGl = r2(-netDebit(bal['2300']));
-  out.push({ id: 'credit', title: 'Customer credit ledger = GL 2300', what: 'Σ unapplied receipts vs liability account', status: ok(Math.abs(unapplied - credGl) < 0.05), detail: `Unapplied receipts ${unapplied.toLocaleString()} · GL ${credGl.toLocaleString()}` });
 
   // 7. allocations never exceed receipt / order
   const overRcpt = d.receipts.filter((r) => r.status === 'posted' && receiptUnapplied(d, r) < -0.005);
   const overOrder = d.orders.filter((o) => o.collectedBy === 'merchant' && o.status !== 'cancelled' && orderBalance(o, alloc[o.id] || 0) < -0.005 && o.creditNoted === 0 && o.refundsPaid === 0);
   out.push({ id: 'alloc', title: 'Payment allocations never exceed receipt or order value', what: 'Receipt ↔ allocation integrity', status: ok(!overRcpt.length && !overOrder.length), detail: `${overRcpt.length} over-allocated receipts · ${overOrder.length} over-paid orders`, evidence: [...overRcpt, ...overOrder].slice(0, 5).map((x) => x.no) });
-
-  // 8. AP
-  const apSub = r2(d.apInvoices.reduce((s, i) => s + apOpen(i), 0));
-  out.push({ id: 'ap', title: 'Supplier invoices = GL 2100', what: 'Open invoice balances vs payables control', status: ok(Math.abs(apSub - -netDebit(bal['2100'])) < 0.05, true), detail: `Open invoices ${apSub.toLocaleString()} · GL ${r2(-netDebit(bal['2100'])).toLocaleString()}` });
 
   // 9. points
   const pr = reconcilePoints(d);
@@ -164,7 +147,7 @@ export function runSelfTests(db: DB, ctx: Ctx): TestResult[] {
     d.balances[`${wh}|${p.id}`] = { qty: 50, value: 50 * p.stdCost, lastCost: p.stdCost };
     const id = createOrder(d, ctx, { channel: 'POS', branchId: d.branches[0].id, customerId: cust.id, lines: [{ productId: p.id, qty: 2 }], payments: [{ method: 'cash', amount: 10 }], payLater: true });
     const o = d.orders.find((x) => x.id === id)!;
-    const checks = runIntegrityChecks(d as DB, ctx.now).filter((c) => c.id === 'ar' || c.id === 'tb');
+    const checks = runIntegrityChecks(d as DB, ctx.now).filter((c) => c.id === 'recon-ar' || c.id === 'tb');
     return { ok: checks.every((c) => c.status === 'pass') && o.total > 10, detail: checks.map((c) => `${c.id}: ${c.status}`).join(' · ') };
   });
   return res;

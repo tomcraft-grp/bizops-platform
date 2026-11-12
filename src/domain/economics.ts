@@ -1,5 +1,6 @@
 import type { ChannelCode, DB, ID, Order } from './types';
-import { balancesBetween, netDebit } from './accounting';
+import type { Account } from './types';
+import { balancesBetween, netDebit, roleCode, sumNetDebit } from './accounting';
 import { dayKey, r2 } from '../lib/util';
 
 export interface OrderEcon {
@@ -92,14 +93,16 @@ export function groupLines(list: LineEcon[], key: (e: LineEcon) => string): Reco
   return m;
 }
 
-/** Business-level costs that are not attributable to a single order, from the GL */
+/** Business-level costs that are not attributable to a single order, from the GL (classified by financial-statement line, not by hard-coded codes) */
 export function businessCosts(d: DB, from?: string, to?: string) {
   const b = balancesBetween(d.journals, from, to);
-  const dd = (c: string) => netDebit(b[c]);
+  const sum = (pred: (a: Account) => boolean) => sumNetDebit(d, b, pred);
+  const bySub = (code: string) => netDebit(b[code]);
+  const waste = roleCode(d, 'waste'), adj = roleCode(d, 'inv_adjust');
+  const opexAccts = (a: Account) => a.fsLine === 'opex' || a.fsLine === 'other_expense';
   return {
-    waste: dd('5100'), adjustments: dd('5200'),
-    opex: r2(dd('6130') + dd('6200') + dd('6210') + dd('6220') + dd('6300') + dd('6400')),
-    marketing: dd('6130'), rent: dd('6200'), utilities: dd('6210'), staff: dd('6220'), other: dd('6300'), bank: dd('6400'),
+    waste: waste ? bySub(waste) : 0, adjustments: adj ? bySub(adj) : 0, opex: sum(opexAccts),
+    marketing: bySub('6130'), rent: bySub('6200'), utilities: bySub('6210'), staff: bySub('6220'), other: bySub('6300'), bank: bySub('6400'),
   };
 }
 

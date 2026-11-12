@@ -3,7 +3,8 @@ import { Download, Printer } from 'lucide-react';
 import { useDB } from '../domain/store';
 import { AGING_BUCKETS, agingFor } from '../domain/payments';
 import { apOpen } from '../domain/purchasing';
-import { balancesBetween, natBal } from '../domain/accounting';
+import { balancesBetween, natBal, isControl, isFs, taxAt } from '../domain/accounting';
+import type { Account } from '../domain/types';
 import { Badge, Banner, Button, Card, DataTable, Field, Input, PageHead, Select, Tabs, useHas } from '../ui/kit';
 import { stockValue } from '../domain/inventory';
 import { addDays, dayKey, dateFmt, daysBetween, download, money, money0, parseDay, toCSV, r2 } from '../lib/util';
@@ -43,22 +44,22 @@ function Daily() {
   const open = useMemo(() => balancesBetween(db.journals, undefined, prev), [db.journals, prev]);
   const act = useMemo(() => balancesBetween(db.journals, day, day), [db.journals, day]);
   const close = useMemo(() => balancesBetween(db.journals, undefined, day), [db.journals, day]);
-  const acc = (codes: string[]) => ({ o: sumA(db, open, codes), a: sumA(db, act, codes), c: sumA(db, close, codes) });
+  const acc = (pred: (a: Account) => boolean) => ({ o: sumA(db, open, pred), a: sumA(db, act, pred), c: sumA(db, close, pred) });
   // detailed movements by source for the chosen day
-  const bySrc = (codes: string[]) => {
+  const bySrc = (pred: (a: Account) => boolean) => {
     const m: Record<string, number> = {};
     for (const j of db.journals) {
       if (dayKey(j.date) !== day) continue;
-      for (const l of j.lines) if (codes.includes(l.account)) { const a = db.accounts.find((x) => x.code === l.account)!; m[j.refType] = (m[j.refType] || 0) + (a.normal === 'debit' ? l.debit - l.credit : l.credit - l.debit); }
+      for (const l of j.lines) { const a = db.accounts.find((x) => x.code === l.account)!; if (!pred(a)) continue; m[j.refType] = (m[j.refType] || 0) + (a.normal === 'debit' ? l.debit - l.credit : l.credit - l.debit); }
     }
     return Object.entries(m).filter(([, v]) => Math.abs(v) > 0.004);
   };
-  const sections: { title: string; codes: string[]; note: string }[] = [
-    { title: 'Customer receivables', codes: ['1130'], note: 'charges from sales less receipts, credit notes and refunds' },
-    { title: 'Platform receivables', codes: ['1120'], note: 'marketplace / delivery sales awaiting payout' },
-    { title: 'Cash & bank', codes: ['1100', '1110'], note: 'cash sales, transfers, settlements, supplier payments, expenses' },
-    { title: 'Inventory (at cost)', codes: ['1200', '1210', '1250'], note: 'purchases, production, cost of goods sold, adjustments' },
-    { title: 'Supplier payables', codes: ['2100'], note: 'goods received less payments and credit notes' },
+  const sections: { title: string; pred: (a: Account) => boolean; note: string }[] = [
+    { title: 'Customer receivables', pred: isControl('ar'), note: 'charges from sales less receipts, credit notes and refunds' },
+    { title: 'Platform receivables', pred: isControl('platform'), note: 'marketplace / delivery sales awaiting payout' },
+    { title: 'Cash & bank', pred: isFs('cash'), note: 'cash sales, transfers, settlements, supplier payments, expenses' },
+    { title: 'Inventory (at cost)', pred: isControl('inventory'), note: 'purchases, production, cost of goods sold, adjustments' },
+    { title: 'Supplier payables', pred: isControl('ap'), note: 'goods received less payments and credit notes' },
   ];
   const sales = useEcon({ from: day, to: day });
   const t = useMemo(() => groupEcon(sales.orders, () => 'x').x, [sales]);
@@ -69,7 +70,7 @@ function Daily() {
       <div className="row wrap"><Field label="Business day"><Input type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field><div style={{ alignSelf: 'flex-end' }}><Badge tone={closed ? 'good' : 'warn'} dot>{closed ? 'Posted & closed' : 'Provisional (period open)'}</Badge></div></div>
       <Banner>Brought-forward from <b>{dateFmt(prev)}</b> → movements on <b>{dateFmt(day)}</b> → carried-forward closing. Sales, receipts, settlement and profit are kept separate — never mixed into one figure.</Banner>
       <div className="grid g3">
-        {sections.map((s) => { const x = acc(s.codes); const det = bySrc(s.codes); return (
+        {sections.map((s) => { const x = acc(s.pred); const det = bySrc(s.pred); return (
           <Card key={s.title} title={s.title} sub={s.note}>
             <div className="row between"><span className="muted">Brought forward</span><b>{money(x.o)}</b></div>
             {det.map(([k, v]) => <div key={k} className="row between" style={{ fontSize: 13, paddingLeft: 12 }}><span>{v >= 0 ? '+' : '−'} {label(k)}</span><span className="num">{money(Math.abs(v))}</span></div>)}
@@ -85,8 +86,8 @@ function Daily() {
     </div>
   );
 }
-function sumA(db: DB, b: ReturnType<typeof balancesBetween>, codes: string[]) {
-  return r2(codes.reduce((s, c) => s + natBal(db.accounts.find((a) => a.code === c)!, b[c]), 0));
+function sumA(db: DB, b: ReturnType<typeof balancesBetween>, pred: (a: Account) => boolean) {
+  return r2(db.accounts.filter((a) => a.posting && pred(a)).reduce((s, a) => s + natBal(a, b[a.code]), 0));
 }
 
 function Sales() {

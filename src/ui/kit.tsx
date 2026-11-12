@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Children, cloneElement, createContext, isValidElement, ReactElement, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronLeft, ChevronRight, Info, Search, X, XCircle } from 'lucide-react';
 import type { ChannelCode, DB, OrderStatus } from '../domain/types';
@@ -6,6 +6,7 @@ import { CHANNELS, STATUS_LABEL } from '../domain/meta';
 import { Ctx, can, hasPerm, userPerms, currentUser } from '../domain/core';
 import { act, toast, useDB, useStore } from '../domain/store';
 import { cx, money } from '../lib/util';
+import { reconciliationMatrix } from '../domain/setup';
 
 // ---------- action runner (transaction + toast)
 export function useRun() {
@@ -79,9 +80,26 @@ export function Banner({ tone = 'info', children, icon }: { tone?: 'info' | 'war
   const I = tone === 'bad' ? XCircle : tone === 'warn' ? AlertTriangle : tone === 'good' ? CheckCircle2 : Info;
   return <div className={cx('banner', tone === 'info' ? '' : tone)}>{icon ?? <I size={16} />}<div>{children}</div></div>;
 }
-export const Avatar = ({ name, color, size = 28 }: { name: string; color: string; size?: number }) => (
-  <span className="avatar" style={{ background: color, width: size, height: size, fontSize: size * 0.42 }}>{name.split(' ').map((s) => s[0]).slice(0, 2).join('').toUpperCase()}</span>
-);
+const rgb = (hex: string): [number, number, number] => { const n = parseInt(hex.replace('#', ''), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const lumOf = ([r, g, b]: [number, number, number]) => { const c = [r, g, b].map((v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+const contrast = (l1: number, l2: number) => (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+/** Returns a background/foreground pair that meets WCAG AA (4.5:1): near-black text if it passes, else white on a darkened colour */
+export function readablePair(bg: string): { bg: string; fg: string } {
+  if (!bg.startsWith('#')) return { bg, fg: '#ffffff' };
+  const c = rgb(bg);
+  if (contrast(lumOf(c), lumOf([17, 17, 17])) >= 4.5) return { bg, fg: '#111111' };
+  for (let f = 1; f > 0.2; f -= 0.04) {
+    const d = c.map((v) => Math.round(v * f)) as [number, number, number];
+    if (contrast(lumOf(d), 1) >= 4.5) return { bg: '#' + d.map((v) => v.toString(16).padStart(2, '0')).join(''), fg: '#ffffff' };
+  }
+  return { bg: '#000000', fg: '#ffffff' };
+}
+export const Avatar = ({ name, color, size = 28 }: { name: string; color: string; size?: number }) => {
+  const p = readablePair(color);
+  return (
+    <span className="avatar" aria-hidden="true" style={{ background: p.bg, color: p.fg, width: size, height: size, fontSize: size * 0.42 }}>{name.split(' ').map((s) => s[0]).slice(0, 2).join('').toUpperCase()}</span>
+  );
+};
 export const Money = ({ v, bold, tone }: { v: number; bold?: boolean; tone?: boolean }) => (
   <span className={cx('num', bold && 'b', tone && (v < 0 ? 'bad' : v > 0 ? 'good' : ''))} style={bold ? { fontWeight: 650 } : undefined}>{money(v)}</span>
 );
@@ -94,10 +112,17 @@ export function Skeleton({ h = 16, w = '100%' }: { h?: number; w?: number | stri
 
 // ---------- forms
 export function Field({ label, hint, children, full }: { label?: ReactNode; hint?: ReactNode; children: ReactNode; full?: boolean }) {
-  return <div className={cx('field', full && 'full')}>{label && <label>{label}</label>}{children}{hint && <span className="hint">{hint}</span>}</div>;
+  const id = useId();
+  const child = isValidElement(children) && label && !(children.props as Record<string, unknown>)['aria-label'] && !(children.props as Record<string, unknown>)['aria-labelledby'] ? cloneElement(children as ReactElement<Record<string, unknown>>, { 'aria-labelledby': id }) : children;
+  return <div className={cx('field', full && 'full')}>{label && <label id={id}>{label}</label>}{child}{hint && <span className="hint">{hint}</span>}</div>;
 }
 export const Input = (p: React.InputHTMLAttributes<HTMLInputElement> & { sm?: boolean }) => { const { sm, className, ...r } = p; return <input {...r} className={cx('input', sm && 'sm', className)} />; };
-export const Select = (p: React.SelectHTMLAttributes<HTMLSelectElement> & { sm?: boolean }) => { const { sm, className, ...r } = p; return <select {...r} className={cx('select', sm && 'sm', className)} />; };
+export const Select = (p: React.SelectHTMLAttributes<HTMLSelectElement> & { sm?: boolean }) => {
+  const { sm, className, ...r } = p;
+  const first = Children.toArray(p.children).find((c) => isValidElement(c)) as ReactElement<{ children?: ReactNode }> | undefined;
+  const fallback = typeof first?.props.children === 'string' ? first.props.children : undefined; // e.g. “All channels”
+  return <select aria-label={r['aria-label'] ?? (r['aria-labelledby'] ? undefined : fallback)} {...r} className={cx('select', sm && 'sm', className)} />;
+};
 export const Textarea = (p: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...p} className={cx('textarea', p.className)} />;
 export function NumInput({ value, onChange, min, max, step, ...p }: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> & { value: number | ''; onChange: (n: number) => void }) {
   return <input {...p} type="number" inputMode="decimal" className={cx('input', p.className)} min={min} max={max} step={step ?? 'any'} value={value} onChange={(e) => onChange(e.target.value === '' ? NaN : Number(e.target.value))} />;
@@ -243,7 +268,7 @@ export function DataTable<T>({ rows, cols, rowKey, onRow, pageSize = 12, search,
       </div>
       {filtered.length > pageSize && (
         <div className="pager"><span>{cur * pageSize + 1}–{Math.min(filtered.length, cur * pageSize + pageSize)} of {filtered.length}</span>
-          <div className="row gap-6"><Button size="sm" icon disabled={cur === 0} onClick={() => setPage(cur - 1)}><ChevronLeft size={15} /></Button><span>{cur + 1} / {pages}</span><Button size="sm" icon disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)}><ChevronRight size={15} /></Button></div></div>
+          <div className="row gap-6"><Button size="sm" icon aria-label="Previous page" disabled={cur === 0} onClick={() => setPage(cur - 1)}><ChevronLeft size={15} /></Button><span>{cur + 1} / {pages}</span><Button size="sm" icon aria-label="Next page" disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)}><ChevronRight size={15} /></Button></div></div>
       )}
     </div>
   );
@@ -253,3 +278,17 @@ export function KV({ items }: { items: [ReactNode, ReactNode][] }) {
   return <div className="col gap-6">{items.map(([k, v], i) => <div key={i} className="row between" style={{ alignItems: 'flex-start' }}><span className="muted">{k}</span><span style={{ textAlign: 'right' }}>{v}</span></div>)}</div>;
 }
 export const Dot = ({ color }: { color: string }) => <i className="ch-dot" style={{ background: color }} />;
+
+// ---------- report header: period, currency, basis, costing, scope, generation time, draft/posted/reconciled (QA addendum §23.11)
+export function ReportHead({ title, from, to, scope }: { title: ReactNode; from?: string; to?: string; scope?: ReactNode }) {
+  const db = useDB();
+  const recon = useMemo(() => reconciliationMatrix(db), [db.journals, db.orders, db.allocations, db.receipts, db.apInvoices, db.balances]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closed = !!db.meta.lockedUntil && !!to && to <= db.meta.lockedUntil;
+  const diffs = recon.filter((r) => r.status === 'diff').length;
+  return (
+    <div className="row wrap between" style={{ gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)', borderRadius: 'var(--radius) var(--radius) 0 0', fontSize: 12.5 }}>
+      <div className="text2"><b style={{ color: 'var(--text)' }}>{title}</b> · {from ? `${from} → ${to}` : `as of ${to}`} · THB · {db.org.accountingBasis} basis · costing: weighted average{scope ? <> · {scope}</> : null} · generated {new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div>
+      <div className="row gap-6"><Badge tone={closed ? 'good' : 'warn'} dot>{closed ? 'Posted · period closed' : 'Draft · period open'}</Badge><Badge tone={diffs ? 'bad' : 'good'} dot>{diffs ? `${diffs} reconciliation difference(s)` : 'Reconciled'}</Badge></div>
+    </div>
+  );
+}

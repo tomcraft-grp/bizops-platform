@@ -20,6 +20,7 @@ import Inventory from './pages/Inventory';
 import Purchasing from './pages/Purchasing';
 import Production from './pages/Production';
 import Accounting from './pages/Accounting';
+import AccountingSetup from './pages/AccountingSetup';
 import Profit from './pages/Profit';
 import Reports from './pages/Reports';
 import Printing from './pages/Printing';
@@ -61,6 +62,7 @@ export default function App() {
             <Route path="purchasing" element={<G perm="purchasing:view"><Purchasing /></G>} />
             <Route path="production" element={<G perm="production:view"><Production /></G>} />
             <Route path="accounting" element={<G perm="accounting:view"><Accounting /></G>} />
+            <Route path="accounting/setup" element={<G perm="accounting:view"><AccountingSetup /></G>} />
             <Route path="profit" element={<Profit />} />
             <Route path="reports" element={<Reports />} />
             <Route path="printing" element={<G perm="printing:view"><Printing /></G>} />

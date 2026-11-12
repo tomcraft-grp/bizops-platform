@@ -7,7 +7,7 @@ import { Badge, Banner, Button, Card, ChannelChip, DataTable, Empty, Kpi, PageHe
 import { BarChart, Donut, HBars, SERIES_COLORS } from '../ui/charts';
 import { CHANNEL_LIST, CHANNELS } from '../domain/meta';
 import { addDays, compact, dateTimeFmt, dayKey, money, money0, pct, shortDay, sum } from '../lib/util';
-import { balancesBetween, natBal, netDebit } from '../domain/accounting';
+import { balancesBetween, isControl, isFs, sumAccounts } from '../domain/accounting';
 import { completeness, groupEcon, groupLines, totalsOf } from '../domain/economics';
 import { eventStats } from '../domain/events';
 import { pointsMap } from '../domain/loyalty';
@@ -45,11 +45,10 @@ export default function Dashboard() {
 
   // balance-sheet-ish KPIs (as of now, GL based)
   const bal = useMemo(() => balancesBetween(db.journals), [db.journals]);
-  const acct = (c: string) => natBal(db.accounts.find((a) => a.code === c)!, bal[c]);
-  const cash = acct('1100') + acct('1110');
-  const ar = acct('1130') + acct('1120');
-  const ap = acct('2100');
-  const inv = acct('1200') + acct('1210') + acct('1250');
+  const cash = sumAccounts(db, bal, isFs('cash'));
+  const ar = sumAccounts(db, bal, (a) => a.control === 'ar' || a.control === 'platform');
+  const ap = sumAccounts(db, bal, isControl('ap'));
+  const inv = sumAccounts(db, bal, isControl('inventory'));
 
   const low = useMemo(() => lowStock(db), [db]);
   const activeEvent = db.events.find((e) => e.status === 'active');
@@ -76,7 +75,7 @@ export default function Dashboard() {
       </div>
       {canAcct && (
         <div className="grid g4 mb16">
-          <Kpi icon={<Banknote size={15} />} label="Cash & bank" value={money0(cash)} sub="GL 1100 + 1110" />
+          <Kpi icon={<Banknote size={15} />} label="Cash & bank" value={money0(cash)} sub="all cash accounts" />
           <Kpi icon={<Wallet size={15} />} label="Receivables" value={money0(ar)} sub={<Link to="/receivables">customers + platforms</Link>} />
           <Kpi icon={<Landmark size={15} />} label="Payables" value={money0(ap)} sub={<Link to="/purchasing?tab=payables">supplier invoices</Link>} />
           <Kpi icon={<Boxes size={15} />} label="Inventory value" value={money0(inv)} sub={<Link to="/inventory">weighted average cost</Link>} />

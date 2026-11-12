@@ -1,6 +1,6 @@
 import type { Bom, BomComponent, BomVersion, DB, ID, ModifierOption, Product, ProductionOrder } from './types';
 import { Ctx, audit, docNo, fail, nid, product } from './core';
-import { cr, dr, invAccount, post } from './accounting';
+import { cr, dr, invAccount, post, whDim } from './accounting';
 import { avgCost, globalAvgCost, moveStock } from './inventory';
 import { addDays, dayKey, r2, r3 } from '../lib/util';
 
@@ -145,8 +145,8 @@ export function recordProduction(d: DB, ctx: Ctx, id: ID, p: { outputQty: number
   if (out > 0) moveStock(d, ctx, { productId: po.productId, warehouseId: po.warehouseId, qty: out, type: 'prod_output', refType: 'production', refId: po.id, value: outputCost });
   // waste units never enter stock; their cost is expensed to 5100 and kept on the batch record
   const jid = post(d, ctx, {
-    memo: `Production ${po.no}: ${out} ${outProd.unit} ${outProd.name}` + (waste ? ` (+${waste} waste)` : ''), refType: 'production', refId: po.id,
-    lines: [dr(invAccount(outProd.kind), outputCost), dr('5100', wasteCost), ...Object.entries(credits).map(([a, x]) => cr(a, x)), cr('5400', conversion)],
+    memo: `Production ${po.no}: ${out} ${outProd.unit} ${outProd.name}` + (waste ? ` (+${waste} waste)` : ''), refType: 'production', refId: po.id, dim: whDim(d, po.warehouseId),
+    lines: [dr(invAccount(outProd.kind), outputCost), dr('waste', wasteCost), ...Object.entries(credits).map(([a, x]) => cr(a, x)), cr('conversion_absorbed', conversion)],
   });
   po.batches.push({ ts: ctx.now, outputQty: out, wasteQty: waste, materialCost: materials, conversionCost: conversion, wasteCost, unitCost: out > 0 ? r2(outputCost / out) : 0, journalId: jid });
   po.status = 'in_progress';

@@ -15,7 +15,7 @@ import { enqueueJob, markPrinted } from '../domain/printing';
 export function QR({ data, size = 140 }: { data: string; size?: number }) {
   const [svg, setSvg] = useState('');
   useEffect(() => { let on = true; qrSvg(data, size).then((s) => on && setSvg(s)).catch(() => undefined); return () => { on = false; }; }, [data, size]);
-  return <div className="qr-box" style={{ width: size, height: size, background: '#fff', padding: 6, borderRadius: 8, display: 'inline-block', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: svg }} aria-label="QR code" />;
+  return <div className="qr-box" style={{ width: size, height: size, background: '#fff', padding: 6, borderRadius: 8, display: 'inline-block', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: svg }} role="img" aria-label="QR code" />;
 }
 
 export function DocPreview({ doc }: { doc: PrintDoc }) {

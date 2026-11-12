@@ -76,7 +76,7 @@ export default function POS() {
     <>
       <PageHead title="Point of sale" desc={`${branch.name} · stock is deducted from ${db.warehouses.find((w) => w.id === wh)?.name}`}
         actions={<>
-          {branches.length > 1 && <select className="select sm" style={{ width: 'auto' }} value={branchId} onChange={(e) => setBranchId(e.target.value)}>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>}
+          {branches.length > 1 && <select aria-label="Branch" className="select sm" style={{ width: 'auto' }} value={branchId} onChange={(e) => setBranchId(e.target.value)}>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>}
           {parked.length > 0 && <Button size="sm" onClick={() => { const p = parked[0]; setCart(p.cart); setCustomerId(p.customerId); setParked((x) => x.slice(1)); }}><Play size={14} /> Recall ({parked.length})</Button>}
         </>} />
       <div className="pos">

@@ -1,6 +1,6 @@
 import type { DB, GRNLine, ID, PayMethod, PurchaseOrder, SupplierInvoice } from './types';
 import { Ctx, audit, docNo, fail, nid, product } from './core';
-import { cashAccount, cr, dr, invAccount, post } from './accounting';
+import { cashAccount, cr, dr, invAccount, post, purchaseVatRate } from './accounting';
 import { moveStock } from './inventory';
 import { addDays, r2, r3 } from '../lib/util';
 
@@ -70,12 +70,12 @@ export function receiveGoods(
     grnLines.push({ productId: l.productId, qty: l.qty, unitCost: pl.unitCost, landedUnit: r2(share / l.qty), lot: l.lot, expiry: l.expiry });
   });
   const net = r2(goods);
-  const vat = sup.vatable && d.org.vatRegistered ? r2(net * d.org.vatRate) : 0;
+  const vat = sup.vatable ? r2(net * purchaseVatRate(d, p.date ?? ctx.now)) : 0;
   const amount = r2(net + vat + landed);
   const date = p.date ?? ctx.now;
   const jid = post(d, ctx, {
     date, memo: `Goods receipt from ${sup.name}`, refType: 'grn', refId: grnId,
-    lines: [...Object.entries(debits).map(([a, v]) => dr(a, v)), dr('1300', vat), cr('2100', amount)],
+    lines: [...Object.entries(debits).map(([a, v]) => dr(a, v)), dr('input_vat', vat), cr('ap', amount)],
   });
   d.apInvoices.push({
     id: invId, no: docNo(d, 'AP'), supplierId: sup.id, poId: po.id, grnId, invoiceNo: p.invoiceNo || `INV-${sup.code}-${grnId}`, date,
@@ -128,8 +128,8 @@ export function paySupplier(
   const jid = post(d, ctx, {
     memo: `Supplier payment ${d.suppliers.find((s) => s.id === p.supplierId)?.name}`, refType: 'supplier_payment', refId: id,
     lines: p.method === 'deposit'
-      ? [dr('2100', allocTotal), cr('1140', allocTotal)]
-      : [dr('2100', allocTotal), dr('1140', deposit), cr(cashAccount(p.method), p.amount)],
+      ? [dr('ap', allocTotal), cr('supplier_deposit', allocTotal)]
+      : [dr('ap', allocTotal), dr('supplier_deposit', deposit), cr(cashAccount(p.method), p.amount)],
   });
   d.supplierPayments.push({ id, no: docNo(d, 'SPY'), supplierId: p.supplierId, ts: ctx.now, amount: p.amount, method: p.method, allocations: allocs, deposit, note: p.note, journalId: jid });
   return id;
@@ -152,9 +152,9 @@ export function returnToSupplier(
   }
   if (!rl.length) fail('INVALID', 'Add at least one line');
   value = r2(value);
-  const vat = sup.vatable && d.org.vatRegistered ? r2(value * d.org.vatRate) : 0;
+  const vat = sup.vatable ? r2(value * purchaseVatRate(d, ctx.now)) : 0;
   const amount = r2(value + vat);
-  post(d, ctx, { memo: `Supplier credit note ${sup.name}: ${p.reason}`, refType: 'supplier_return', refId: id, lines: [dr('2100', amount), ...Object.entries(credits).map(([a, v]) => cr(a, v)), cr('1300', vat)] });
+  post(d, ctx, { memo: `Supplier credit note ${sup.name}: ${p.reason}`, refType: 'supplier_return', refId: id, lines: [dr('ap', amount), ...Object.entries(credits).map(([a, v]) => cr(a, v)), cr('input_vat', vat)] });
   if (p.invoiceId) {
     const inv = d.apInvoices.find((i) => i.id === p.invoiceId);
     if (inv) {
@@ -162,7 +162,7 @@ export function returnToSupplier(
       inv.status = apOpen(inv) <= 0.004 ? 'paid' : inv.paid > 0 ? 'partial' : 'open';
     }
   }
-  d.supplierReturns.push({ id, no: docNo(d, 'SRT'), supplierId: sup.id, warehouseId: p.warehouseId, ts: ctx.now, reason: p.reason, lines: rl, amount, invoiceId: p.invoiceId });
+  d.supplierReturns.push({ id, no: docNo(d, 'SRT'), supplierId: sup.id, warehouseId: p.warehouseId, ts: ctx.now, reason: p.reason, lines: rl, amount, vat, invoiceId: p.invoiceId });
   audit(d, ctx, 'purchase.return', 'supplier', sup.id, `Return ${amount} to ${sup.name}: ${p.reason}`, 'warn');
   return id;
 }

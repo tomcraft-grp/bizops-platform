@@ -8,7 +8,7 @@ import { debounce } from '../lib/util';
 
 setAutoFreeze(false);
 const KEY = 'db';
-const VERSION = 4;
+const VERSION = 5;
 
 export type Theme = 'light' | 'dark' | 'system';
 interface UIState {

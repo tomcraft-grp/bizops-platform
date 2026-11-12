@@ -16,6 +16,7 @@ export interface Org {
   vatRate: number; vatRegistered: boolean; currency: 'THB';
   costingMethod: 'WAC'; allowNegativeStock: boolean; allocateOpex: 'none' | 'revenue';
   receiptFooter: string; promptPayId: string; pointValue: number;
+  fiscalYearStart: string; accountingBasis: 'accrual' | 'cash'; taxInclusivePricing: boolean; defaultTaxCode: string; requireJournalApproval: boolean;
 }
 export interface Branch { id: ID; code: string; name: string; type: 'store' | 'kitchen' | 'online'; defaultWarehouseId: ID; address: string }
 export interface Warehouse { id: ID; code: string; name: string; branchId: ID; kind: 'store' | 'central' | 'kitchen' }
@@ -91,7 +92,7 @@ export interface SupplierPayment {
 }
 export interface SupplierReturn {
   id: ID; no: string; supplierId: ID; warehouseId: ID; ts: string; reason: string;
-  lines: { productId: ID; qty: number; unitCost: number }[]; amount: number; invoiceId?: ID;
+  lines: { productId: ID; qty: number; unitCost: number }[]; amount: number; vat?: number; invoiceId?: ID;
 }
 
 // ---------- BOM & production
@@ -123,7 +124,7 @@ export interface Order {
   orderType: OrderType; status: OrderStatus; statusLog: { ts: string; status: OrderStatus; by: ID; note?: string }[];
   createdAt: string; recognizedAt?: string; lines: OrderLine[];
   subtotal: number; discountTotal: number; total: number; platformVoucher: number; vatRate: number;
-  collectedBy: 'merchant' | 'platform'; payLater?: boolean; promotions: AppliedPromo[]; couponId?: ID;
+  collectedBy: 'merchant' | 'platform'; payLater?: boolean; taxCode?: string; taxBase?: number; vatAmount?: number; taxRuleVersion?: number; settledAmount?: number; promotions: AppliedPromo[]; couponId?: ID;
   pointsEarned: number; bonusMult?: number; bonusFixed?: number; fees: { commission: number; paymentFee: number; shippingSubsidy: number; estimated: boolean };
   settlementId?: ID; creditNoted: number; refundsPaid: number; idempotencyKey?: string; note?: string; createdBy: ID;
   shipping?: { carrier?: string; tracking?: string; recipient?: string; address?: string }; cancelledReason?: string;
@@ -206,11 +207,25 @@ export interface EventSelection {
 export interface EventAdminAction { id: ID; eventId: ID; ts: string; by: ID; action: 'release' | 'reset_board' | 'reset_event' | 'pause' | 'resume' | 'close' | 'winner' | 'activate'; detail: string; affected: number }
 
 // ---------- accounting
-export interface Account { code: string; name: string; type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'; normal: 'debit' | 'credit'; group: string; contra?: boolean }
+export type FsLine = 'cash' | 'receivables' | 'inventory' | 'tax_asset' | 'other_assets' | 'fixed_assets' | 'payables' | 'tax_payable' | 'customer_liabilities' | 'loans' | 'equity'
+  | 'revenue' | 'contra_revenue' | 'cogs' | 'channel_costs' | 'opex' | 'other_income' | 'other_expense';
+export type ControlKind = 'ar' | 'platform' | 'ap' | 'inventory' | 'cash_bank' | 'customer_credit' | 'tax' | 'supplier_deposit';
+export interface Account {
+  code: string; name: string; nameTh: string; type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'; normal: 'debit' | 'credit'; group: string; contra?: boolean;
+  parent?: string; posting: boolean; system?: boolean; control?: ControlKind; fsLine: FsLine; cashFlow?: 'cash' | 'operating' | 'investing' | 'financing';
+  taxCode?: string; active: boolean; effectiveFrom: string; inactiveFrom?: string; dims?: ('branch' | 'channel')[];
+}
+export interface TaxCode { id: ID; code: string; name: string; kind: 'vat' | 'zero' | 'exempt' | 'out_of_scope' | 'non_creditable'; rate: number; creditable: boolean; effectiveFrom: string; effectiveTo?: string; version: number; note?: string }
+export interface MappingEntry { code: string; from: string }
+export interface MappingChange { id: ID; role: string; toCode: string; effectiveFrom: string; reason: string; proposedBy: ID; proposedAt: string; status: 'pending' | 'approved' | 'rejected'; decidedBy?: ID; decidedAt?: string; decisionNote?: string }
+export interface JournalDraft { id: ID; no: string; date: string; memo: string; lines: { account: string; debit: number; credit: number; memo?: string }[]; createdBy: ID; createdAt: string; status: 'draft' | 'submitted' | 'approved' | 'rejected'; submittedAt?: string; decidedBy?: ID; decidedAt?: string; reason?: string; journalId?: ID }
+export interface OpeningSet { id: ID; no: string; asOf: string; source: string; preparedBy: ID; createdAt: string; status: 'draft' | 'reviewed' | 'approved' | 'posted'; reviewedBy?: ID; approvedBy?: ID; lines: { account: string; debit: number; credit: number; memo?: string }[]; journalId?: ID; note?: string }
+export interface SetupState { version: number; status: 'draft' | 'approved'; approvedBy?: ID; approvedAt?: string; accountantReviewed: boolean; note: string; stageOwners: Record<string, ID>; history: { ts: string; by: ID; action: string; detail: string }[] }
 export interface JournalLine { account: string; debit: number; credit: number; memo?: string }
+export interface JournalDim { branchId?: ID; channel?: ChannelCode }
 export interface Journal {
   id: ID; no: string; date: string; memo: string; refType: string; refId?: ID; lines: JournalLine[];
-  status: 'posted' | 'reversed'; reverses?: ID; reversedBy?: ID; createdBy: ID; manual?: boolean;
+  status: 'posted' | 'reversed'; reverses?: ID; reversedBy?: ID; createdBy: ID; manual?: boolean; dim?: JournalDim; approvedBy?: ID;
 }
 export interface Expense { id: ID; no: string; date: string; account: string; vendor: string; amount: number; vat: number; paidFrom: 'cash' | 'bank'; branchId?: ID; note?: string; journalId?: ID; mediaId?: ID }
 
@@ -257,6 +272,7 @@ export interface DB {
   pointsLedger: PointEntry[]; rewards: Reward[]; rewardRedemptions: RewardRedemption[]; loyalty: LoyaltyConfig;
   events: EventDoc[]; entitlements: Entitlement[]; selections: EventSelection[]; eventActions: EventAdminAction[]; eventIndex: Record<string, ID>;
   accounts: Account[]; journals: Journal[]; expenses: Expense[]; reconciled: Record<string, boolean>;
+  taxCodes: TaxCode[]; postingMap: Record<string, MappingEntry[]>; mappingChanges: MappingChange[]; journalDrafts: JournalDraft[]; openingSets: OpeningSet[]; setup: SetupState;
   printers: Printer[]; printRules: PrintRule[]; printJobs: PrintJob[];
   media: MediaFile[]; mediaAccess: MediaAccess[]; audit: AuditEntry[];
 }
