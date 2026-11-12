@@ -1,0 +1,14 @@
+import { buildSeed } from '../src/domain/seed';
+import { runIntegrityChecks, runSelfTests } from '../src/domain/integrity';
+const t0 = Date.now();
+const db = buildSeed(new Date());
+console.log('seed ms', Date.now() - t0);
+console.log({ orders: db.orders.length, journals: db.journals.length, movements: db.movements.length, receipts: db.receipts.length, allocs: db.allocations.length, points: db.pointsLedger.length, sel: db.selections.length, ents: db.entitlements.length, ext: db.externalOrders.length, settlements: db.settlements.length, jobs: db.printJobs.length, slips: db.slips.length, prod: db.productionOrders.length, transfers: db.transfers.length, pos: db.purchaseOrders.length });
+console.log('seed errors', db._seedErrors?.length);
+const byMsg: Record<string, number> = {};
+for (const e of db._seedErrors ?? []) byMsg[e.slice(0, 110)] = (byMsg[e.slice(0, 110)] || 0) + 1;
+console.log(byMsg);
+for (const c of runIntegrityChecks(db, new Date().toISOString())) console.log(c.status.toUpperCase().padEnd(5), c.title, '|', c.detail, c.evidence?.length ? c.evidence : '');
+const ctx = { now: new Date().toISOString(), userId: 'U1' };
+for (const r of runSelfTests(db, ctx)) console.log(r.passed ? 'PASS' : 'FAIL', r.title, '|', r.detail);
+console.log('json MB', (JSON.stringify(db).length / 1e6).toFixed(2));
