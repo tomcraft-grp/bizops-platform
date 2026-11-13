@@ -1,6 +1,6 @@
 import { Children, cloneElement, createContext, isValidElement, ReactElement, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronLeft, ChevronRight, Info, Search, X, XCircle } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronLeft, ChevronRight, Eye, EyeOff, Info, Search, X, XCircle } from 'lucide-react';
 import type { ChannelCode, DB, OrderStatus } from '../domain/types';
 import { CHANNELS, STATUS_LABEL } from '../domain/meta';
 import { Ctx, can, hasPerm, userPerms, currentUser } from '../domain/core';
@@ -132,6 +132,21 @@ export function Field({ label, hint, children, full }: { label?: ReactNode; hint
   const lang = useLang();
   const child = isValidElement(children) && label && !(children.props as Record<string, unknown>)['aria-label'] && !(children.props as Record<string, unknown>)['aria-labelledby'] ? cloneElement(children as ReactElement<Record<string, unknown>>, { 'aria-labelledby': id }) : children;
   return <div className={cx('field', full && 'full')}>{label && <label id={id}>{tr(lang, label)}</label>}{child}{hint && <span className="hint">{tr(lang, hint)}</span>}</div>;
+}
+/** Password field with a show/hide toggle inside it. Toggling never clears or submits the value. */
+export function PasswordInput(p: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'>) {
+  const [show, setShow] = useState(false);
+  const lang = useLang();
+  const { className, ...r } = p;
+  return (
+    <div className="pw-wrap">
+      <input {...r} type={show ? 'text' : 'password'} className={cx('input', className)} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+      <button type="button" className="pw-toggle" onClick={() => setShow((s) => !s)} disabled={p.disabled}
+        aria-label={t(lang, show ? 'Hide password' : 'Show password')} aria-pressed={show} title={t(lang, show ? 'Hide password' : 'Show password')}>
+        {show ? <EyeOff size={18} aria-hidden /> : <Eye size={18} aria-hidden />}
+      </button>
+    </div>
+  );
 }
 export const Input = (p: React.InputHTMLAttributes<HTMLInputElement> & { sm?: boolean }) => { const { sm, className, ...r } = p; return <input {...r} className={cx('input', sm && 'sm', className)} />; };
 export const Select = (p: React.SelectHTMLAttributes<HTMLSelectElement> & { sm?: boolean }) => {

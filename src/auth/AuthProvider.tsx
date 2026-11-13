@@ -18,6 +18,8 @@ interface AuthState {
   signOut: () => Promise<void>;
   requestPasswordReset: (email: string) => Promise<{ error: string | null }>;
   updatePassword: (newPassword: string) => Promise<{ error: string | null }>;
+  /** Password reset from an email link: verify the one-time token, set the new password, then sign out every session. */
+  completePasswordReset: (tokenHash: string | null, newPassword: string) => Promise<{ error: string | null; expired?: boolean; verified?: boolean }>;
   refreshProfile: () => Promise<void>;
 }
 const AuthContext = createContext<AuthState | null>(null);
@@ -83,10 +85,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error?.message ?? null };
   };
 
+  // The recovery email links to #/reset-password?token_hash=…&type=recovery (see supabase/auth/recovery-email.html).
+  // The token is verified only when the user submits the new password, so mail scanners that pre-open links cannot
+  // use it up. Supabase stores it hashed, makes it single-use and expires it after mailer_otp_exp (1 hour).
+  const completePasswordReset: AuthState['completePasswordReset'] = async (tokenHash, newPassword) => {
+    if (tokenHash) {
+      const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'recovery' });
+      if (error) {
+        const expired = /expired|invalid|not found|otp/i.test(error.message) || error.status === 403;
+        return { error: expired ? 'This reset link has expired or has already been used.' : error.message, expired };
+      }
+    } else {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return { error: 'This reset link has expired or has already been used.', expired: true };
+    }
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    // the token is spent once verified: tell the page to retry with the recovery session, not the token
+    if (error) return { error: error.message, verified: true };
+    // End the recovery session and every other session; the user signs in again with the new password.
+    await supabase.auth.signOut({ scope: 'global' });
+    return { error: null };
+  };
+
   const refreshProfile = async () => { if (session) await loadProfile(session.user.id); };
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, signIn, signOut, requestPasswordReset, updatePassword, refreshProfile }}>
+    <AuthContext.Provider value={{ session, profile, loading, signIn, signOut, requestPasswordReset, updatePassword, completePasswordReset, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

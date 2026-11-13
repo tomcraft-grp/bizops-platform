@@ -360,3 +360,12 @@ details.acc > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
 .phone { position: relative; }
 .dev-item { border: 1px solid var(--border); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--surface-2); }
 .dev-swatch { width: 18px; height: 18px; border-radius: 5px; border: 2px solid; display: inline-grid; place-items: center; margin-right: 6px; vertical-align: -4px; } .dev-swatch i { width: 6px; height: 6px; border-radius: 50%; }
+
+/* ---------- password field with show/hide toggle */
+.pw-wrap { position: relative; }
+.pw-wrap .input { padding-right: 44px; width: 100%; }
+.pw-toggle { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
+.pw-toggle:hover:not(:disabled) { color: var(--text); background: var(--surface-3); }
+.pw-toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; color: var(--text); }
+.pw-toggle:disabled { cursor: default; opacity: .5; }
+.pw-wrap input::-ms-reveal, .pw-wrap input::-ms-clear { display: none; }
