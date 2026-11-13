@@ -63,7 +63,7 @@ export default function CustomerApp() {
   useLayoutFont(cfg);
   const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
   const device = useDeviceOf(bodyEl);
-  const navTabs = cfg ? cfg.nav.filter((n) => n.visible).flatMap((n) => { const t = tabs.find((x) => x[0] === n.key); return t ? [[t[0], t[1], n.label] as [Tab, JSX.Element, string]] : []; }) : tabs;
+  const navTabs = cfg ? cfg.nav.filter((n) => n.visible || n.key === 'home' || n.key === 'profile').flatMap((n) => { const t = tabs.find((x) => x[0] === n.key); return t ? [[t[0], t[1], n.label] as [Tab, JSX.Element, string]] : []; }) : tabs;
   useEffect(() => { if (navTabs.length && !navTabs.some((t) => t[0] === tab)) setTab(navTabs[0][0]); }, [navTabs.map((t) => t[0]).join()]); // eslint-disable-line react-hooks/exhaustive-deps
   // Intro pop-up: once per published version unless the member ticks "don't show again" (staff previews always show it).
   const introKey = layout && !layout.preview ? `bizops.intro.${CUSTOMER_APP_ID}.v${layout.versionNo}` : null;

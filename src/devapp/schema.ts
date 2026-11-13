@@ -12,6 +12,8 @@ export const DEVICES: { v: Device; label: string; width: number }[] = [
 export const deviceForWidth = (w: number): Device => (w >= 1000 ? 'desktop' : w >= 600 ? 'tablet' : 'mobile');
 
 export type TabKey = 'home' | 'shop' | 'rewards' | 'pay' | 'events' | 'profile';
+/** Tabs a layout may rename or reorder but never hide. */
+export const ALWAYS_VISIBLE: TabKey[] = ['home', 'profile'];
 export const TAB_KEYS: TabKey[] = ['home', 'shop', 'rewards', 'pay', 'events', 'profile'];
 
 export const FONTS: { v: string; label: string; css: string; google?: string }[] = [
@@ -211,6 +213,9 @@ export function validateLayout(c: unknown): Issue[] {
     });
     const home = c.nav.find((t) => isObj(t) && t.key === 'home') as NavTab | undefined;
     if (!home || !home.visible) bad('nav', 'The Home tab must stay visible');
+    // LINE members edit their name / phone / consent on the profile tab, so it can be renamed or moved but not hidden
+    const prof = c.nav.find((t) => isObj(t) && t.key === 'profile') as NavTab | undefined;
+    if (prof && !prof.visible) bad('nav', 'The profile tab must stay visible (members edit their details there)');
   }
   if (!Array.isArray(c.home)) bad('home', 'Home sections are missing');
   else {
@@ -267,7 +272,8 @@ export function validateLayout(c: unknown): Issue[] {
 /** Fill in fields added by later code (backward compatible): a stored config keeps working when new options appear. */
 export function normalizeLayout(c: LayoutConfig): LayoutConfig {
   const base = defaultLayout(c.brand?.title);
-  const nav = [...c.nav];
+  // Home and profile can never be hidden (also repairs layouts stored before this rule existed)
+  const nav = c.nav.map((t) => (ALWAYS_VISIBLE.includes(t.key) ? { ...t, visible: true } : t));
   for (const t of base.nav) if (!nav.some((x) => x.key === t.key)) nav.push({ ...t, visible: false });
   return {
     ...c,

@@ -10,7 +10,7 @@ import { AppRole, canDo, CustomerApp, Deployment, devapp, LayoutVersion, StaffRo
 import { PhonePreview } from '../devapp/Preview';
 import {
   defaultLayout, Device, DEVICES, diffLayouts, FieldDef, FONTS, LayoutConfig, newSection, normalizeLayout, Section, SECTION_DEFS, sectionDef,
-  PropItem, SectionType, TAB_KEYS, Theme, THEME_PRESETS, validateLayout,
+  ALWAYS_VISIBLE, PropItem, SectionType, TAB_KEYS, Theme, THEME_PRESETS, validateLayout,
 } from '../devapp/schema';
 import { cx, dateTimeFmt } from '../lib/util';
 
@@ -101,7 +101,10 @@ export default function DevApp() {
         const [as, ts] = await Promise.all([devapp.apps(), devapp.templates()]);
         setApps(as); setTemplates(ts);
         if (as[0]) { setAppId(as[0].id); await loadApp(as[0].id); }
-      } catch (e) { setErr((e as Error).message); setRole(null); }
+      } catch (e) { const m = (e as Error).message;
+        // The database part (supabase/migrations/*_customer_app_designer.sql) has not been applied to this project yet
+        setErr(/customer_app_my_role|schema cache|does not exist|Could not find the function/i.test(m) ? tl(lang, 'DEV APP Customer is not set up in the database yet. An administrator needs to apply the DEV APP migration in Supabase.') : m);
+        setRole(null); }
     })();
   }, [loadApp]);
 
@@ -490,14 +493,14 @@ function GlobalProps({ cfg, disabled, change }: { cfg: LayoutConfig; disabled: b
       {tab === 'nav' && <div className="col gap-6">
         {cfg.nav.map((n, i) => (
           <div key={n.key} className="row gap-6">
-            <label className="check" style={{ width: 28 }}><input type="checkbox" checked={n.visible} disabled={disabled || n.key === 'home'} onChange={(e) => change((c) => { c.nav[i].visible = e.target.checked; })} aria-label={n.key} /></label>
+            <label className="check" style={{ width: 28 }}><input type="checkbox" checked={n.visible} disabled={disabled || ALWAYS_VISIBLE.includes(n.key)} onChange={(e) => change((c) => { c.nav[i].visible = e.target.checked; })} aria-label={n.key} /></label>
             <Input sm maxLength={20} value={n.label} disabled={disabled} onChange={(e) => change((c) => { c.nav[i].label = e.target.value; }, 'nav' + i)} aria-label={n.key} />
             <span className="muted mono" style={{ fontSize: 11, width: 56 }}>{n.key}</span>
             <Button size="sm" variant="ghost" icon disabled={disabled || i === 0} onClick={() => change((c) => { [c.nav[i - 1], c.nav[i]] = [c.nav[i], c.nav[i - 1]]; })} aria-label="Move up"><ArrowUp size={13} /></Button>
             <Button size="sm" variant="ghost" icon disabled={disabled || i === cfg.nav.length - 1} onClick={() => change((c) => { [c.nav[i + 1], c.nav[i]] = [c.nav[i], c.nav[i + 1]]; })} aria-label="Move down"><ArrowDown size={13} /></Button>
           </div>
         ))}
-        <span className="hint"><Tx>Home always stays visible. “profile” appears only for members signed in with LINE.</Tx></span>
+        <span className="hint"><Tx>Home and profile always stay visible. “profile” appears only for members signed in with LINE.</Tx></span>
       </div>}
     </div>
   );

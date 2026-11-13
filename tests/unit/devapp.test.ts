@@ -108,3 +108,16 @@ describe('DEV APP Customer: reference-style components', () => {
     expect(validateLayout(normalizeLayout(old as unknown as LayoutConfig))).toEqual([]);
   });
 });
+
+describe('DEV APP Customer: protected tabs', () => {
+  it('the profile tab cannot be hidden (LINE members edit their details there)', () => {
+    const c = defaultLayout(); c.nav.find((n) => n.key === 'profile')!.visible = false;
+    expect(validateLayout(c).some((i) => i.message.includes('profile tab'))).toBe(true);
+  });
+  it('normalize repairs stored layouts that hid home or profile', () => {
+    const c = defaultLayout(); c.nav.forEach((n) => { if (n.key === 'profile') n.visible = false; });
+    const n = normalizeLayout(c);
+    expect(n.nav.find((x) => x.key === 'profile')!.visible).toBe(true);
+    expect(validateLayout(n)).toEqual([]);
+  });
+});
