@@ -14,7 +14,6 @@ export interface Profile {
 }
 interface AuthState {
   session: Session | null; profile: Profile | null; loading: boolean;
-  signUp: (email: string, password: string, displayName?: string) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   requestPasswordReset: (email: string) => Promise<{ error: string | null }>;
@@ -59,10 +58,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  const signUp: AuthState['signUp'] = async (email, password, displayName) => {
-    const { error } = await supabase.auth.signUp({ email, password, options: { data: { display_name: displayName || null } } });
-    return { error: error?.message ?? null };
-  };
 
   const signIn: AuthState['signIn'] = async (email, password) => {
     const { data: failCount, error: rpcErr } = await supabase.rpc('recent_login_failures', { p_email: email, p_minutes: LOCKOUT_MINUTES });
@@ -91,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshProfile = async () => { if (session) await loadProfile(session.user.id); };
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, signUp, signIn, signOut, requestPasswordReset, updatePassword, refreshProfile }}>
+    <AuthContext.Provider value={{ session, profile, loading, signIn, signOut, requestPasswordReset, updatePassword, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
