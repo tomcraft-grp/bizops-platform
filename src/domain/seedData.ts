@@ -8,7 +8,7 @@ export const ROLES: Role[] = [
   { id: 'role-owner', name: 'Owner / Super Admin', description: 'Full access including settings, period close and permissions', permissions: ['*'], system: true },
   {
     id: 'role-manager', name: 'Manager', description: 'Branch operations, approvals and branch profitability; no global financial settings', system: true,
-    permissions: ['dashboard:*', 'pos:*', 'orders:*', 'channels:*', 'kds:*', 'customers:*', 'receivables:*', 'loyalty:*', 'promotions:*', 'events:*', 'events:reset', 'catalog:*', 'inventory:*', 'purchasing:*', 'production:*', 'reports:*', 'profit:view', 'printing:*', 'media:*', 'team:view', 'finance:cost', 'finance:profit', 'accounting:view'],
+    permissions: ['dashboard:*', 'pos:*', 'orders:*', 'channels:*', 'kds:*', 'customers:*', 'receivables:*', 'loyalty:*', 'promotions:*', 'events:*', 'events:reset', 'catalog:*', 'inventory:*', 'purchasing:*', 'production:*', 'reports:*', 'profit:view', 'printing:*', 'media:*', 'team:view', 'finance:cost', 'finance:profit', 'accounting:view', 'feedback:view', 'feedback:manage'],
   },
   { id: 'role-cashier', name: 'Cashier', description: 'Create sales and receive payments. Cannot see product cost or profit', system: true, permissions: ['pos:view', 'pos:create', 'orders:view', 'orders:create', 'customers:view', 'customers:create', 'receivables:view', 'receivables:create', 'loyalty:view', 'events:view', 'printing:view', 'printing:create', 'catalog:view', 'promotions:view'] },
   { id: 'role-kitchen', name: 'Kitchen staff', description: 'Kitchen display only', system: true, permissions: ['kds:view', 'kds:edit', 'orders:view', 'printing:view'] },
@@ -230,7 +230,7 @@ export const PRINT_RULES: PrintRule[] = [
 
 export function emptyDB(nowIso: string): DB {
   return {
-    version: 5,
+    version: 6,
     meta: { seq: {}, lockedUntil: null, currentUserId: 'U1', seededAt: nowIso, idem: {} },
     org: {
       name: 'Sabaidee Roasters & Café', legalName: 'Sabaidee Roasters Co., Ltd.', taxId: '0105559012345', address: '88 Phahonyothin Rd, Ari, Bangkok 10400', phone: '02-555-0188',

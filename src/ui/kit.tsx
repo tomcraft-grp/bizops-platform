@@ -4,9 +4,10 @@ import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronLeft, ChevronRi
 import type { ChannelCode, DB, OrderStatus } from '../domain/types';
 import { CHANNELS, STATUS_LABEL } from '../domain/meta';
 import { Ctx, can, hasPerm, userPerms, currentUser } from '../domain/core';
-import { act, toast, useDB, useStore } from '../domain/store';
+import { act, toast, useDB, useLang, useStore } from '../domain/store';
 import { cx, money } from '../lib/util';
 import { reconciliationMatrix } from '../domain/setup';
+import { t, tr } from '../lib/i18n';
 
 // ---------- action runner (transaction + toast)
 export function useRun() {
@@ -34,17 +35,19 @@ export const useScope = () => useStore((s) => s.ui.branchScope);
 // ---------- basic bits
 type Tone = 'good' | 'warn' | 'bad' | 'info' | 'serious' | '';
 export function Badge({ tone = '', children, dot }: { tone?: Tone; children: ReactNode; dot?: boolean }) {
-  return <span className={cx('badge', tone)}>{dot && <i className="dot" />}{children}</span>;
+  const lang = useLang();
+  return <span className={cx('badge', tone)}>{dot && <i className="dot" />}{tr(lang, children)}</span>;
 }
 export function Button({ variant, size, icon, loading, className, children, ...p }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'danger' | 'ghost' | 'soft'; size?: 'sm' | 'lg'; icon?: boolean; loading?: boolean }) {
   return <button type="button" {...p} className={cx('btn', variant, size, icon && 'icon', className)}>{children}</button>;
 }
 export function Card({ title, sub, actions, children, className, flush, footer }: { title?: ReactNode; sub?: ReactNode; actions?: ReactNode; children?: ReactNode; className?: string; flush?: boolean; footer?: ReactNode }) {
+  const lang = useLang();
   return (
     <section className={cx('card', className)}>
       {(title || actions) && (
         <div className="card-h">
-          <div><h2>{title}</h2>{sub && <div className="sub">{sub}</div>}</div>
+          <div><h2>{tr(lang, title)}</h2>{sub && <div className="sub">{tr(lang, sub)}</div>}</div>
           {actions && <div className="row">{actions}</div>}
         </div>
       )}
@@ -54,31 +57,35 @@ export function Card({ title, sub, actions, children, className, flush, footer }
   );
 }
 export function Kpi({ label, value, sub, icon, delta, tone }: { label: ReactNode; value: ReactNode; sub?: ReactNode; icon?: ReactNode; delta?: number | null; tone?: 'good' | 'bad' }) {
+  const lang = useLang();
   return (
     <div className="card kpi">
-      <div className="lbl">{icon && <span className="kpi-ico">{icon}</span>}{label}</div>
+      <div className="lbl">{icon && <span className="kpi-ico">{icon}</span>}{tr(lang, label)}</div>
       <div className={cx('val', tone)}>{value}</div>
       <div className="sub">
         {delta != null && isFinite(delta) && <span className={cx('delta', delta >= 0 ? 'up' : 'down')}>{delta >= 0 ? <ArrowUp size={12} style={{ verticalAlign: -1 }} /> : <ArrowDown size={12} style={{ verticalAlign: -1 }} />}{Math.abs(delta * 100).toFixed(1)}%</span>}
-        {sub}
+        {tr(lang, sub)}
       </div>
     </div>
   );
 }
 export function PageHead({ title, desc, actions, crumb }: { title: ReactNode; desc?: ReactNode; actions?: ReactNode; crumb?: string }) {
+  const lang = useLang();
   return (
     <div className="page-head">
-      <div>{crumb && <div className="crumb">{crumb}</div>}<h1>{title}</h1>{desc && <p>{desc}</p>}</div>
+      <div>{crumb && <div className="crumb">{tr(lang, crumb)}</div>}<h1>{tr(lang, title)}</h1>{desc && <p>{tr(lang, desc)}</p>}</div>
       {actions && <div className="row wrap">{actions}</div>}
     </div>
   );
 }
 export function Empty({ icon, title, hint, action }: { icon?: ReactNode; title: string; hint?: ReactNode; action?: ReactNode }) {
-  return <div className="empty"><div className="ico">{icon ?? <Search size={22} />}</div><b>{title}</b>{hint && <div className="muted" style={{ maxWidth: 380 }}>{hint}</div>}{action}</div>;
+  const lang = useLang();
+  return <div className="empty"><div className="ico">{icon ?? <Search size={22} />}</div><b>{tr(lang, title)}</b>{hint && <div className="muted" style={{ maxWidth: 380 }}>{tr(lang, hint)}</div>}{action}</div>;
 }
 export function Banner({ tone = 'info', children, icon }: { tone?: 'info' | 'warn' | 'bad' | 'good'; children: ReactNode; icon?: ReactNode }) {
+  const lang = useLang();
   const I = tone === 'bad' ? XCircle : tone === 'warn' ? AlertTriangle : tone === 'good' ? CheckCircle2 : Info;
-  return <div className={cx('banner', tone === 'info' ? '' : tone)}>{icon ?? <I size={16} />}<div>{children}</div></div>;
+  return <div className={cx('banner', tone === 'info' ? '' : tone)}>{icon ?? <I size={16} />}<div>{tr(lang, children)}</div></div>;
 }
 const rgb = (hex: string): [number, number, number] => { const n = parseInt(hex.replace('#', ''), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 const lumOf = ([r, g, b]: [number, number, number]) => { const c = [r, g, b].map((v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
@@ -113,8 +120,9 @@ export function Skeleton({ h = 16, w = '100%' }: { h?: number; w?: number | stri
 // ---------- forms
 export function Field({ label, hint, children, full }: { label?: ReactNode; hint?: ReactNode; children: ReactNode; full?: boolean }) {
   const id = useId();
+  const lang = useLang();
   const child = isValidElement(children) && label && !(children.props as Record<string, unknown>)['aria-label'] && !(children.props as Record<string, unknown>)['aria-labelledby'] ? cloneElement(children as ReactElement<Record<string, unknown>>, { 'aria-labelledby': id }) : children;
-  return <div className={cx('field', full && 'full')}>{label && <label id={id}>{label}</label>}{child}{hint && <span className="hint">{hint}</span>}</div>;
+  return <div className={cx('field', full && 'full')}>{label && <label id={id}>{tr(lang, label)}</label>}{child}{hint && <span className="hint">{tr(lang, hint)}</span>}</div>;
 }
 export const Input = (p: React.InputHTMLAttributes<HTMLInputElement> & { sm?: boolean }) => { const { sm, className, ...r } = p; return <input {...r} className={cx('input', sm && 'sm', className)} />; };
 export const Select = (p: React.SelectHTMLAttributes<HTMLSelectElement> & { sm?: boolean }) => {
@@ -131,10 +139,12 @@ export function SearchBox({ value, onChange, placeholder }: { value: string; onC
   return <div className="input-icon"><Search /><input className="input" value={value} placeholder={placeholder ?? 'Search…'} onChange={(e) => onChange(e.target.value)} /></div>;
 }
 export function Seg<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: { v: T; label: ReactNode }[] }) {
-  return <div className="seg" role="tablist">{options.map((o) => <button key={o.v} className={cx(value === o.v && 'on')} onClick={() => onChange(o.v)} role="tab" aria-selected={value === o.v}>{o.label}</button>)}</div>;
+  const lang = useLang();
+  return <div className="seg" role="tablist">{options.map((o) => <button key={o.v} className={cx(value === o.v && 'on')} onClick={() => onChange(o.v)} role="tab" aria-selected={value === o.v}>{tr(lang, o.label)}</button>)}</div>;
 }
 export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; onChange: (v: T) => void; tabs: { v: T; label: ReactNode; count?: number | string }[] }) {
-  return <div className="tabs" role="tablist">{tabs.map((t) => <button key={t.v} className={cx(value === t.v && 'on')} onClick={() => onChange(t.v)} role="tab">{t.label}{t.count != null && t.count !== '' && <span className="count">{t.count}</span>}</button>)}</div>;
+  const lang = useLang();
+  return <div className="tabs" role="tablist">{tabs.map((x) => <button key={x.v} className={cx(value === x.v && 'on')} onClick={() => onChange(x.v)} role="tab">{tr(lang, x.label)}{x.count != null && x.count !== '' && <span className="count">{x.count}</span>}</button>)}</div>;
 }
 export const Check = ({ checked, onChange, children }: { checked: boolean; onChange: (v: boolean) => void; children?: ReactNode }) => (
   <label className="check"><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />{children}</label>
@@ -146,10 +156,11 @@ function useEsc(fn: () => void) {
 }
 export function Modal({ title, onClose, children, footer, size, desc }: { title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; size?: 'sm' | 'lg' | 'xl'; desc?: ReactNode }) {
   useEsc(onClose);
+  const lang = useLang();
   return createPortal(
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={cx('modal', size)} role="dialog" aria-modal="true">
-        <div className="modal-h"><div><h2>{title}</h2>{desc && <div className="muted" style={{ marginTop: 2 }}>{desc}</div>}</div><Button variant="ghost" icon size="sm" onClick={onClose} aria-label="Close"><X size={18} /></Button></div>
+        <div className="modal-h"><div><h2>{tr(lang, title)}</h2>{desc && <div className="muted" style={{ marginTop: 2 }}>{tr(lang, desc)}</div>}</div><Button variant="ghost" icon size="sm" onClick={onClose} aria-label={t(lang, 'Close')}><X size={18} /></Button></div>
         <div className="modal-b">{children}</div>
         {footer && <div className="modal-f">{footer}</div>}
       </div>
@@ -157,10 +168,11 @@ export function Modal({ title, onClose, children, footer, size, desc }: { title:
 }
 export function Drawer({ title, onClose, children, footer, sub }: { title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; sub?: ReactNode }) {
   useEsc(onClose);
+  const lang = useLang();
   return createPortal(
     <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <aside className="drawer" role="dialog" aria-modal="true">
-        <div className="modal-h"><div><h2>{title}</h2>{sub && <div className="muted">{sub}</div>}</div><Button variant="ghost" icon size="sm" onClick={onClose} aria-label="Close"><X size={18} /></Button></div>
+        <div className="modal-h"><div><h2>{tr(lang, title)}</h2>{sub && <div className="muted">{tr(lang, sub)}</div>}</div><Button variant="ghost" icon size="sm" onClick={onClose} aria-label={t(lang, 'Close')}><X size={18} /></Button></div>
         <div className="modal-b" style={{ flex: 1 }}>{children}</div>
         {footer && <div className="modal-f">{footer}</div>}
       </aside>
@@ -233,6 +245,7 @@ export function DataTable<T>({ rows, cols, rowKey, onRow, pageSize = 12, search,
   const [q, setQ] = useState('');
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState(initialSort ?? null);
+  const lang = useLang();
   const filtered = useMemo(() => {
     let r = rows;
     if (q && search) { const s = q.toLowerCase(); r = r.filter((x) => search(x).toLowerCase().includes(s)); }
@@ -254,7 +267,7 @@ export function DataTable<T>({ rows, cols, rowKey, onRow, pageSize = 12, search,
           <thead><tr>{cols.map((c) => (
             <th key={c.key} className={cx(c.num && 'num', c.right && 'r', c.hideSm && 'hide-sm')} style={{ width: c.width, cursor: c.sort ? 'pointer' : undefined }}
               onClick={() => c.sort && setSort((s) => (s?.key === c.key ? { key: c.key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: 'asc' }))}>
-              {c.header}{sort?.key === c.key && (sort.dir === 'asc' ? ' ↑' : ' ↓')}
+              {tr(lang, c.header)}{sort?.key === c.key && (sort.dir === 'asc' ? ' ↑' : ' ↓')}
             </th>))}</tr></thead>
           <tbody>
             {view.map((r) => (
@@ -275,7 +288,8 @@ export function DataTable<T>({ rows, cols, rowKey, onRow, pageSize = 12, search,
 }
 
 export function KV({ items }: { items: [ReactNode, ReactNode][] }) {
-  return <div className="col gap-6">{items.map(([k, v], i) => <div key={i} className="row between" style={{ alignItems: 'flex-start' }}><span className="muted">{k}</span><span style={{ textAlign: 'right' }}>{v}</span></div>)}</div>;
+  const lang = useLang();
+  return <div className="col gap-6">{items.map(([k, v], i) => <div key={i} className="row between" style={{ alignItems: 'flex-start' }}><span className="muted">{tr(lang, k)}</span><span style={{ textAlign: 'right' }}>{v}</span></div>)}</div>;
 }
 export const Dot = ({ color }: { color: string }) => <i className="ch-dot" style={{ background: color }} />;
 

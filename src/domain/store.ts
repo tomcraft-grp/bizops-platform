@@ -4,17 +4,18 @@ import type { DB } from './types';
 import { Ctx, AppError, currentUser, hasPerm, userPerms } from './core';
 import { buildSeed } from './seed';
 import { kvDel, kvGet, kvSet } from '../lib/idb';
+import { t, type Lang } from '../lib/i18n';
 
 // Structural sharing needs frozen state: with auto-freeze OFF immer re-walks the whole (multi-MB) ledger on every transaction.
 // Measured (qa/PERFORMANCE_TEST_REPORT.md): posting one POS sale ≈195 ms with freeze OFF vs ≈20 ms with freeze ON on the seeded dataset.
 // Consequence: state is read-only outside act() — any accidental in-place mutation now throws instead of silently corrupting the ledger.
 setAutoFreeze(true);
 const KEY = 'db';
-const VERSION = 5;
+const VERSION = 6;
 
 export type Theme = 'light' | 'dark' | 'system';
 interface UIState {
-  theme: Theme; branchScope: string; sidebarOpen: boolean; collapsed: boolean; searchOpen: boolean;
+  theme: Theme; lang: Lang; branchScope: string; sidebarOpen: boolean; collapsed: boolean; searchOpen: boolean;
   toasts: { id: number; kind: 'success' | 'error' | 'info'; text: string }[];
 }
 interface Store {
@@ -22,11 +23,12 @@ interface Store {
 }
 
 const savedTheme = (() => { try { return (localStorage.getItem('bizops.theme') as Theme) || 'system'; } catch { return 'system' as Theme; } })();
+const savedLang = (() => { try { return (localStorage.getItem('bizops.lang') as Lang) || 'en'; } catch { return 'en' as Lang; } })();
 const savedCollapsed = (() => { try { return localStorage.getItem('bizops.collapsed') === '1'; } catch { return false; } })();
 
 export const useStore = create<Store>(() => ({
   db: null as unknown as DB, ready: false, seedErrors: [],
-  ui: { theme: savedTheme, branchScope: 'all', sidebarOpen: false, collapsed: savedCollapsed, searchOpen: false, toasts: [] },
+  ui: { theme: savedTheme, lang: savedLang, branchScope: 'all', sidebarOpen: false, collapsed: savedCollapsed, searchOpen: false, toasts: [] },
 }));
 
 // Persist immediately, not debounced: a debounced write was found (E2E) to lose the last action
@@ -91,13 +93,18 @@ export const setUI = (patch: Partial<UIState>) => useStore.setState((s) => ({ ui
 let toastId = 1;
 export function toast(kind: 'success' | 'error' | 'info', text: string) {
   const id = toastId++;
-  setUI({ toasts: [...useStore.getState().ui.toasts, { id, kind, text }] });
-  setTimeout(() => setUI({ toasts: useStore.getState().ui.toasts.filter((t) => t.id !== id) }), kind === 'error' ? 7000 : 3500);
+  const text2 = t(useStore.getState().ui.lang, text);
+  setUI({ toasts: [...useStore.getState().ui.toasts, { id, kind, text: text2 }] });
+  setTimeout(() => setUI({ toasts: useStore.getState().ui.toasts.filter((x) => x.id !== id) }), kind === 'error' ? 7000 : 3500);
 }
-export function setTheme(t: Theme) {
-  try { localStorage.setItem('bizops.theme', t); } catch { /* ignore */ }
-  setUI({ theme: t });
-  applyTheme(t);
+export function setTheme(th: Theme) {
+  try { localStorage.setItem('bizops.theme', th); } catch { /* ignore */ }
+  setUI({ theme: th });
+  applyTheme(th);
+}
+export function setLang(l: Lang) {
+  try { localStorage.setItem('bizops.lang', l); } catch { /* ignore */ }
+  setUI({ lang: l });
 }
 export function applyTheme(t: Theme) {
   const r = document.documentElement;
@@ -112,3 +119,4 @@ export function toggleCollapsed() {
 
 export const useDB = () => useStore((s) => s.db);
 export const useUI = () => useStore((s) => s.ui);
+export const useLang = () => useStore((s) => s.ui.lang);

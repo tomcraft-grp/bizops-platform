@@ -175,6 +175,11 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .drawer-wrap { position: fixed; inset: 0; background: rgba(10,10,10,.4); z-index: 90; animation: fade .12s; }
 .drawer { position: absolute; right: 0; top: 0; bottom: 0; width: min(560px, 100%); background: var(--surface); box-shadow: var(--shadow-lg); display: flex; flex-direction: column; animation: slide .18s ease-out; border-left: 1px solid var(--border); }
 @keyframes fade { from { opacity: 0 } } @keyframes slide { from { transform: translateX(30px); opacity: 0 } }
+.auth-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; background: var(--bg); }
+.auth-card { width: 100%; max-width: 380px; }
+.feedback-fab { position: fixed; bottom: 86px; right: 20px; z-index: 95; display: flex; align-items: center; gap: 7px; border: 0; background: var(--brand); color: var(--on-brand); padding: 10px 16px; border-radius: 999px; font-weight: 600; font-size: 13px; cursor: pointer; box-shadow: var(--shadow-lg); transition: background .12s, transform .05s; }
+.feedback-fab:hover { background: var(--brand-hover); } .feedback-fab:active { transform: scale(.96); }
+@media (max-width: 560px) { .feedback-fab span { display: none; } .feedback-fab { padding: 12px; bottom: 76px; } }
 .toasts { position: fixed; bottom: 18px; right: 18px; z-index: 200; display: flex; flex-direction: column; gap: 8px; max-width: min(420px, calc(100vw - 36px)); }
 .toast { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--brand); border-radius: 10px; padding: 11px 14px; box-shadow: var(--shadow-lg); display: flex; gap: 10px; align-items: flex-start; animation: slide .18s; }
 .toast.success { border-left-color: var(--good); } .toast.error { border-left-color: var(--crit); }

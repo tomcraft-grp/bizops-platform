@@ -33,6 +33,46 @@ export const payLabel = (k: string) => PAY_METHODS.find((m) => m.key === k)?.lab
 export const PRODUCT_KIND_LABEL: Record<string, string> = {
   resale: 'Resale', finished: 'Finished good', menu: 'Menu item (recipe)', material: 'Raw material', packaging: 'Packaging',
 };
+// Static route metadata (mirrors the routes in App.tsx) so feedback captured on any page can be
+// traced to a page name / module / feature without guessing — this is the "existing route metadata"
+// the feedback feature is required to use instead of inventing identifiers.
+export interface PageMeta { page: string; module: string; feature?: string }
+export const PAGE_META: Record<string, PageMeta> = {
+  '/': { page: 'Dashboard', module: 'dashboard' },
+  '/pos': { page: 'POS', module: 'pos' },
+  '/orders': { page: 'Orders', module: 'orders' },
+  '/channels': { page: 'Channels', module: 'channels' },
+  '/kds': { page: 'Kitchen display', module: 'kds' },
+  '/customers': { page: 'Customers', module: 'customers' },
+  '/receivables': { page: 'Receivables', module: 'receivables' },
+  '/loyalty': { page: 'Loyalty & rewards', module: 'loyalty' },
+  '/promotions': { page: 'Promotions', module: 'promotions' },
+  '/events': { page: 'Events', module: 'events' },
+  '/products': { page: 'Products', module: 'catalog' },
+  '/inventory': { page: 'Inventory', module: 'inventory' },
+  '/purchasing': { page: 'Purchasing', module: 'purchasing' },
+  '/production': { page: 'BOM & production', module: 'production' },
+  '/accounting': { page: 'Accounting', module: 'accounting' },
+  '/accounting/setup': { page: 'Accounting setup', module: 'accounting', feature: 'setup' },
+  '/profit': { page: 'Profit engine', module: 'profit' },
+  '/reports': { page: 'Reports', module: 'reports' },
+  '/printing': { page: 'Printing', module: 'printing' },
+  '/media': { page: 'Media & documents', module: 'media' },
+  '/team': { page: 'Team & access', module: 'team' },
+  '/settings': { page: 'Settings', module: 'settings' },
+  '/health': { page: 'System health', module: 'system' },
+  '/blueprint': { page: 'Blueprint & scope', module: 'blueprint' },
+  '/feedback': { page: 'Feedback & issues', module: 'feedback' },
+  '/app': { page: 'Customer app (LIFF)', module: 'customer_app' },
+};
+/** Best-effort lookup: exact path, else the longest registered prefix, else NOT AVAILABLE. */
+export function pageMetaFor(pathname: string): PageMeta {
+  if (PAGE_META[pathname]) return PAGE_META[pathname];
+  const prefixes = Object.keys(PAGE_META).filter((p) => p !== '/' && pathname.startsWith(p)).sort((a, b) => b.length - a.length);
+  if (prefixes.length) return PAGE_META[prefixes[0]];
+  return { page: 'NOT AVAILABLE', module: 'unknown' };
+}
+
 export const DOC_LABEL: Record<string, string> = {
   receipt: 'Customer receipt', kitchen_ticket: 'Kitchen ticket', beverage_ticket: 'Beverage ticket', packing_slip: 'Packing slip',
   picking_list: 'Picking list', purchase_order: 'Purchase order', goods_receipt: 'Goods receipt', payment_receipt: 'Payment receipt',

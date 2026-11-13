@@ -75,6 +75,7 @@ export const MODULES: { key: string; label: string; actions: string[] }[] = [
   { key: 'settings', label: 'Settings', actions: ['view', 'edit'] },
   { key: 'system', label: 'System health', actions: ['view'] },
   { key: 'finance', label: 'Financial sensitivity', actions: ['cost', 'profit'] },
+  { key: 'feedback', label: 'Feedback & issues', actions: ['view', 'manage'] },
 ];
 
 export function hasPerm(perms: string[], perm: string): boolean {
