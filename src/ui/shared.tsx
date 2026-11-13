@@ -5,7 +5,8 @@ import { Block, PrintDoc, renderDoc } from '../domain/printing';
 import { qrSvg, printDoc, downloadDocHtml } from '../lib/print';
 import { Badge, Button, Empty, Field, Input, Modal, Select, useRun, SearchBox, Tx } from './kit';
 import { useDB, useLang } from '../domain/store';
-import { addCustomer } from '../domain/master';
+import { addCustomer, linkLineMember } from '../domain/master';
+import { supabase } from '../lib/supabase';
 import { customerLifetimeSpend, pointsBalance, tierFor } from '../domain/loyalty';
 import { customerCredit, customerOutstanding } from '../domain/payments';
 import { loadMediaUrl } from '../lib/media';
@@ -70,6 +71,31 @@ export function usePrintDoc() {
 export const enqueueFromUI = enqueueJob;
 
 // ---------- customer picker
+// ---------- LINE members (real, in Supabase `profiles`) at the POS
+// Staff type the member's phone number; once it is a full Thai number (9–10 digits) we look it up among LINE
+// members. RLS lets ADMIN/SUPER_ADMIN read profiles. Picking a hit links it to a local customer record
+// (created on first use) so the existing POS/loyalty engine can be used unchanged.
+export interface LineMemberHit { id: string; display_name: string | null; phone: string; line_user_id: string }
+
+function useLineMemberLookup(q: string) {
+  const [state, setState] = useState<{ hits: LineMemberHit[]; searching: boolean; error: string | null }>({ hits: [], searching: false, error: null });
+  const digits = q.replace(/\D/g, '');
+  const phone = /^0\d{8,9}$/.test(digits) ? digits : null;
+  useEffect(() => {
+    if (!phone) { setState({ hits: [], searching: false, error: null }); return; }
+    let on = true;
+    setState((s) => ({ ...s, searching: true, error: null }));
+    const timer = setTimeout(async () => {
+      const { data, error } = await supabase.from('profiles')
+        .select('id, display_name, phone, line_user_id')
+        .eq('phone', phone).eq('status', 'active').not('line_user_id', 'is', null).limit(5);
+      if (on) setState({ hits: (data ?? []) as LineMemberHit[], searching: false, error: error?.message ?? null });
+    }, 250);
+    return () => { on = false; clearTimeout(timer); };
+  }, [phone]);
+  return state;
+}
+
 export function CustomerPicker({ onPick, onClose, allowNone }: { onPick: (id: ID | undefined) => void; onClose: () => void; allowNone?: boolean }) {
   const lang = useLang();
   const db = useDB();
@@ -79,24 +105,37 @@ export function CustomerPicker({ onPick, onClose, allowNone }: { onPick: (id: ID
   const [f, setF] = useState({ name: '', phone: '' });
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return db.customers.filter((c) => !s || (c.name + c.phone + c.code).toLowerCase().includes(s)).slice(0, 40);
+    const digits = s.replace(/[\s-]/g, '');
+    return db.customers.filter((c) => !s || (c.name + c.phone + c.code).toLowerCase().includes(s) || (digits.length >= 3 && c.phone.replace(/\D/g, '').includes(digits))).slice(0, 40);
   }, [db.customers, q]);
+  const line = useLineMemberLookup(q);
+  // A LINE member already linked to a local record shows up in `list` (with a LINE badge); don't list it twice.
+  const lineHits = line.hits.filter((m) => !db.customers.some((c) => c.lineUserId === m.line_user_id));
+  const pickLine = (m: LineMemberHit) => run((d, c) => linkLineMember(d, c, { lineUserId: m.line_user_id, name: m.display_name, phone: m.phone }), { onOk: (id) => onPick(id) });
   return (
     <Modal title="Select customer" onClose={onClose} footer={allowNone ? <Button onClick={() => onPick(undefined)}><Tx>Walk-in (no customer)</Tx></Button> : undefined}>
       {!adding ? (
         <>
           <div className="row"><div className="grow"><SearchBox value={q} onChange={setQ} placeholder="Name, phone or member code" /></div><Button onClick={() => setAdding(true)}><UserPlus size={16} />{' '}<Tx>New</Tx></Button></div>
           <div className="col gap-4 mt8" style={{ maxHeight: 380, overflow: 'auto' }}>
+            {lineHits.map((m) => (
+              <button key={m.id} className="menu-item" onClick={() => pickLine(m)}>
+                <div className="grow"><div style={{ fontWeight: 600 }}>{m.display_name ?? '—'}</div><div className="muted" style={{ fontSize: 12 }}>{m.phone}</div></div>
+                <Badge tone="good">สมาชิก LINE</Badge>
+              </button>
+            ))}
+            {line.searching && <div className="muted" style={{ fontSize: 12, padding: '2px 4px' }}>กำลังค้นหาสมาชิก LINE…</div>}
+            {line.error && <div className="muted" style={{ fontSize: 12, padding: '2px 4px' }}>ค้นหาสมาชิก LINE ไม่ได้: {line.error}</div>}
             {list.map((c) => {
               const t = tierFor(db, customerLifetimeSpend(db, c.id));
               return (
                 <button key={c.id} className="menu-item" onClick={() => onPick(c.id)}>
-                  <div className="grow"><div style={{ fontWeight: 600 }}>{c.name}</div><div className="muted" style={{ fontSize: 12 }}>{c.code} · {c.phone}</div></div>
+                  <div className="grow"><div style={{ fontWeight: 600 }}>{c.name}{c.lineUserId && <>{' '}<Badge tone="good">LINE</Badge></>}</div><div className="muted" style={{ fontSize: 12 }}>{c.code} · {c.phone}</div></div>
                   <div style={{ textAlign: 'right', fontSize: 12 }}><Badge tone={c.group === 'wholesale' ? 'info' : ''}>{c.group === 'wholesale' ? <Tx>{'Wholesale'}</Tx> : t.name}</Badge><div className="muted">{pointsBalance(db, c.id)}{' '}<Tx>pts</Tx></div></div>
                 </button>
               );
             })}
-            {!list.length && <Empty title="No customer found" hint="Create a new customer with the button above." />}
+            {!list.length && !lineHits.length && !line.searching && <Empty title="No customer found" hint="Create a new customer with the button above." />}
           </div>
         </>
       ) : (

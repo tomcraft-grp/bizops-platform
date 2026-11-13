@@ -15,6 +15,22 @@ export function addCustomer(d: DB, ctx: Ctx, p: { name: string; phone: string; e
   });
   return id;
 }
+/**
+ * Find or create the customer record for a LINE member (identity and phone come from Supabase `profiles`), and
+ * refresh its name and phone. Used by the customer app (the member themself) and by POS lookup (staff).
+ * The phone is assigned directly rather than through updateCustomer: a demo customer may already use the same
+ * number, and that must not block the real member.
+ */
+export function linkLineMember(d: DB, ctx: Ctx, m: { lineUserId: string; name?: string | null; phone?: string | null }): ID {
+  if (!m.lineUserId) fail('INVALID', 'LINE user ID is required');
+  const name = m.name?.trim() || 'LINE member';
+  const phone = m.phone ?? '';
+  const found = d.customers.find((x) => x.lineUserId === m.lineUserId);
+  if (found) { found.name = name; found.phone = phone; return found.id; }
+  const id = addCustomer(d, ctx, { name, phone: '' });
+  Object.assign(d.customers.find((x) => x.id === id)!, { lineUserId: m.lineUserId, phone });
+  return id;
+}
 export function updateCustomer(d: DB, ctx: Ctx, id: ID, patch: Partial<Customer>) {
   const c = d.customers.find((x) => x.id === id) || fail('NOT_FOUND', 'Customer not found');
   if (patch.phone && patch.phone !== c.phone && d.customers.some((x) => x.phone === patch.phone && x.id !== id)) fail('DUPLICATE', 'Another customer already uses this phone number');

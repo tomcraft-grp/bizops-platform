@@ -17,7 +17,7 @@ import { promptPayPayload } from '../lib/promptpay';
 import { cx, dateFmt, dateTimeFmt, dayKey, money, money0, r2 } from '../lib/util';
 import type { ID } from '../domain/types';
 import { STATUS_LABEL } from '../domain/meta';
-import { addCustomer } from '../domain/master';
+import { linkLineMember } from '../domain/master';
 import { useAuth } from '../auth/AuthProvider';
 import { supabase } from '../lib/supabase';
 
@@ -41,14 +41,7 @@ export default function CustomerApp() {
     if (!lineId) return;
     const name = profile?.display_name || lineMeta?.display_name || 'LINE member';
     const phone = profile?.phone ?? '';
-    const id = act((d, c) => {
-      const found = d.customers.find((x) => x.lineUserId === lineId);
-      // Direct assignment (not updateCustomer): a demo customer may share the number, which must not block the real member.
-      if (found) { found.name = name; found.phone = phone; return found.id; }
-      const newId = addCustomer(d, c, { name, phone: '' });
-      Object.assign(d.customers.find((x) => x.id === newId)!, { lineUserId: lineId, phone });
-      return newId;
-    });
+    const id = act((d, c) => linkLineMember(d, c, { lineUserId: lineId, name, phone }));
     if (id !== cid) login(id);
   }, [lineId, profile?.display_name, profile?.phone]); // eslint-disable-line react-hooks/exhaustive-deps
 
