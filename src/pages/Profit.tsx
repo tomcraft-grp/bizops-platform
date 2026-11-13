@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Download, Info } from 'lucide-react';
 import { useDB } from '../domain/store';
 import { RANGES, Range, rangeOf, useBranchIds, useEcon } from '../ui/data';
-import { Badge, Banner, Button, Card, ChannelChip, DataTable, Kpi, PageHead, Select, Seg, useHas } from '../ui/kit';
+import { Badge, Banner, Button, Card, ChannelChip, DataTable, Kpi, PageHead, Select, Seg, useHas, Tx } from '../ui/kit';
 import { Waterfall, HBars } from '../ui/charts';
 import { businessCosts, completeness, groupEcon, groupLines, totalsOf } from '../domain/economics';
 import { CHANNEL_LIST } from '../domain/meta';
@@ -55,17 +55,17 @@ function Inner() {
   return (
     <>
       <PageHead title="Profit engine" desc="Real profitability from traceable costs: weighted-average COGS snapshots, BOM-based cost for recipes, channel commissions, payment fees, shipping subsidies, returns and business-level expenses."
-        actions={<>{canExport && <Button onClick={() => download('profit.csv', toCSV([['Dimension', 'Orders', 'Units', 'Net sales', 'COGS', 'Gross profit', 'Channel costs', 'Contribution'], ...rows.map((x) => [x.label, x.orders, x.qty, x.net, x.cogs, x.gp, x.fees, x.contrib])]))}><Download size={15} /> CSV</Button>}<Seg value={range} onChange={setRange} options={RANGES.map((x) => ({ v: x.v, label: x.label }))} /></>} />
+        actions={<>{canExport && <Button onClick={() => download('profit.csv', toCSV([['Dimension', 'Orders', 'Units', 'Net sales', 'COGS', 'Gross profit', 'Channel costs', 'Contribution'], ...rows.map((x) => [x.label, x.orders, x.qty, x.net, x.cogs, x.gp, x.fees, x.contrib])]))}><Download size={15} />{' '}<Tx>CSV</Tx></Button>}<Seg value={range} onChange={setRange} options={RANGES.map((x) => ({ v: x.v, label: x.label }))} /></>} />
       <div className="mb16">
         <Banner tone={comp.label === 'Final' ? 'good' : 'warn'} icon={<Info size={16} />}>
-          <b>Data completeness: {comp.label}.</b> {comp.reasons.length ? comp.reasons.join('. ') + '. ' : 'All costs and fees are final. '}
-          <b>Method:</b> costs are weighted-average snapshots taken when each order shipped (recipe items use the BOM version effective that day); net sales exclude VAT; “contribution” = gross profit − channel fees; “net profit” also deducts waste, shrinkage and operating expenses from the ledger. {comp.label === 'Provisional' && <>Figures marked * use <b>estimated</b> fees and are not “actual net profit” until settlements are received.</>}
+          <b><Tx>Data completeness:</Tx>{' '}<Tx>{comp.label}</Tx>.</b> {comp.reasons.length ? comp.reasons.join('. ') + '. ' : <Tx>{'All costs and fees are final. '}</Tx>}
+          <b><Tx>Method:</Tx></b>{' '}<Tx>costs are weighted-average snapshots taken when each order shipped (recipe items use the BOM version effective that day); net sales exclude VAT; “contribution” = gross profit − channel fees; “net profit” also deducts waste, shrinkage and operating expenses from the ledger.</Tx>{' '}{comp.label === 'Provisional' && <><Tx>Figures marked * use</Tx>{' '}<b><Tx>estimated</Tx></b>{' '}<Tx>fees and are not “actual net profit” until settlements are received.</Tx></>}
         </Banner>
       </div>
       <div className="grid g4 mb16">
-        <Kpi label="Net sales" value={money0(t.net)} sub={`${t.orders} orders · ${t.units.toLocaleString()} units`} />
+        <Kpi label="Net sales" value={money0(t.net)} sub={<Tx vars={{ o: t.orders, u: t.units.toLocaleString() }}>{'{o} orders · {u} units'}</Tx>} />
         <Kpi label="Gross profit" value={money0(t.grossProfit)} sub={`${pct(t.net ? t.grossProfit / t.net : 0)} margin`} />
-        <Kpi label={<>Net contribution <Badge tone={comp.label === 'Final' ? 'good' : 'warn'}>{comp.label}</Badge></>} value={money0(t.contribution)} sub={`${pct(t.net ? t.contribution / t.net : 0)} of net sales`} />
+        <Kpi label={<><Tx>Net contribution</Tx>{' '}<Badge tone={comp.label === 'Final' ? 'good' : 'warn'}><Tx>{comp.label}</Tx></Badge></>} value={money0(t.contribution)} sub={<Tx vars={{ p: pct(t.net ? t.contribution / t.net : 0) }}>{'{p} of net sales'}</Tx>} />
         <Kpi label="Net profit (business)" value={money0(netProfit)} tone={netProfit < 0 ? 'bad' : undefined} sub={`after ${money0(biz.opex)} opex + ${money0(biz.waste + biz.adjustments)} waste/shrink`} />
       </div>
       <div className="grid g-main mb16">
@@ -77,7 +77,7 @@ function Inner() {
       <Card flush title="Profit by dimension" actions={<><Select sm style={{ width: 'auto' }} value={alloc} onChange={(e) => setAlloc(e.target.value as 'none' | 'revenue')}><option value="none">Do not allocate opex</option><option value="revenue">Allocate opex & waste by revenue share</option></Select><Seg value={dim} onChange={setDim} options={[{ v: 'channel', label: 'Channel' }, { v: 'branch', label: 'Branch' }, { v: 'product', label: 'Product' }, { v: 'category', label: 'Category' }, { v: 'day', label: 'Day' }, { v: 'customer', label: 'Customer' }]} /></>}>
         <DataTable rows={rows} rowKey={(x) => x.key} pageSize={12} initialSort={{ key: 'net', dir: 'desc' }}
           cols={[
-            { key: 'l', header: dim[0].toUpperCase() + dim.slice(1), sort: (x) => x.label, render: (x) => (dim === 'channel' ? <ChannelChip c={x.key as never} /> : <b>{x.label}</b>) },
+            { key: 'l', header: dim[0].toUpperCase() + dim.slice(1), sort: (x) => x.label, render: (x) => (dim === 'channel' ? <ChannelChip c={x.key as never} /> : <b><Tx>{x.label}</Tx></b>) },
             ...(dim === 'product' || dim === 'category' ? [] : [{ key: 'o', header: 'Orders', num: true, render: (x: typeof rows[number]) => x.orders }]),
             { key: 'q', header: 'Units', num: true, render: (x) => x.qty.toLocaleString() },
             { key: 'net', header: 'Net sales', num: true, sort: (x) => x.net, render: (x) => money0(x.net) },

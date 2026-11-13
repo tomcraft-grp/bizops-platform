@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CheckCircle2, CircleDashed, FlaskConical, Hammer } from 'lucide-react';
-import { Badge, Banner, Card, PageHead, Seg, Tabs } from '../ui/kit';
+import { Badge, Banner, Card, PageHead, Seg, Tabs, Tx } from '../ui/kit';
 import { QualityGates } from './QualityGates';
 
 type Status = 'built' | 'partial' | 'simulated' | 'planned';
@@ -98,7 +98,7 @@ export default function Blueprint() {
       {tab === 'tour' && (
         <div className="grid g2">
           {TOUR.map((x, i) => (
-            <Card key={x.t} title={<span>{i + 1}. {x.t}</span>} actions={<Link to={x.to}>Open <ArrowRight size={13} style={{ verticalAlign: -2 }} /></Link>}>
+            <Card key={x.t} title={<span>{i + 1}. <Tx>{x.t}</Tx></span>} actions={<Link to={x.to}><Tx>Open</Tx>{' '}<ArrowRight size={13} style={{ verticalAlign: -2 }} /></Link>}>
               <ol style={{ margin: 0, paddingLeft: 18 }} className="col gap-6">{x.steps.map((s) => <li key={s}>{s}</li>)}</ol>
             </Card>
           ))}
@@ -107,13 +107,13 @@ export default function Blueprint() {
       {tab === 'coverage' && (
         <>
           <div className="row wrap mb16"><Seg value={f} onChange={setF} options={[{ v: 'all', label: `All (${ROWS.length})` }, { v: 'built', label: `Built (${counts('built')})` }, { v: 'partial', label: `Partial (${counts('partial')})` }, { v: 'simulated', label: `Simulated (${counts('simulated')})` }]} />
-            <div className="legend"><span><Badge tone="good">Built</Badge> works end-to-end on the data engine</span><span><Badge tone="warn">Partial</Badge> core works, gaps listed</span><span><Badge tone="info">Simulated</Badge> needs a real integration</span></div></div>
+            <div className="legend"><span><Badge tone="good"><Tx>Built</Tx></Badge>{' '}<Tx>works end-to-end on the data engine</Tx></span><span><Badge tone="warn"><Tx>Partial</Tx></Badge>{' '}<Tx>core works, gaps listed</Tx></span><span><Badge tone="info"><Tx>Simulated</Tx></Badge>{' '}<Tx>needs a real integration</Tx></span></div></div>
           <div className="col">
             {rows.map((r) => (
               <Card key={r.area}>
-                <div className="row between top wrap"><div><b>{r.area}</b> <span className="muted">· {r.ref}</span></div><div className="row"><Badge tone={TONE[r.status]}>{ICON[r.status]} {r.status}</Badge>{r.to && <Link to={r.to}>Open →</Link>}</div></div>
+                <div className="row between top wrap"><div><b>{r.area}</b> <span className="muted">· {r.ref}</span></div><div className="row"><Badge tone={TONE[r.status]}><Tx>{ICON[r.status]}</Tx> {r.status}</Badge>{r.to && <Link to={r.to}><Tx>Open →</Tx></Link>}</div></div>
                 <div className="mt8">{r.built}</div>
-                {r.gap && <div className="mt8 muted"><b>Not yet:</b> {r.gap}</div>}
+                {r.gap && <div className="mt8 muted"><b><Tx>Not yet:</Tx></b> {r.gap}</div>}
               </Card>
             ))}
           </div>
@@ -130,17 +130,17 @@ export default function Blueprint() {
           <Card title="Decisions that need owner approval" sub="Prototype default shown for each"><div className="col">{DECISIONS.map(([t, d]) => <div key={t}><b>{t}</b><div className="muted">{d}</div></div>)}</div></Card>
           <div className="col gap-16">
             <Card title="Out of scope for the first release"><div className="row wrap">{OUT.map((o) => <Badge key={o}>{o}</Badge>)}</div></Card>
-            <Banner tone="warn"><b>Required before real use:</b> legal review (wallet / events), Thai accounting & tax review, verified marketplace API access, printer hardware tests, backup & restore plan, authentication and database-enforced tenant isolation.</Banner>
+            <Banner tone="warn"><b><Tx>Required before real use:</Tx></b>{' '}<Tx>legal review (wallet / events), Thai accounting & tax review, verified marketplace API access, printer hardware tests, backup & restore plan, authentication and database-enforced tenant isolation.</Tx></Banner>
           </div>
         </div>
       )}
       {tab === 'quality' && <QualityGates />}
       {tab === 'arch' && (
         <div className="grid g2">
-          <Card title="What this prototype is"><div className="col gap-6"><div>A TypeScript React single-page app with a <b>transactional in-browser domain engine</b>: every business action runs as one atomic transaction (all-or-nothing), appends to immutable ledgers, and posts balanced journals. Data persists in IndexedDB. The production build is one self-contained HTML file.</div><div className="muted">It proves the workflows, rules and invariants — it is not a multi-user system and has no server.</div></div></Card>
+          <Card title="What this prototype is"><div className="col gap-6"><div><Tx>A TypeScript React single-page app with a</Tx>{' '}<b><Tx>transactional in-browser domain engine</Tx></b><Tx>: every business action runs as one atomic transaction (all-or-nothing), appends to immutable ledgers, and posts balanced journals. Data persists in IndexedDB. The production build is one self-contained HTML file.</Tx></div><div className="muted"><Tx>It proves the workflows, rules and invariants — it is not a multi-user system and has no server.</Tx></div></div></Card>
           <Card title="Target production architecture (from the plan)"><div className="col gap-6">{[['Frontend', 'Next.js + TypeScript (responsive PWA)'], ['Backend', 'NestJS modular monolith, one module per domain'], ['Database', 'PostgreSQL with composite tenant keys, partial unique indexes, row-level security'], ['ORM', 'Prisma + SQL migrations'], ['Jobs', 'Redis + BullMQ (sync, image processing, print jobs)'], ['Storage', 'Cloudflare R2 with signed URLs'], ['Tests', 'Jest + Playwright, concurrency tests for stock, payments, points, event numbers']].map(([a, b]) => <div key={a} className="row between"><span className="muted">{a}</span><span style={{ textAlign: 'right' }}>{b}</span></div>)}</div></Card>
           <Card title="How prototype pieces map to production"><div className="col gap-6">{[['act(): immer transaction', 'Database transaction + SERIALIZABLE / row locks'], ['eventIndex map', 'UNIQUE (event_id, board_id, number) WHERE active'], ['meta.idem keys', 'Unique idempotency-key tables'], ['moveStock()', 'Insert-only stock_movements + trigger-maintained balances'], ['post()', 'Journal header/lines with deferred balance constraint'], ['Period lock', 'Posting-date check in the posting service']].map(([a, b]) => <div key={a} className="row between top"><code className="mono">{a}</code><span style={{ textAlign: 'right' }}>{b}</span></div>)}</div></Card>
-          <Card title="Deliverables from Phase 0 not included"><div className="muted">Full ERD, data dictionary, complete Prisma schema and SQL migrations, API contracts, and the printer test plan are <b>not</b> produced here — the in-app domain model (src/domain/types.ts) is the starting point for them.</div></Card>
+          <Card title="Deliverables from Phase 0 not included"><div className="muted"><Tx>Full ERD, data dictionary, complete Prisma schema and SQL migrations, API contracts, and the printer test plan are</Tx>{' '}<b><Tx>not</Tx></b>{' '}<Tx>produced here — the in-app domain model (src/domain/types.ts) is the starting point for them.</Tx></div></Card>
         </div>
       )}
     </>

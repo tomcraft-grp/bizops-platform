@@ -5,7 +5,7 @@ import { useDB } from '../domain/store';
 import { addCustomer, updateCustomer } from '../domain/master';
 import { agingFor, customerCredit, customerOutstanding, allocatedMap, customerStatement } from '../domain/payments';
 import { customerLifetimeSpend, lifetimeSpendMap, pointsBalance, pointsMap, tierFor } from '../domain/loyalty';
-import { Badge, Button, Card, DataTable, Drawer, Field, Input, Kpi, Modal, NumInput, PageHead, Select, Tabs, Check, useHas, useRun, StatusBadge, ChannelChip } from '../ui/kit';
+import { Badge, Button, Card, DataTable, Drawer, Field, Input, Kpi, Modal, NumInput, PageHead, Select, Tabs, Check, useHas, useRun, StatusBadge, ChannelChip, Tx } from '../ui/kit';
 import { dateFmt, dateTimeFmt, download, money, money0, toCSV, dayKey } from '../lib/util';
 import type { Customer, ID } from '../domain/types';
 import { OrderDrawer } from './OrderDetail';
@@ -28,10 +28,10 @@ export default function Customers() {
   return (
     <>
       <PageHead title="Customers" desc="Profiles, membership tiers, purchase history, credit terms, balances and consent — one record shared by POS, LINE and receivables."
-        actions={<>{canExport && <Button onClick={() => download('customers.csv', toCSV([['Code', 'Name', 'Phone', 'Group', 'Lifetime spend', 'Points', 'Outstanding'], ...db.customers.map((c) => [c.code, c.name, c.phone, c.group, spend[c.id] || 0, pts[c.id] || 0, outMap[c.id]])]))}><Download size={15} /> Export</Button>}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} /> New customer</Button>}</>} />
+        actions={<>{canExport && <Button onClick={() => download('customers.csv', toCSV([['Code', 'Name', 'Phone', 'Group', 'Lifetime spend', 'Points', 'Outstanding'], ...db.customers.map((c) => [c.code, c.name, c.phone, c.group, spend[c.id] || 0, pts[c.id] || 0, outMap[c.id]])]))}><Download size={15} />{' '}<Tx>Export</Tx></Button>}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New customer</Tx></Button>}</>} />
       <div className="grid g4 mb16">
-        <Kpi label="Customers" value={db.customers.length} sub={`${db.customers.filter((c) => c.group === 'wholesale').length} wholesale accounts`} />
-        <Kpi label="Outstanding balances" value={money0(Object.values(outMap).reduce((s, x) => s + x, 0))} sub={`${Object.values(outMap).filter((x) => x > 0).length} customers owe`} />
+        <Kpi label="Customers" value={db.customers.length} sub={<Tx vars={{ n: db.customers.filter((c) => c.group === 'wholesale').length }}>{'{n} wholesale accounts'}</Tx>} />
+        <Kpi label="Outstanding balances" value={money0(Object.values(outMap).reduce((s, x) => s + x, 0))} sub={<Tx vars={{ n: Object.values(outMap).filter((x) => x > 0).length }}>{'{n} customers owe'}</Tx>} />
         <Kpi label="Marketing consent" value={`${db.customers.filter((c) => c.consent.marketing).length}/${db.customers.length}`} sub="opted in (PDPA)" />
         <Kpi label="Points outstanding" value={Object.values(pts).reduce((s, x) => s + x, 0).toLocaleString()} sub="liability estimate in Loyalty" />
       </div>
@@ -58,10 +58,10 @@ function CustomerForm({ onClose, c }: { onClose: () => void; c?: Customer }) {
   const canCredit = useHas('receivables:approve');
   const [f, setF] = useState({ name: c?.name ?? '', phone: c?.phone ?? '', email: c?.email ?? '', group: (c?.group ?? 'retail') as Customer['group'], creditLimit: c?.creditLimit ?? 0, creditDays: c?.creditDays ?? 0, address: c?.address ?? '', marketing: c?.consent.marketing ?? false });
   return (
-    <Modal title={c ? 'Edit customer' : 'New customer'} onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={() => run((d, ctx) => {
+    <Modal title={c ? 'Edit customer' : 'New customer'} onClose={onClose} footer={<><Button onClick={onClose}><Tx>Cancel</Tx></Button><Button variant="primary" onClick={() => run((d, ctx) => {
       if (c) { updateCustomer(d, ctx, c.id, { name: f.name, phone: f.phone, email: f.email, group: f.group, creditLimit: f.creditLimit, creditDays: f.creditDays, address: f.address, consent: { ...c.consent, marketing: f.marketing, at: f.marketing !== c.consent.marketing ? ctx.now : c.consent.at } }); return c.id; }
       return addCustomer(d, ctx, { ...f });
-    }, { ok: c ? 'Customer updated' : 'Customer created', onOk: onClose })}>Save</Button></>}>
+    }, { ok: c ? 'Customer updated' : 'Customer created', onOk: onClose })}><Tx>Save</Tx></Button></>}>
       <div className="form-grid">
         <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label="Phone"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
@@ -70,7 +70,7 @@ function CustomerForm({ onClose, c }: { onClose: () => void; c?: Customer }) {
         <Field label="Credit limit (฿)" hint={canCredit ? 'Needs approval permission to change' : 'Requires receivables approval permission'}><NumInput value={f.creditLimit} disabled={!canCredit} onChange={(n) => setF({ ...f, creditLimit: n || 0 })} /></Field>
         <Field label="Credit terms (days)"><NumInput value={f.creditDays} disabled={!canCredit} onChange={(n) => setF({ ...f, creditDays: n || 0 })} /></Field>
         <Field label="Address" full><Input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
-        <div className="full"><Check checked={f.marketing} onChange={(v) => setF({ ...f, marketing: v })}>Customer consents to marketing messages (recorded with a timestamp)</Check></div>
+        <div className="full"><Check checked={f.marketing} onChange={(v) => setF({ ...f, marketing: v })}><Tx>Customer consents to marketing messages (recorded with a timestamp)</Tx></Check></div>
       </div>
     </Modal>
   );
@@ -95,14 +95,14 @@ export function CustomerDrawer({ id, onClose }: { id: ID; onClose: () => void })
   const ledger = db.pointsLedger.filter((p) => p.customerId === c.id).reverse();
   const entitlements = db.entitlements.filter((e) => e.customerId === c.id);
   return (
-    <Drawer title={c.name} sub={`${c.code} · ${c.group}`} onClose={onClose} footer={canEdit && <Button onClick={() => setEdit(true)}>Edit</Button>}>
+    <Drawer title={c.name} sub={`${c.code} · ${c.group}`} onClose={onClose} footer={canEdit && <Button onClick={() => setEdit(true)}><Tx>Edit</Tx></Button>}>
       <Tabs value={tab} onChange={setTab} tabs={[{ v: 'overview', label: 'Overview' }, { v: 'orders', label: 'Orders', count: orders.length }, { v: 'statement', label: 'Statement' }, { v: 'points', label: 'Points' }]} />
       {tab === 'overview' && (
         <div className="col gap-16">
           <div className="grid g2" style={{ gap: 10 }}>
-            <Kpi label="Lifetime spend" value={money0(spend)} sub={<span style={{ color: tier.color, fontWeight: 650 }}>{tier.name} tier</span>} />
-            <Kpi label="Points" value={pointsBalance(db, c.id).toLocaleString()} sub={`${entitlements.filter((e) => e.status === 'available').length} unused event picks`} />
-            <Kpi label="Outstanding" value={money(out)} tone={out > 0 ? 'bad' : undefined} sub={c.creditLimit ? `limit ${money0(c.creditLimit)} · ${c.creditDays} days` : 'no credit terms'} />
+            <Kpi label="Lifetime spend" value={money0(spend)} sub={<span style={{ color: tier.color, fontWeight: 650 }}>{tier.name}{' '}<Tx>tier</Tx></span>} />
+            <Kpi label="Points" value={pointsBalance(db, c.id).toLocaleString()} sub={<Tx vars={{ n: entitlements.filter((e) => e.status === 'available').length }}>{'{n} unused event picks'}</Tx>} />
+            <Kpi label="Outstanding" value={money(out)} tone={out > 0 ? 'bad' : undefined} sub={c.creditLimit ? <Tx vars={{ limit: money0(c.creditLimit), n: c.creditDays }}>{'limit {limit} · {n} days'}</Tx> : 'no credit terms'} />
             <Kpi label="Customer credit" value={money(credit)} sub="unapplied receipts" tone={credit > 0 ? 'good' : undefined} />
           </div>
           {aging && (
@@ -115,8 +115,8 @@ export function CustomerDrawer({ id, onClose }: { id: ID; onClose: () => void })
               <div className="row gap-6"><Phone size={14} /> {c.phone}</div>
               {c.email && <div className="row gap-6"><Mail size={14} /> {c.email}</div>}
               {c.address && <div className="muted">{c.address}</div>}
-              <div className="row gap-6"><ShieldCheck size={14} /> PDPA consent recorded {dateFmt(c.consent.at)} · marketing: <Badge tone={c.consent.marketing ? 'good' : ''}>{c.consent.marketing ? 'opted in' : 'not opted in'}</Badge></div>
-              {c.lineUserId && <div className="muted mono">LINE {c.lineUserId}</div>}
+              <div className="row gap-6"><ShieldCheck size={14} />{' '}<Tx>PDPA consent recorded</Tx>{' '}{dateFmt(c.consent.at)}{' '}<Tx>· marketing:</Tx>{' '}<Badge tone={c.consent.marketing ? 'good' : ''}>{c.consent.marketing ? <Tx>{'opted in'}</Tx> : <Tx>{'not opted in'}</Tx>}</Badge></div>
+              {c.lineUserId && <div className="muted mono"><Tx>LINE</Tx>{' '}{c.lineUserId}</div>}
             </div>
           </Card>
         </div>
@@ -128,7 +128,7 @@ export function CustomerDrawer({ id, onClose }: { id: ID; onClose: () => void })
       )}
       {tab === 'statement' && (
         <div className="col">
-          <div className="row between"><div><div className="muted">Closing balance</div><b style={{ fontSize: 22 }} className={st.closing > 0 ? 'bad' : ''}>{money(st.closing)}</b></div><Link to={`/receivables?c=${c.id}`}><Button>Receive payment</Button></Link></div>
+          <div className="row between"><div><div className="muted"><Tx>Closing balance</Tx></div><b style={{ fontSize: 22 }} className={st.closing > 0 ? 'bad' : ''}>{money(st.closing)}</b></div><Link to={`/receivables?c=${c.id}`}><Button><Tx>Receive payment</Tx></Button></Link></div>
           <DataTable rows={[...st.rows].reverse()} rowKey={(r) => r.ref + r.type + r.date} pageSize={12} compact cols={[
             { key: 'd', header: 'Date', render: (r) => dateFmt(r.date) }, { key: 'r', header: 'Document', render: (r) => <>{r.ref}<div className="sub">{r.type.replace('_', ' ')} {r.note}</div></> },
             { key: 'db', header: 'Charge', num: true, render: (r) => (r.debit ? money(r.debit) : '') }, { key: 'cr', header: 'Credit', num: true, render: (r) => (r.credit ? money(r.credit) : '') }, { key: 'b', header: 'Balance', num: true, render: (r) => money(r.balance) }]} />

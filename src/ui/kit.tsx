@@ -32,6 +32,15 @@ export const useUser = () => { const db = useDB(); return currentUser(db); };
 export const useHas = (perm: string) => { const db = useDB(); return hasPerm(userPerms(db, currentUser(db)), perm); };
 export const useScope = () => useStore((s) => s.ui.branchScope);
 
+// ---------- i18n: static UI text. Renders a bare string (no wrapper element), so layout is unchanged, and it
+// subscribes to the language itself, so a page re-renders its labels in place without losing its state.
+// Non-string children (elements, numbers, null) pass through unchanged, so it can safely wrap a label that is
+// sometimes JSX. Only exact dictionary matches change: data values are left as they are.
+export function Tx({ children, vars }: { children?: ReactNode; vars?: Record<string, string | number> }) {
+  const lang = useLang();
+  return <>{typeof children === 'string' ? t(lang, children, vars) : children}</>;
+}
+
 // ---------- basic bits
 type Tone = 'good' | 'warn' | 'bad' | 'info' | 'serious' | '';
 export function Badge({ tone = '', children, dot }: { tone?: Tone; children: ReactNode; dot?: boolean }) {
@@ -126,17 +135,27 @@ export function Field({ label, hint, children, full }: { label?: ReactNode; hint
 }
 export const Input = (p: React.InputHTMLAttributes<HTMLInputElement> & { sm?: boolean }) => { const { sm, className, ...r } = p; return <input {...r} className={cx('input', sm && 'sm', className)} />; };
 export const Select = (p: React.SelectHTMLAttributes<HTMLSelectElement> & { sm?: boolean }) => {
-  const { sm, className, ...r } = p;
-  const first = Children.toArray(p.children).find((c) => isValidElement(c)) as ReactElement<{ children?: ReactNode }> | undefined;
+  const { sm, className, children, ...r } = p;
+  const lang = useLang();
+  // <option> may only hold plain text, so option labels are translated here rather than with <Tx>.
+  // Option VALUES are never touched; data-driven options (branch names etc.) only change if they exactly match a UI phrase.
+  const opts = lang === 'en' ? children : Children.map(children, (c) => {
+    if (!isValidElement(c) || c.type !== 'option') return c;
+    const kids = (c.props as { children?: ReactNode }).children;
+    const label = Array.isArray(kids) && kids.every((k) => typeof k === 'string' || typeof k === 'number') ? kids.join('') : kids;
+    return typeof label === 'string' ? cloneElement(c as ReactElement<{ children?: ReactNode }>, undefined, t(lang, label)) : c;
+  });
+  const first = Children.toArray(opts).find((c) => isValidElement(c)) as ReactElement<{ children?: ReactNode }> | undefined;
   const fallback = typeof first?.props.children === 'string' ? first.props.children : undefined; // e.g. “All channels”
-  return <select aria-label={r['aria-label'] ?? (r['aria-labelledby'] ? undefined : fallback)} {...r} className={cx('select', sm && 'sm', className)} />;
+  return <select aria-label={r['aria-label'] ?? (r['aria-labelledby'] ? undefined : fallback)} {...r} className={cx('select', sm && 'sm', className)}>{opts}</select>;
 };
 export const Textarea = (p: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...p} className={cx('textarea', p.className)} />;
 export function NumInput({ value, onChange, min, max, step, ...p }: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> & { value: number | ''; onChange: (n: number) => void }) {
   return <input {...p} type="number" inputMode="decimal" className={cx('input', p.className)} min={min} max={max} step={step ?? 'any'} value={value} onChange={(e) => onChange(e.target.value === '' ? NaN : Number(e.target.value))} />;
 }
 export function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
-  return <div className="input-icon"><Search /><input className="input" value={value} placeholder={placeholder ?? 'Search…'} onChange={(e) => onChange(e.target.value)} /></div>;
+  const lang = useLang();
+  return <div className="input-icon"><Search /><input className="input" value={value} placeholder={t(lang, placeholder ?? 'Search…')} onChange={(e) => onChange(e.target.value)} /></div>;
 }
 export function Seg<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: { v: T; label: ReactNode }[] }) {
   const lang = useLang();
@@ -146,9 +165,10 @@ export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; on
   const lang = useLang();
   return <div className="tabs" role="tablist">{tabs.map((x) => <button key={x.v} className={cx(value === x.v && 'on')} onClick={() => onChange(x.v)} role="tab">{tr(lang, x.label)}{x.count != null && x.count !== '' && <span className="count">{x.count}</span>}</button>)}</div>;
 }
-export const Check = ({ checked, onChange, children }: { checked: boolean; onChange: (v: boolean) => void; children?: ReactNode }) => (
-  <label className="check"><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />{children}</label>
-);
+export const Check = ({ checked, onChange, children }: { checked: boolean; onChange: (v: boolean) => void; children?: ReactNode }) => {
+  const lang = useLang();
+  return <label className="check"><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />{tr(lang, children)}</label>;
+};
 
 // ---------- overlays
 function useEsc(fn: () => void) {
@@ -191,15 +211,16 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const done = (ok: boolean) => { st?.res({ ok, reason }); setSt(null); };
   const needReason = !!st?.o.reason;
   const blocked = (needReason && !reason.trim()) || (!!st?.o.typeToConfirm && typed !== st.o.typeToConfirm);
+  const lang = useLang();
   return (
     <ConfirmCtx.Provider value={ask}>
       {children}
       {st && (
-        <Modal size="sm" title={st.o.title} onClose={() => done(false)} footer={<><Button onClick={() => done(false)}>Cancel</Button><Button variant={st.o.danger ? 'danger' : 'primary'} disabled={blocked} onClick={() => done(true)}>{st.o.confirmLabel ?? 'Confirm'}</Button></>}>
+        <Modal size="sm" title={st.o.title} onClose={() => done(false)} footer={<><Button onClick={() => done(false)}>{t(lang, 'Cancel')}</Button><Button variant={st.o.danger ? 'danger' : 'primary'} disabled={blocked} onClick={() => done(true)}>{t(lang, st.o.confirmLabel ?? 'Confirm')}</Button></>}>
           <div className="col">
-            {st.o.body && <div className="text2">{st.o.body}</div>}
+            {st.o.body && <div className="text2">{tr(lang, st.o.body)}</div>}
             {needReason && <Field label={typeof st.o.reason === 'string' ? st.o.reason : 'Reason (required, recorded in the audit log)'}><Textarea autoFocus value={reason} onChange={(e) => setReason(e.target.value)} /></Field>}
-            {st.o.typeToConfirm && <Field label={`Type ${st.o.typeToConfirm} to confirm`}><Input value={typed} onChange={(e) => setTyped(e.target.value)} /></Field>}
+            {st.o.typeToConfirm && <Field label={t(lang, 'Type {word} to confirm', { word: st.o.typeToConfirm })}><Input value={typed} onChange={(e) => setTyped(e.target.value)} /></Field>}
           </div>
         </Modal>
       )}
@@ -262,7 +283,7 @@ export function DataTable<T>({ rows, cols, rowKey, onRow, pageSize = 12, search,
   return (
     <div>
       {(search || toolbar) && <div className="row wrap" style={{ padding: '12px 14px' }}>{search && <div style={{ width: 260, maxWidth: '100%' }}><SearchBox value={q} onChange={setQ} /></div>}<div className="grow" />{toolbar}</div>}
-      <div className={cx('table-wrap', max && 'max')} role="region" aria-label="Scrollable table" tabIndex={0}>
+      <div className={cx('table-wrap', max && 'max')} role="region" aria-label={t(lang, 'Scrollable table')} tabIndex={0}>
         <table className={cx('t', compact && 'compact')}>
           <thead><tr>{cols.map((c) => (
             <th key={c.key} className={cx(c.num && 'num', c.right && 'r', c.hideSm && 'hide-sm')} style={{ width: c.width, cursor: c.sort ? 'pointer' : undefined }}
@@ -280,8 +301,8 @@ export function DataTable<T>({ rows, cols, rowKey, onRow, pageSize = 12, search,
         {!filtered.length && (empty ?? <Empty title="Nothing here yet" hint={q ? 'No results match your search.' : undefined} />)}
       </div>
       {filtered.length > pageSize && (
-        <div className="pager"><span>{cur * pageSize + 1}–{Math.min(filtered.length, cur * pageSize + pageSize)} of {filtered.length}</span>
-          <div className="row gap-6"><Button size="sm" icon aria-label="Previous page" disabled={cur === 0} onClick={() => setPage(cur - 1)}><ChevronLeft size={15} /></Button><span>{cur + 1} / {pages}</span><Button size="sm" icon aria-label="Next page" disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)}><ChevronRight size={15} /></Button></div></div>
+        <div className="pager"><span>{t(lang, '{from}–{to} of {total}', { from: cur * pageSize + 1, to: Math.min(filtered.length, cur * pageSize + pageSize), total: filtered.length })}</span>
+          <div className="row gap-6"><Button size="sm" icon aria-label={t(lang, 'Previous page')} disabled={cur === 0} onClick={() => setPage(cur - 1)}><ChevronLeft size={15} /></Button><span>{cur + 1} / {pages}</span><Button size="sm" icon aria-label={t(lang, 'Next page')} disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)}><ChevronRight size={15} /></Button></div></div>
       )}
     </div>
   );
@@ -299,10 +320,13 @@ export function ReportHead({ title, from, to, scope }: { title: ReactNode; from?
   const recon = useMemo(() => reconciliationMatrix(db), [db.journals, db.orders, db.allocations, db.receipts, db.apInvoices, db.balances]); // eslint-disable-line react-hooks/exhaustive-deps
   const closed = !!db.meta.lockedUntil && !!to && to <= db.meta.lockedUntil;
   const diffs = recon.filter((r) => r.status === 'diff').length;
+  const lang = useLang();
+  // Thai month names but Gregorian years, to match the ISO dates in the period
+  const generated = new Date().toLocaleString(lang === 'th' ? 'th-TH-u-ca-gregory' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' });
   return (
     <div className="row wrap between" style={{ gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)', borderRadius: 'var(--radius) var(--radius) 0 0', fontSize: 12.5 }}>
-      <div className="text2"><b style={{ color: 'var(--text)' }}>{title}</b> · {from ? `${from} → ${to}` : `as of ${to}`} · THB · {db.org.accountingBasis} basis · costing: weighted average{scope ? <> · {scope}</> : null} · generated {new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div>
-      <div className="row gap-6"><Badge tone={closed ? 'good' : 'warn'} dot>{closed ? 'Posted · period closed' : 'Draft · period open'}</Badge><Badge tone={diffs ? 'bad' : 'good'} dot>{diffs ? `${diffs} reconciliation difference(s)` : 'Reconciled'}</Badge></div>
+      <div className="text2"><b style={{ color: 'var(--text)' }}>{tr(lang, title)}</b> · {from ? `${from} → ${to}` : t(lang, 'as of {date}', { date: to ?? '' })} · THB · {t(lang, `${db.org.accountingBasis} basis`)} · {t(lang, 'costing: weighted average')}{scope ? <> · {tr(lang, scope)}</> : null} · {t(lang, 'generated {when}', { when: generated })}</div>
+      <div className="row gap-6"><Badge tone={closed ? 'good' : 'warn'} dot>{closed ? 'Posted · period closed' : 'Draft · period open'}</Badge><Badge tone={diffs ? 'bad' : 'good'} dot>{diffs ? t(lang, '{n} reconciliation difference(s)', { n: diffs }) : 'Reconciled'}</Badge></div>
     </div>
   );
 }

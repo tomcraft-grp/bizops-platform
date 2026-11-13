@@ -76,6 +76,8 @@ export const MODULES: { key: string; label: string; actions: string[] }[] = [
   { key: 'system', label: 'System health', actions: ['view'] },
   { key: 'finance', label: 'Financial sensitivity', actions: ['cost', 'profit'] },
   { key: 'feedback', label: 'Feedback & issues', actions: ['view', 'manage'] },
+  // Menu visibility only: what a person may do inside DEV APP Customer is decided by their DEV APP role in Supabase.
+  { key: 'devapp', label: 'DEV APP Customer', actions: ['view'] },
 ];
 
 export function hasPerm(perms: string[], perm: string): boolean {

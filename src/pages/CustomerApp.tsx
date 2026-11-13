@@ -1,5 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { BrandHeader, CouponsSection, LayoutHome, MemberCardSection, OffersSection, OnboardingModal, OutstandingSection, themeVars, useDeviceOf, useLayoutFont } from '../devapp/render';
+import { CUSTOMER_APP_ID, useCustomerLayout } from '../devapp/useCustomerLayout';
 import { ArrowLeft, Gift, Hash, Home, Minus, Plus, ShoppingBag, UserRound, Wallet, X } from 'lucide-react';
 import { useDB, useStore, toast, act } from '../domain/store';
 import { customerLifetimeSpend, expiringSoon, pointsBalance, redeemReward, tierFor } from '../domain/loyalty';
@@ -53,6 +55,26 @@ export default function CustomerApp() {
   const tabs: [Tab, JSX.Element, string][] = [['home', <Home size={18} key="h" />, 'Home'], ['shop', <ShoppingBag size={18} key="s" />, 'Shop'], ['rewards', <Gift size={18} key="r" />, 'Rewards'], ['pay', <Wallet size={18} key="p" />, 'Pay'], ['events', <Hash size={18} key="e" />, 'Events']];
   if (lineId) tabs.push(['profile', <UserRound size={18} key="u" />, 'โปรไฟล์']);
 
+  // DEV APP Customer: the published layout (or a staff preview via ?layout=<version id>). Without one, the
+  // built-in layout below is used unchanged.
+  const [params] = useSearchParams();
+  const { layout } = useCustomerLayout(CUSTOMER_APP_ID, params.get('layout'));
+  const cfg = layout?.config ?? null;
+  useLayoutFont(cfg);
+  const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
+  const device = useDeviceOf(bodyEl);
+  const navTabs = cfg ? cfg.nav.filter((n) => n.visible).flatMap((n) => { const t = tabs.find((x) => x[0] === n.key); return t ? [[t[0], t[1], n.label] as [Tab, JSX.Element, string]] : []; }) : tabs;
+  useEffect(() => { if (navTabs.length && !navTabs.some((t) => t[0] === tab)) setTab(navTabs[0][0]); }, [navTabs.map((t) => t[0]).join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Intro pop-up: once per published version unless the member ticks "don't show again" (staff previews always show it).
+  const introKey = layout && !layout.preview ? `bizops.intro.${CUSTOMER_APP_ID}.v${layout.versionNo}` : null;
+  const [introOpen, setIntroOpen] = useState(false);
+  useEffect(() => {
+    let seen = false;
+    try { seen = !!introKey && !!localStorage.getItem(introKey); } catch { /* ignore */ }
+    setIntroOpen(!!cfg?.onboarding.enabled && cfg.onboarding.slides.length > 0 && !seen);
+  }, [introKey, cfg?.onboarding.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  const goTab = (t: string) => { if (navTabs.some((x) => x[0] === t)) setTab(t as Tab); };
+
   return (
     <div className="standalone">
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 340px) auto', gap: 40, alignItems: 'center', maxWidth: 860, width: '100%' }} className="cust-wrap">
@@ -63,23 +85,25 @@ export default function CustomerApp() {
           <Banner>LINE Login is simulated. In production the LIFF app authenticates the customer with their LINE account and links it to this customer record.</Banner>
           {me && !lineId && <Button onClick={() => login(null)}>Sign out / switch customer</Button>}
         </div>
-        <div className="phone">
-          <div className="phone-top"><b>{db.org.name.split(' ')[0]} ☕</b><span style={{ fontSize: 12, opacity: 0.9 }}>LINE</span></div>
+        <div className="phone" style={cfg ? themeVars(cfg) : undefined}>
+          {cfg ? <BrandHeader config={cfg} go={goTab} /> : <div className="phone-top"><b>{db.org.name.split(' ')[0]} ☕</b><span style={{ fontSize: 12, opacity: 0.9 }}>LINE</span></div>}
+          {layout?.preview && <div style={{ background: 'var(--warn-soft)', color: 'var(--warn-text)', fontSize: 12, padding: '6px 12px' }}>Preview of layout v{layout.versionNo} ({layout.status}) — customers do not see this yet.</div>}
           {needsSignup ? <div className="phone-body"><MemberForm mode="signup" /></div> : !me ? (lineId ? <div className="phone-body center"><div className="spinner" /></div> : <Login onPick={login} />) : (
             <>
-              <div className="phone-body" role="region" aria-label="Customer app content" tabIndex={0}>
-                {tab === 'home' && <HomeTab id={me.id} go={setTab} />}
+              <div className="phone-body" role="region" aria-label="Customer app content" tabIndex={0} ref={setBodyEl}>
+                {tab === 'home' && (cfg ? <LayoutHome config={cfg} device={device} customerId={me.id} go={setTab} /> : <HomeTab id={me.id} go={setTab} />)}
                 {tab === 'shop' && <ShopTab id={me.id} go={setTab} />}
                 {tab === 'rewards' && <RewardsTab id={me.id} />}
                 {tab === 'pay' && <PayTab id={me.id} />}
                 {tab === 'events' && <EventsTab id={me.id} />}
                 {tab === 'profile' && lineId && <MemberForm mode="edit" />}
               </div>
-              <nav className="phone-nav" style={{ gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}>
-                {tabs.map(([k, i, l]) => <button key={k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{i}{l}</button>)}
+              <nav className={cx('phone-nav', cfg?.theme.navStyle === 'floating' && 'floating')} style={{ gridTemplateColumns: `repeat(${navTabs.length}, 1fr)` }}>
+                {navTabs.map(([k, i, l]) => <button key={k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{i}{l}</button>)}
               </nav>
             </>
           )}
+          {cfg && introOpen && me && <OnboardingModal config={cfg} storageKey={introKey} onClose={() => setIntroOpen(false)} />}
         </div>
       </div>
       <style>{`@media (max-width: 900px){.cust-wrap{grid-template-columns:1fr !important}} @media (max-width:560px){.phone{border:0;border-radius:0;height:100vh;max-height:none;width:100vw}.standalone{padding:0}}`}</style>
@@ -151,34 +175,20 @@ function Login({ onPick }: { onPick: (id: ID) => void }) {
   );
 }
 
+// The built-in Home layout (used when no DEV APP layout is published). Same sections, same order, same markup as
+// before; the sections now live in devapp/render.tsx so a configured layout can reuse and rearrange them.
 function HomeTab({ id, go }: { id: ID; go: (t: Tab) => void }) {
-  const db = useDB();
-  const c = db.customers.find((x) => x.id === id)!;
-  const spend = customerLifetimeSpend(db, id);
-  const tier = tierFor(db, spend);
-  const next = [...db.loyalty.tiers].sort((a, b) => a.minSpend - b.minSpend).find((t) => t.minSpend > spend);
-  const pts = pointsBalance(db, id);
-  const exp = expiringSoon(db, id, new Date().toISOString());
-  const coupons = db.coupons.filter((x) => x.customerId === id && x.status === 'issued' && x.expiresAt > new Date().toISOString());
-  const promos = db.promotions.filter((p) => effectiveStatus(p, new Date().toISOString()) === 'active' && !p.code && (!p.channels.length || p.channels.includes('LINE') || p.channels.includes('POS'))).slice(0, 4);
-  const out = customerOutstanding(db, id);
   return (
     <>
-      <div className="cust-card">
-        <div className="row between"><div><div style={{ opacity: 0.8, fontSize: 12 }}>Member</div><div style={{ fontSize: 18, fontWeight: 700 }}>{c.name}</div></div><span style={{ background: 'rgba(255,255,255,.2)', padding: '3px 10px', borderRadius: 999, fontWeight: 600, fontSize: 12 }}>{tier.name}</span></div>
-        <div style={{ fontSize: 34, fontWeight: 750, marginTop: 10 }}>{pts.toLocaleString()} <span style={{ fontSize: 14, fontWeight: 500 }}>points</span></div>
-        {exp > 0 && <div style={{ fontSize: 12, opacity: 0.9 }}>{exp} points expire within 60 days</div>}
-        {next && <div style={{ marginTop: 10 }}><div style={{ fontSize: 12, opacity: 0.9 }}>{money0(next.minSpend - spend)} more to reach {next.name}</div><div className="progress" style={{ background: 'rgba(255,255,255,.25)', marginTop: 4 }}><i style={{ width: `${Math.min(100, (spend / next.minSpend) * 100)}%`, background: '#fff' }} /></div></div>}
-        <div className="row mt16" style={{ justifyContent: 'center' }}><QR data={`MEMBER|${c.code}`} size={96} /></div>
-      </div>
-      {out > 0 && <Banner tone="warn">You have an outstanding balance of <b>{money(out)}</b>. <a onClick={() => go('pay')} style={{ cursor: 'pointer' }}>Pay now</a></Banner>}
-      {coupons.length > 0 && <Card title="My coupons">{coupons.map((x) => <div key={x.id} className="row between" style={{ padding: '4px 0' }}><span>{x.title}</span><span className="mono">{x.code}</span></div>)}<div className="muted" style={{ fontSize: 12 }}>Show the code at the counter or enter it at checkout.</div></Card>}
-      <Card title="Offers for you">{promos.map((p) => <div key={p.id} style={{ padding: '5px 0' }}><b>{p.name}</b><div className="muted" style={{ fontSize: 12.5 }}>{p.description}</div></div>)}</Card>
+      <MemberCardSection id={id} />
+      <OutstandingSection id={id} go={go} />
+      <CouponsSection id={id} />
+      <OffersSection />
     </>
   );
 }
 
-function ShopTab({ id, go }: { id: ID; go: (t: Tab) => void }) {
+export function ShopTab({ id, go }: { id: ID; go: (t: Tab) => void }) {
   const db = useDB();
   const c = db.customers.find((x) => x.id === id)!;
   const items = db.products.filter((p) => p.active && ['finished', 'resale'].includes(p.kind) && (p.channelPrices.LINE ?? p.price) > 0);
@@ -218,7 +228,7 @@ function ShopTab({ id, go }: { id: ID; go: (t: Tab) => void }) {
   );
 }
 
-function RewardsTab({ id }: { id: ID }) {
+export function RewardsTab({ id }: { id: ID }) {
   const db = useDB();
   const pts = pointsBalance(db, id);
   const [last, setLast] = useState<string | null>(null);
@@ -238,7 +248,7 @@ function RewardsTab({ id }: { id: ID }) {
   );
 }
 
-function PayTab({ id }: { id: ID }) {
+export function PayTab({ id }: { id: ID }) {
   const db = useDB();
   const alloc = useMemo(() => allocatedMap(db), [db.allocations]);
   const open = outstandingOrders(db, id, alloc);
@@ -297,7 +307,7 @@ function PayTab({ id }: { id: ID }) {
   );
 }
 
-function EventsTab({ id }: { id: ID }) {
+export function EventsTab({ id }: { id: ID }) {
   const db = useDB();
   useTicker(1000);
   const ev = db.events.find((e) => e.status === 'active') ?? db.events[db.events.length - 1];

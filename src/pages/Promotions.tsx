@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Pause, Play, Plus, Trash2 } from 'lucide-react';
-import { useDB } from '../domain/store';
+import { useDB, useLang } from '../domain/store';
 import { effectiveStatus, promoUsage } from '../domain/promotions';
 import { quoteOrder } from '../domain/orders';
 import { CHANNEL_LIST } from '../domain/meta';
-import { Badge, Banner, Button, Card, ChannelChip, Check, DataTable, Field, Input, Kpi, Modal, NumInput, PageHead, Select, Tabs, Textarea, useHas, useRun } from '../ui/kit';
+import { Badge, Banner, Button, Card, ChannelChip, Check, DataTable, Field, Input, Kpi, Modal, NumInput, PageHead, Select, Tabs, Textarea, useHas, useRun, Tx } from '../ui/kit';
 import { dateFmt, dayKey, money, money0, addDays } from '../lib/util';
 import type { ChannelCode, PromoActionType, Promotion } from '../domain/types';
+import { t as tl } from '../lib/i18n';
 
 const ACTIONS: { v: PromoActionType; label: string; hint: string }[] = [
   { v: 'percent', label: 'Percentage discount', hint: 'value = % off the eligible items' },
@@ -32,27 +33,27 @@ export default function Promotions() {
   return (
     <>
       <PageHead title="Promotions" desc="A rule engine — conditions, actions, limits, budgets and stacking — configured without code. Every application is recorded against the order and flows into profit reports."
-        actions={canEdit && <Button variant="primary" onClick={() => setEdit('new')}><Plus size={15} /> New promotion</Button>} />
+        actions={canEdit && <Button variant="primary" onClick={() => setEdit('new')}><Plus size={15} />{' '}<Tx>New promotion</Tx></Button>} />
       <div className="grid g4 mb16">
-        <Kpi label="Active now" value={rows.filter((r) => r.st === 'active' && dayKey(r.p.startAt) <= dayKey(now)).length} sub={`${rows.filter((r) => r.st === 'draft').length} drafts · ${rows.filter((r) => r.st === 'expired').length} expired`} />
+        <Kpi label="Active now" value={rows.filter((r) => r.st === 'active' && dayKey(r.p.startAt) <= dayKey(now)).length} sub={<Tx vars={{ d: rows.filter((r) => r.st === 'draft').length, e: rows.filter((r) => r.st === 'expired').length }}>{'{d} drafts · {e} expired'}</Tx>} />
         <Kpi label="Redemptions" value={db.redemptions.length} sub="across all orders" />
         <Kpi label="Discount given" value={money0(given)} sub="business-funded" />
-        <Kpi label="Budget tracked" value={money0(rows.reduce((s, r) => s + (r.p.budget ?? 0), 0))} sub={`${rows.filter((r) => r.p.budget).length} budgeted promotions`} />
+        <Kpi label="Budget tracked" value={money0(rows.reduce((s, r) => s + (r.p.budget ?? 0), 0))} sub={<Tx vars={{ n: rows.filter((r) => r.p.budget).length }}>{'{n} budgeted promotions'}</Tx>} />
       </div>
       <Tabs value={tab} onChange={setTab} tabs={[{ v: 'list', label: 'Promotions' }, { v: 'sim', label: 'Eligibility simulator' }]} />
       {tab === 'list' && (
         <Card flush>
           <DataTable rows={rows} rowKey={(r) => r.p.id} pageSize={12} search={(r) => r.p.name + (r.p.code ?? '')}
             cols={[
-              { key: 'n', header: 'Promotion', sort: (r) => r.p.name, render: (r) => <><b>{r.p.name}</b>{r.p.code && <Badge tone="info"> code {r.p.code}</Badge>}<div className="sub">{r.p.description}</div></> },
+              { key: 'n', header: 'Promotion', sort: (r) => r.p.name, render: (r) => <><b>{r.p.name}</b>{r.p.code && <Badge tone="info">{' '}<Tx>code</Tx>{' '}{r.p.code}</Badge>}<div className="sub">{r.p.description}</div></> },
               { key: 's', header: 'Status', render: (r) => <Badge tone={r.st === 'active' ? 'good' : r.st === 'paused' ? 'warn' : r.st === 'expired' ? 'bad' : ''} dot>{r.st}</Badge> },
-              { key: 'a', header: 'Action', render: (r) => <>{ACTIONS.find((x) => x.v === r.p.action.type)?.label}<div className="sub">{r.p.action.type === 'percent' ? `${r.p.action.value}%` : r.p.action.type === 'fixed' || r.p.action.type === 'bundle_price' ? money(r.p.action.value ?? 0) : r.p.action.type === 'event_entitlement' ? `per ${money0(r.p.action.perAmount ?? 0)}` : ''}</div></> },
-              { key: 'w', header: 'When', hideSm: true, render: (r) => <>{dateFmt(r.p.startAt)} → {dateFmt(r.p.endAt)}<div className="sub">{r.p.weekdays?.length ? r.p.weekdays.map((d) => DAYS[d]).join(' ') : 'every day'}</div></> },
-              { key: 'c', header: 'Channels', hideSm: true, render: (r) => (r.p.channels.length ? <div className="row wrap gap-4">{r.p.channels.map((c) => <ChannelChip key={c} c={c} />)}</div> : <span className="muted">all</span>) },
-              { key: 'u', header: 'Used', num: true, render: (r) => <>{r.u.total}{r.p.limits.total ? <span className="muted"> / {r.p.limits.total}</span> : ''}<div className="sub">{r.u.discount ? '−' + money0(r.u.discount) : ''}{r.p.budget ? ` of ${money0(r.p.budget)}` : ''}</div></> },
+              { key: 'a', header: 'Action', render: (r) => <><Tx>{ACTIONS.find((x) => x.v === r.p.action.type)?.label ?? ''}</Tx><div className="sub">{r.p.action.type === 'percent' ? `${r.p.action.value}%` : r.p.action.type === 'fixed' || r.p.action.type === 'bundle_price' ? money(r.p.action.value ?? 0) : r.p.action.type === 'event_entitlement' ? <Tx vars={{ amount: money0(r.p.action.perAmount ?? 0) }}>{'per {amount}'}</Tx> : ''}</div></> },
+              { key: 'w', header: 'When', hideSm: true, render: (r) => <>{dateFmt(r.p.startAt)} → {dateFmt(r.p.endAt)}<div className="sub">{r.p.weekdays?.length ? r.p.weekdays.map((d, i) => <span key={d}>{i ? ' ' : ''}<Tx>{DAYS[d]}</Tx></span>) : <Tx>{'every day'}</Tx>}</div></> },
+              { key: 'c', header: 'Channels', hideSm: true, render: (r) => (r.p.channels.length ? <div className="row wrap gap-4">{r.p.channels.map((c) => <ChannelChip key={c} c={c} />)}</div> : <span className="muted"><Tx>all</Tx></span>) },
+              { key: 'u', header: 'Used', num: true, render: (r) => <>{r.u.total}{r.p.limits.total ? <span className="muted"> / {r.p.limits.total}</span> : ''}<div className="sub">{r.u.discount ? '−' + money0(r.u.discount) : ''}{r.p.budget ? <> <Tx vars={{ amount: money0(r.p.budget) }}>{'of {amount}'}</Tx></> : ''}</div></> },
               { key: 'x', header: '', render: (r) => canEdit && <div className="row gap-4">
                 {r.st !== 'expired' && <Button size="sm" variant="ghost" icon title={r.p.status === 'active' ? 'Pause' : 'Activate'} onClick={() => run((d) => { const x = d.promotions.find((y) => y.id === r.p.id)!; x.status = x.status === 'active' ? 'paused' : 'active'; }, { ok: r.p.status === 'active' ? 'Paused' : 'Activated' })}>{r.p.status === 'active' ? <Pause size={14} /> : <Play size={14} />}</Button>}
-                <Button size="sm" onClick={() => setEdit(r.p)}>Edit</Button></div> },
+                <Button size="sm" onClick={() => setEdit(r.p)}><Tx>Edit</Tx></Button></div> },
             ]} />
         </Card>
       )}
@@ -63,6 +64,7 @@ export default function Promotions() {
 }
 
 function Simulator() {
+  const lang = useLang();
   const db = useDB();
   const [channel, setChannel] = useState<ChannelCode>('POS');
   const [cust, setCust] = useState('');
@@ -78,24 +80,24 @@ function Simulator() {
           <Field label="Channel"><Select value={channel} onChange={(e) => setChannel(e.target.value as ChannelCode)}>{CHANNEL_LIST.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}</Select></Field>
           <Field label="Customer"><Select value={cust} onChange={(e) => setCust(e.target.value)}><option value="">Walk-in</option>{db.customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select></Field>
           <Field label="Date & time"><Input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} /></Field>
-          <Field label="Promo code"><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="WELCOME50" /></Field>
+          <Field label="Promo code"><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder={tl(lang, 'WELCOME50')} /></Field>
         </div>
         <div className="col mt16">
           {lines.map((l, i) => (
             <div key={i} className="row"><Select value={l.productId} onChange={(e) => setLines(lines.map((x, k) => (k === i ? { ...x, productId: e.target.value } : x)))}>{db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).map((p) => <option key={p.id} value={p.id}>{p.name} — {money0(p.price)}</option>)}</Select><NumInput style={{ width: 80 }} value={l.qty} onChange={(n) => setLines(lines.map((x, k) => (k === i ? { ...x, qty: Math.max(1, n || 1) } : x)))} /><Button icon variant="ghost" onClick={() => setLines(lines.filter((_, k) => k !== i))}><Trash2 size={15} /></Button></div>
           ))}
-          <div><Button size="sm" onClick={() => setLines([...lines, { productId: 'D01', qty: 1 }])}><Plus size={14} /> Add line</Button></div>
+          <div><Button size="sm" onClick={() => setLines([...lines, { productId: 'D01', qty: 1 }])}><Plus size={14} />{' '}<Tx>Add line</Tx></Button></div>
         </div>
       </Card>
       <Card title="Result" sub="Deterministic: the same cart always gives the same answer">
-        <div className="row between"><span className="muted">Subtotal</span><b>{money(q.subtotal)}</b></div>
-        <div className="row between"><span className="muted">Promotion discounts</span><b className="good">−{money(q.promoDiscount)}</b></div>
-        <div className="row between" style={{ fontSize: 20 }}><b>Total</b><b>{money(q.total)}</b></div>
+        <div className="row between"><span className="muted"><Tx>Subtotal</Tx></span><b>{money(q.subtotal)}</b></div>
+        <div className="row between"><span className="muted"><Tx>Promotion discounts</Tx></span><b className="good">−{money(q.promoDiscount)}</b></div>
+        <div className="row between" style={{ fontSize: 20 }}><b><Tx>Total</Tx></b><b>{money(q.total)}</b></div>
         <div className="divider" />
-        <div className="lbl-s mb8">Applied</div>
-        {q.applied.length ? q.applied.map((a) => <div key={a.promoId} className="row between" style={{ fontSize: 13 }}><span>{a.name}</span><span>{a.discount ? '−' + money(a.discount) : a.entitlements ? `+${a.entitlements} event pick(s)` : a.bonusPoints ? `+${a.bonusPoints} pts` : a.freeItems.length ? 'free item' : 'applied'}</span></div>) : <div className="muted">No promotion applies.</div>}
-        {q.bonusMultiplier > 0 && <div className="good" style={{ fontSize: 13 }}>Points multiplier ×{1 + q.bonusMultiplier}</div>}
-        {q.skipped.length > 0 && <><div className="lbl-s mt16 mb8">Close, but not applied — why</div>{q.skipped.map((s) => <div key={s.promoId} className="row between" style={{ fontSize: 13 }}><span>{s.name}</span><Badge tone="warn">{s.reason}</Badge></div>)}</>}
+        <div className="lbl-s mb8"><Tx>Applied</Tx></div>
+        {q.applied.length ? q.applied.map((a) => <div key={a.promoId} className="row between" style={{ fontSize: 13 }}><span>{a.name}</span><span>{a.discount ? '−' + money(a.discount) : a.entitlements ? <Tx vars={{ n: a.entitlements }}>{'+{n} event pick(s)'}</Tx> : a.bonusPoints ? <Tx vars={{ n: a.bonusPoints }}>{'+{n} pts'}</Tx> : a.freeItems.length ? <Tx>{'free item'}</Tx> : <Tx>{'applied'}</Tx>}</span></div>) : <div className="muted"><Tx>No promotion applies.</Tx></div>}
+        {q.bonusMultiplier > 0 && <div className="good" style={{ fontSize: 13 }}><Tx>Points multiplier ×</Tx>{1 + q.bonusMultiplier}</div>}
+        {q.skipped.length > 0 && <><div className="lbl-s mt16 mb8"><Tx>Close, but not applied — why</Tx></div>{q.skipped.map((s) => <div key={s.promoId} className="row between" style={{ fontSize: 13 }}><span>{s.name}</span><Badge tone="warn">{s.reason}</Badge></div>)}</>}
       </Card>
     </div>
   );
@@ -111,7 +113,7 @@ function PromoModal({ p, onClose }: { p: Promotion | null; onClose: () => void }
   const toggle = <T,>(arr: T[], v: T) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
   const dtl = (iso: string) => iso.slice(0, 10);
   return (
-    <Modal title={p ? 'Edit promotion' : 'New promotion'} size="lg" onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!f.name.trim()} onClick={() => run((d) => { if (p) Object.assign(d.promotions.find((x) => x.id === p.id)!, f); else d.promotions.push({ ...f, id: 'PM' + (d.promotions.length + 20) }); }, { ok: 'Promotion saved', perm: 'promotions:edit', onOk: onClose })}>Save</Button></>}>
+    <Modal title={p ? 'Edit promotion' : 'New promotion'} size="lg" onClose={onClose} footer={<><Button onClick={onClose}><Tx>Cancel</Tx></Button><Button variant="primary" disabled={!f.name.trim()} onClick={() => run((d) => { if (p) Object.assign(d.promotions.find((x) => x.id === p.id)!, f); else d.promotions.push({ ...f, id: 'PM' + (d.promotions.length + 20) }); }, { ok: 'Promotion saved', perm: 'promotions:edit', onOk: onClose })}><Tx>Save</Tx></Button></>}>
       <div className="form-grid">
         <Field label="Name" full><Input value={f.name} onChange={(e) => set({ name: e.target.value })} /></Field>
         <Field label="Description" full><Textarea style={{ minHeight: 50 }} value={f.description} onChange={(e) => set({ description: e.target.value })} /></Field>
@@ -143,9 +145,9 @@ function PromoModal({ p, onClose }: { p: Promotion | null; onClose: () => void }
         <Field label="Per-customer limit"><NumInput value={f.limits.perCustomer ?? ''} onChange={(n) => set({ limits: { ...f.limits, perCustomer: isNaN(n) ? undefined : n } })} /></Field>
         <Field label="Budget / max discount exposure (฿)"><NumInput value={f.budget ?? ''} onChange={(n) => set({ budget: isNaN(n) ? undefined : n })} /></Field>
         <Field label="Max times per order"><NumInput value={f.limits.perOrder} onChange={(n) => set({ limits: { ...f.limits, perOrder: Math.max(1, n || 1) } })} /></Field>
-        <div className="full"><Check checked={!!f.requireCustomer} onChange={(v) => set({ requireCustomer: v })}>Requires an identified customer</Check></div>
+        <div className="full"><Check checked={!!f.requireCustomer} onChange={(v) => set({ requireCustomer: v })}><Tx>Requires an identified customer</Tx></Check></div>
       </div>
-      {f.channels.some((c) => c !== 'POS' && c !== 'LINE') && <div className="mt16"><Banner tone="warn">Marketplace and delivery platforms set their own final prices; promotions are only applied to <b>POS</b> and <b>LINE</b> orders in this prototype.</Banner></div>}
+      {f.channels.some((c) => c !== 'POS' && c !== 'LINE') && <div className="mt16"><Banner tone="warn"><Tx>Marketplace and delivery platforms set their own final prices; promotions are only applied to</Tx>{' '}<b><Tx>POS</Tx></b>{' '}<Tx>and</Tx>{' '}<b><Tx>LINE</Tx></b>{' '}<Tx>orders in this prototype.</Tx></Banner></div>}
     </Modal>
   );
 }

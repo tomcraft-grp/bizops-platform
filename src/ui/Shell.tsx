@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell, Boxes, Calculator, ChefHat, ChevronsLeft, ChevronsRight, CircleUser, Factory, FileImage, Gift, Heart, LayoutDashboard, Layers, Languages, LineChart, Lock, LogOut, Menu, Monitor, Moon,
   Package, Percent, Printer, Search, Settings, ShieldCheck, ShoppingBag, ShoppingCart, Smartphone, Sparkles, Store, Sun, Tag, Truck, Users, Wallet, Radio, Hash, FileText, Activity, Map, Check, MessageSquarePlus,
+  Palette,
 } from 'lucide-react';
 import { act, setLang, setTheme, toggleCollapsed, setUI, useDB, useLang, useStore } from '../domain/store';
 import { currentUser, hasPerm, userPerms } from '../domain/core';
@@ -53,6 +54,9 @@ const NAV: { title: string; items: NavItem[] }[] = [
     { to: '/blueprint', label: 'Blueprint & scope', icon: <Map />, perm: 'dashboard:view' },
     { to: '/feedback', label: 'Feedback & issues', icon: <MessageSquarePlus />, perm: 'feedback:view' },
   ] },
+  { title: 'DEV APP', items: [
+    { to: '/dev-app', label: 'DEV APP Customer', icon: <Palette />, perm: 'devapp:view' },
+  ] },
 ];
 
 export function Shell() {
@@ -77,8 +81,8 @@ export function Shell() {
 
   return (
     <div className={cx('app', ui.collapsed && 'collapsed')}>
-      <aside className={cx('sidebar', ui.sidebarOpen && 'open')} aria-label="Main navigation">
-        <div className="brand"><div className="logo"><Store size={17} /></div><div>BizOps<small>{db.org.name.split(' ')[0]} · Prototype</small></div></div>
+      <aside className={cx('sidebar', ui.sidebarOpen && 'open')} aria-label={t(lang, 'Main navigation')}>
+        <div className="brand"><div className="logo"><Store size={17} /></div><div>BizOps<small>{db.org.name.split(' ')[0]} · {t(lang, 'Prototype')}</small></div></div>
         <nav className="nav">
           {NAV.map((g) => {
             const items = g.items.filter((i) => hasPerm(perms, i.perm));
@@ -96,17 +100,17 @@ export function Shell() {
           })}
           <div className="nav-group">
             <div className="nav-title">{t(lang, 'Customer view')}</div>
-            <NavLink to="/app" title="Customer app (LINE LIFF simulator)"><Smartphone /><span>{t(lang, 'Customer app (LIFF)')}</span></NavLink>
+            <NavLink to="/app" title={t(lang, 'Customer app (LINE LIFF simulator)')}><Smartphone /><span>{t(lang, 'Customer app (LIFF)')}</span></NavLink>
           </div>
         </nav>
         <div style={{ padding: 10, borderTop: '1px solid var(--border)' }} className="hide-sm">
-          <Button variant="ghost" className="block" onClick={toggleCollapsed} title="Collapse sidebar">{ui.collapsed ? <ChevronsRight size={17} /> : <><ChevronsLeft size={17} /> {t(lang, 'Collapse')}</>}</Button>
+          <Button variant="ghost" className="block" onClick={toggleCollapsed} title={t(lang, 'Collapse sidebar')}>{ui.collapsed ? <ChevronsRight size={17} /> : <><ChevronsLeft size={17} /> {t(lang, 'Collapse')}</>}</Button>
         </div>
       </aside>
       <div className={cx('scrim', ui.sidebarOpen && 'open')} onClick={() => setUI({ sidebarOpen: false })} />
       <div className="main">
         <header className="topbar">
-          <Button variant="ghost" icon className="menu-btn" onClick={() => setUI({ sidebarOpen: true })} aria-label="Open menu"><Menu size={20} /></Button>
+          <Button variant="ghost" icon className="menu-btn" onClick={() => setUI({ sidebarOpen: true })} aria-label={t(lang, 'Open menu')}><Menu size={20} /></Button>
           <button className="search-btn" onClick={() => setSearchOpen(true)} aria-label={t(lang, 'Search')}><Search size={16} /><span>{t(lang, 'Search products, customers, orders…')}</span><kbd>Ctrl K</kbd></button>
           <div className="grow" />
           <select className="select sm" style={{ width: 'auto', maxWidth: 170 }} value={ui.branchScope} onChange={(e) => setUI({ branchScope: e.target.value })} aria-label={t(lang, 'Branch scope')}>
@@ -114,11 +118,11 @@ export function Shell() {
             {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
           <Button variant="ghost" icon onClick={() => setLang(lang === 'th' ? 'en' : 'th')} title={lang === 'th' ? 'Switch to English' : 'สลับเป็นภาษาไทย'} aria-label="Switch language"><Languages size={18} /></Button>
-          <Button variant="ghost" icon onClick={() => setTheme(ui.theme === 'dark' ? 'light' : ui.theme === 'light' ? 'system' : 'dark')} title={`Theme: ${ui.theme}`} aria-label={t(lang, 'Toggle theme')}>{ui.theme === 'dark' ? <Moon size={18} /> : ui.theme === 'light' ? <Sun size={18} /> : <Monitor size={18} />}</Button>
+          <Button variant="ghost" icon onClick={() => setTheme(ui.theme === 'dark' ? 'light' : ui.theme === 'light' ? 'system' : 'dark')} title={t(lang, 'Theme: {theme}', { theme: t(lang, ui.theme) })} aria-label={t(lang, 'Toggle theme')}>{ui.theme === 'dark' ? <Moon size={18} /> : ui.theme === 'light' ? <Sun size={18} /> : <Monitor size={18} />}</Button>
           <Popover width={340} trigger={(_o, tg) => <Button variant="ghost" icon onClick={tg} aria-label={t(lang, 'Notifications')} style={{ position: 'relative' }}><Bell size={18} />{alerts.total > 0 && <span style={{ position: 'absolute', top: 3, right: 3, width: 8, height: 8, borderRadius: 4, background: 'var(--crit)' }} />}</Button>}>
             {(close) => <Notifications close={close} />}
           </Popover>
-          <Popover width={300} trigger={(_o, tg) => <button className="user-chip" onClick={tg} aria-label={`Account menu — signed in as ${profile?.email ?? ''}`}><Avatar name={profile?.display_name || profile?.email || '?'} color={user.color} /><span className="nm" style={{ fontWeight: 600, fontSize: 13 }}>{(profile?.display_name || profile?.email || '').split(' ')[0].split('@')[0]}</span></button>}>
+          <Popover width={300} trigger={(_o, tg) => <button className="user-chip" onClick={tg} aria-label={t(lang, 'Account menu — signed in as {email}', { email: profile?.email ?? '' })}><Avatar name={profile?.display_name || profile?.email || '?'} color={user.color} /><span className="nm" style={{ fontWeight: 600, fontSize: 13 }}>{(profile?.display_name || profile?.email || '').split(' ')[0].split('@')[0]}</span></button>}>
             {(close) => <UserMenu close={close} />}
           </Popover>
         </header>
@@ -156,6 +160,7 @@ function Notifications({ close }: { close: () => void }) {
 function UserMenu({ close }: { close: () => void }) {
   const { profile, signOut } = useAuth();
   const nav = useNavigate();
+  const lang = useLang();
   return (
     <div>
       <div style={{ padding: '8px 10px' }}>
@@ -164,7 +169,7 @@ function UserMenu({ close }: { close: () => void }) {
       </div>
       <div className="divider" style={{ margin: '4px 0' }} />
       <button className="menu-item" onClick={async () => { close(); await signOut(); nav('/login', { replace: true }); }}>
-        <LogOut size={16} /><span>Sign out</span>
+        <LogOut size={16} /><span>{t(lang, 'Sign out')}</span>
       </button>
     </div>
   );

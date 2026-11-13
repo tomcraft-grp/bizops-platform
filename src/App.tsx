@@ -29,6 +29,7 @@ import { Team, SettingsPage, Health } from './pages/Admin';
 import Blueprint from './pages/Blueprint';
 import CustomerApp from './pages/CustomerApp';
 import FeedbackIssues from './pages/FeedbackIssues';
+import DevApp from './pages/DevApp';
 import Login from './pages/auth/Login';
 import ForgotPassword from './pages/auth/ForgotPassword';
 import ResetPassword from './pages/auth/ResetPassword';
@@ -104,6 +105,7 @@ export default function App() {
             <Route path="health" element={<Health />} />
             <Route path="blueprint" element={<Blueprint />} />
             <Route path="feedback" element={<G perm="feedback:view"><FeedbackIssues /></G>} />
+            <Route path="dev-app" element={<G perm="devapp:view"><DevApp /></G>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
