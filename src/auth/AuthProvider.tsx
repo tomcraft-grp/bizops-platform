@@ -52,7 +52,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.session) loadProfile(data.session.user.id).finally(() => setLoading(false));
       else setLoading(false);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    // Arrived from a password-reset email (see main.tsx): open the reset form instead of the app.
+    const openReset = () => { try { sessionStorage.removeItem('bizops.recovery'); } catch { /* ignore */ } window.location.hash = '#/reset-password'; };
+    try { if (sessionStorage.getItem('bizops.recovery')) openReset(); } catch { /* ignore */ }
+    const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (event === 'PASSWORD_RECOVERY') openReset();
       setSession(newSession);
       if (newSession) void loadProfile(newSession.user.id);
       else setProfile(null);

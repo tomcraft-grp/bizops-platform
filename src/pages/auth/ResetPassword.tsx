@@ -16,7 +16,7 @@ export function passwordProblem(pw: string): string | null {
 }
 
 export default function ResetPassword() {
-  const { completePasswordReset, session } = useAuth();
+  const { completePasswordReset, session, loading } = useAuth();
   const nav = useNavigate();
   const [params] = useSearchParams();
   const tokenHash = params.get('type') === 'recovery' ? params.get('token_hash') : null;
@@ -42,7 +42,9 @@ export default function ResetPassword() {
   }, []);
 
   const usable = !!tokenHash || legacy === 'ok' || (legacy === 'none' && !!session);
-  const invalid = expired || legacy === 'bad' || (!usable && legacy !== 'checking');
+  const invalid = expired || legacy === 'bad' || (!usable && legacy !== 'checking' && !loading);
+  // Coming from the email, the recovery session is being restored: wait instead of flashing "expired".
+  if (!invalid && !usable) return <div className="auth-shell"><div className="spinner" /></div>;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
