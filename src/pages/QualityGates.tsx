@@ -1,5 +1,7 @@
 import summary from '../generated/qa-summary.json';
-import { Badge, Banner, Card } from '../ui/kit';
+import { Badge, Banner, Card, Tx } from '../ui/kit';
+import { t as tl } from '../lib/i18n';
+import { useLang } from '../domain/store';
 
 // QA addendum §17, §20: release gates A–F with an honest status. Test numbers come from the recorded runs (src/generated/qa-summary.json,
 // written by scripts/qa-evidence.ts from the vitest and Playwright reporters). Everything that was NOT tested is stated as such.
@@ -43,13 +45,12 @@ const DEFECTS: [string, string, string, string][] = [
 ];
 
 export function QualityGates() {
+  const lang = useLang();
   const gen = new Date(S.generatedAt);
   return (
     <div className="col gap-16">
       <Banner tone={anyFailed ? 'bad' : 'warn'}>
-        <b>Not production-ready.</b> This is a prototype. The release target is “no known Critical/High defects”, not “no bugs” — and Gates E and F are not met.
-        Evidence snapshot: {gen.toISOString().slice(0, 16).replace('T', ' ')} UTC · commit {S.commit}. The snapshot is embedded when the app is built, so it describes the run just before this build.
-      </Banner>
+        <b><Tx>Not production-ready.</Tx></b>{' '}<Tx>This is a prototype. The release target is “no known Critical/High defects”, not “no bugs” — and Gates E and F are not met. Evidence snapshot:</Tx>{' '}{gen.toISOString().slice(0, 16).replace('T', ' ')}{' '}<Tx>UTC · commit</Tx>{' '}{S.commit}<Tx>. The snapshot is embedded when the app is built, so it describes the run just before this build.</Tx></Banner>
       <div className="grid g4">
         {[['Type-check', S.typecheck === 'passed' ? 'passed' : 'FAILED'], ['Unit & integration', frac(k('unit'))], ['E2E / responsive', `${frac(k('e2e'))} · ${frac(k('responsive'))}`], ['Accessibility / visual', `${frac(k('a11y'))} · ${frac(k('visual'))}`]].map(([a, b]) => (
           <Card key={a}><div className="muted">{a}</div><div style={{ fontSize: 22, fontWeight: 650 }}>{b}</div></Card>
@@ -57,31 +58,31 @@ export function QualityGates() {
       </div>
       <div className="grid g2">
         {GATES.map((g) => (
-          <Card key={g.id} title={<span>Gate {g.id} — {g.name}</span>} actions={<Badge tone={TONE[g.status]}>{g.status}</Badge>}>
+          <Card key={g.id} title={<span><Tx>Gate</Tx>{' '}{g.id} — {g.name}</span>} actions={<Badge tone={TONE[g.status]}>{g.status}</Badge>}>
             <div className="col gap-6">
-              <div className="muted"><b>Evidence</b></div>
+              <div className="muted"><b><Tx>Evidence</Tx></b></div>
               <ul style={{ margin: 0, paddingLeft: 18 }}>{g.evidence.map((e) => <li key={e}>{e}</li>)}</ul>
-              <div className="muted mt8"><b>Still open</b></div>
+              <div className="muted mt8"><b><Tx>Still open</Tx></b></div>
               <ul style={{ margin: 0, paddingLeft: 18 }}>{g.open.map((e) => <li key={e}>{e}</li>)}</ul>
             </div>
           </Card>
         ))}
       </div>
       <Card title="Defects found and fixed in this QA cycle" sub="Open Critical / High defects known to the author: none. Unknown defects certainly remain — see the limitations.">
-        <div className="table-wrap" role="region" aria-label="Scrollable table" tabIndex={0}>
-          <table className="t"><thead><tr><th>ID</th><th>Severity</th><th>Defect</th><th>Status</th></tr></thead>
+        <div className="table-wrap" role="region" aria-label={tl(lang, 'Scrollable table')} tabIndex={0}>
+          <table className="t"><thead><tr><th><Tx>ID</Tx></th><th><Tx>Severity</Tx></th><th><Tx>Defect</Tx></th><th><Tx>Status</Tx></th></tr></thead>
             <tbody>{DEFECTS.map(([id, sev, d, st]) => <tr key={id}><td className="mono">{id}</td><td><Badge tone={sev === 'Critical' ? 'bad' : sev === 'High' ? 'warn' : 'info'}>{sev}</Badge></td><td>{d}</td><td>{st}</td></tr>)}</tbody></table>
         </div>
       </Card>
       {S.perf.engine && S.perf.browser && (
         <Card title="Measured performance" sub="This machine, in-memory engine, one user. Not a load test.">
           <div className="col gap-6">
-            <div className="row between"><span className="muted">Post one POS sale (engine, median)</span><b>{S.perf.engine.saleP50.toFixed(0)} ms</b></div>
-            <div className="row between"><span className="muted">Same, before the fix</span><span>{S.perf.engine.saleFreezeOffP50.toFixed(0)} ms</span></div>
-            <div className="row between"><span className="muted">Cold start incl. seeding the demo business (browser)</span><b>{S.perf.browser.coldStartMs} ms</b></div>
-            <div className="row between"><span className="muted">Warm reload (browser, median)</span><b>{S.perf.browser.warmReloadMedianMs} ms</b></div>
-            <div className="row between"><span className="muted">“Complete sale” click → confirmation (browser, median)</span><b>{S.perf.browser.saleClickToConfirmMedianMs} ms</b></div>
-            <div className="row between"><span className="muted">Single-file bundle (gzip)</span><b>{S.perf.browser.bundle.gzipKB} KB</b></div>
+            <div className="row between"><span className="muted"><Tx>Post one POS sale (engine, median)</Tx></span><b>{S.perf.engine.saleP50.toFixed(0)}{' '}<Tx>ms</Tx></b></div>
+            <div className="row between"><span className="muted"><Tx>Same, before the fix</Tx></span><span>{S.perf.engine.saleFreezeOffP50.toFixed(0)}{' '}<Tx>ms</Tx></span></div>
+            <div className="row between"><span className="muted"><Tx>Cold start incl. seeding the demo business (browser)</Tx></span><b>{S.perf.browser.coldStartMs}{' '}<Tx>ms</Tx></b></div>
+            <div className="row between"><span className="muted"><Tx>Warm reload (browser, median)</Tx></span><b>{S.perf.browser.warmReloadMedianMs}{' '}<Tx>ms</Tx></b></div>
+            <div className="row between"><span className="muted"><Tx>“Complete sale” click → confirmation (browser, median)</Tx></span><b>{S.perf.browser.saleClickToConfirmMedianMs}{' '}<Tx>ms</Tx></b></div>
+            <div className="row between"><span className="muted"><Tx>Single-file bundle (gzip)</Tx></span><b>{S.perf.browser.bundle.gzipKB}{' '}<Tx>KB</Tx></b></div>
           </div>
         </Card>
       )}

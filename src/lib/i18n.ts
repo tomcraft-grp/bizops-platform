@@ -1,8 +1,10 @@
 // Minimal dictionary-based i18n: English source strings -> Thai. No build step, no missing-key errors —
 // an untranslated string (or a dynamic/templated one that can't match a dictionary key) just stays in English.
-// This intentionally does not cover every string in the app (buttons that mix an icon with text, templated
-// strings, etc.) — see Shell.tsx's language toggle and kit.tsx's tr()/t() usage for what is wired up.
+// Kit components (Card, Tabs, DataTable headers, Modal, Badge, Field, …) translate their string props; static
+// JSX text in back-office pages is wrapped in <Tx> (ui/kit.tsx) and attributes use t(lang, …).
+// Data values (names, codes, amounts) are never passed through here, only fixed UI copy.
 import type { ReactNode } from 'react';
+import { TH_BACKOFFICE } from './i18n.backoffice';
 
 export type Lang = 'en' | 'th';
 
@@ -119,9 +121,15 @@ export const TH: Record<string, string> = {
   'Helps the team route this to the right person and fix it at the right place.': 'ช่วยให้ทีมส่งเรื่องไปถึงคนที่ถูกต้องและแก้ไขได้ตรงจุด',
 };
 
-export function t(lang: Lang, s: string): string {
-  if (lang !== 'th') return s;
-  return TH[s] ?? s;
+// Back-office labels (tabs, column headers, buttons, report captions, …) live in their own file to keep this
+// one readable. Entries above win over that file on a duplicate key.
+for (const [k, v] of Object.entries(TH_BACKOFFICE)) if (!(k in TH)) TH[k] = v;
+
+/** Translate an English source string. `{name}` placeholders are filled from `vars` AFTER lookup, so the
+ *  dictionary key is the template (e.g. 'Type {word} to confirm') and dynamic values are never translated. */
+export function t(lang: Lang, s: string, vars?: Record<string, string | number>): string {
+  const out = lang === 'th' ? TH[s] ?? s : s;
+  return vars ? out.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m)) : out;
 }
 /** Translate a prop that is usually plain text but may be arbitrary JSX — only strings are looked up. */
 export function tr(lang: Lang, v: ReactNode): ReactNode {
