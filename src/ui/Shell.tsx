@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell, Boxes, Calculator, ChefHat, ChevronsLeft, ChevronsRight, CircleUser, Factory, FileImage, Gift, Heart, LayoutDashboard, Layers, Languages, LineChart, Lock, LogOut, Menu, Monitor, Moon,
   Package, Percent, Printer, Search, Settings, ShieldCheck, ShoppingBag, ShoppingCart, Smartphone, Sparkles, Store, Sun, Tag, Truck, Users, Wallet, Radio, Hash, FileText, Activity, Map, Check, MessageSquarePlus,
+  Palette,
 } from 'lucide-react';
 import { act, setLang, setTheme, toggleCollapsed, setUI, useDB, useLang, useStore } from '../domain/store';
 import { currentUser, hasPerm, userPerms } from '../domain/core';
@@ -52,6 +53,9 @@ const NAV: { title: string; items: NavItem[] }[] = [
     { to: '/health', label: 'System health', icon: <Activity />, perm: 'system:view' },
     { to: '/blueprint', label: 'Blueprint & scope', icon: <Map />, perm: 'dashboard:view' },
     { to: '/feedback', label: 'Feedback & issues', icon: <MessageSquarePlus />, perm: 'feedback:view' },
+  ] },
+  { title: 'DEV APP', items: [
+    { to: '/dev-app', label: 'DEV APP Customer', icon: <Palette />, perm: 'devapp:view' },
   ] },
 ];
 
