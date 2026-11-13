@@ -846,4 +846,12 @@ export const TH_BACKOFFICE: Record<string, string> = {
   'DEV APP Customer is not set up in the database yet. An administrator needs to apply the DEV APP migration in Supabase.': 'ยังไม่ได้ตั้งค่า DEV APP Customer ในฐานข้อมูล ผู้ดูแลระบบต้องรัน migration ของ DEV APP ใน Supabase ก่อน',
   'The profile tab must stay visible (members edit their details there)': 'ต้องแสดงแท็บโปรไฟล์เสมอ (สมาชิกใช้แก้ไขข้อมูลของตนเอง)',
   'The Home tab must stay visible': 'ต้องแสดงแท็บหน้าหลักเสมอ',
+  // Products: pull the central SKU master
+  'Pull SKUs from central database': 'ดึง SKU จากฐานข้อมูลกลาง', 'Pull SKUs': 'ดึง SKU',
+  'Pull {n} SKUs into this device?': 'ดึง SKU {n} รายการเข้าเครื่องนี้?',
+  'Products are created or updated by SKU code on this device (existing products with other codes are kept). {r} SKUs are marked "needs review"; SKUs without a price are imported as inactive.':
+    'ระบบจะสร้างหรืออัปเดตสินค้าในเครื่องนี้ตามรหัส SKU (สินค้าเดิมที่รหัสไม่ตรงจะยังอยู่) มี {r} รายการที่ติดป้าย "ต้องตรวจสอบ" และรายการที่ไม่มีราคาจะถูกนำเข้าแบบปิดการขาย',
+  '{c} created, {u} updated, {i} inactive, {f} failed': 'สร้างใหม่ {c} · อัปเดต {u} · ปิดการขาย {i} · ไม่สำเร็จ {f}',
+  'No SKUs found in the central database (are you signed in as staff?)': 'ไม่พบ SKU ในฐานข้อมูลกลาง (ล็อกอินด้วยบัญชีพนักงานหรือยัง?)',
+  'Kratom drink': 'น้ำกระท่อม', 'bottle': 'ขวด',
 };

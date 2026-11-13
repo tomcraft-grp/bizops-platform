@@ -15,11 +15,13 @@ import { toast } from '../domain/store';
 import { dateFmt, money, money0, pct, qtyFmt, shortDay, dayKey } from '../lib/util';
 import type { DB, ID, Product, ProductKind } from '../domain/types';
 import { t as tl } from '../lib/i18n';
+import { PullSkuButton } from '../ui/PullSkuButton';
 
 export default function Products() {
   const db = useDB();
   const [sp, setSp] = useSearchParams();
   const canCreate = useHas('catalog:create');
+  const canEdit = useHas('catalog:edit');
   const canCost = useHas('finance:cost');
   const [kind, setKind] = useState<string>('');
   const [adding, setAdding] = useState(false);
@@ -29,7 +31,7 @@ export default function Products() {
   return (
     <>
       <PageHead title="Products" desc="One catalog for resale goods, manufactured goods, menu items (recipes), raw materials and packaging — with channel prices, images and cost history."
-        actions={canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>} />
+        actions={<>{canEdit && <PullSkuButton />}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>}</>} />
       <div className="grid g4 mb16">
         <Kpi label="Products" value={db.products.length} sub={<Tx vars={{ n: db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).length }}>{'{n} sellable'}</Tx>} />
         <Kpi label="Menu items (recipes)" value={db.products.filter((p) => p.kind === 'menu').length} sub="stock deducted by BOM" />

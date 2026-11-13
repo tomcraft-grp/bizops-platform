@@ -60,6 +60,51 @@ export function saveProduct(d: DB, ctx: Ctx, p: Partial<Product> & { name: strin
   return 'N' + id;
 }
 
+/** A row of the central SKU master (Supabase public.sku_master). */
+export interface SkuMasterRow {
+  sku_code: string; source_code: string; domain: string; brand: string | null; name_full: string; product_type: string | null;
+  pack_qty: number | null; unit_en: string | null; unit_th: string | null; barcode: string | null; status: string;
+  cost_price: number | null; retail_price: number | null; selling_price: number | null; friend_price: number | null;
+  wholesale_price: number | null; ecommerce_price: number | null; needs_review: boolean; review_notes: string | null;
+}
+export interface SkuImportResult { created: number; updated: number; inactive: number; failed: { sku: string; error: string }[] }
+
+/**
+ * Bring the central SKU master into this device's catalogue (create or update by SKU code), so POS can sell the real
+ * products. Main price = actual selling price (else the sticker price); cost = cost price; e-commerce price becomes the
+ * marketplace channel price. A SKU with no price, or marked inactive centrally, is imported as inactive (not sellable).
+ * Friend and wholesale prices are kept in the description for the cashier.
+ */
+export function importSkuMaster(d: DB, ctx: Ctx, rows: SkuMasterRow[]): SkuImportResult {
+  guard(d, ctx, 'catalog:edit');
+  const res: SkuImportResult = { created: 0, updated: 0, inactive: 0, failed: [] };
+  for (const r of rows) {
+    const kratom = /kratom/i.test(r.domain);
+    const price = r.selling_price ?? r.retail_price ?? 0;
+    const active = r.status === 'active' && price > 0;
+    const tiers = [r.friend_price != null && `ราคาเพื่อน ${r.friend_price}`, r.wholesale_price != null && `ราคาส่ง ${r.wholesale_price}`, r.retail_price != null && r.retail_price !== price && `ราคาป้าย ${r.retail_price}`].filter(Boolean);
+    const existing = d.products.find((p) => p.sku.toLowerCase() === r.sku_code.toLowerCase());
+    try {
+      const id = saveProduct(d, ctx, {
+        id: existing?.id, sku: r.sku_code, name: r.name_full.replace(/^\s*\d+\s+/, '').trim() || r.sku_code,
+        kind: kratom ? 'finished' : 'resale', category: kratom ? 'Kratom drink' : (r.product_type ? `POD · ${r.product_type}` : 'POD'),
+        unit: kratom ? 'bottle' : 'pcs', price, stdCost: r.cost_price ?? 0, barcode: r.barcode ?? undefined, active,
+        channelPrices: r.ecommerce_price != null ? { SHOPEE: r.ecommerce_price, LAZADA: r.ecommerce_price, TIKTOK: r.ecommerce_price } : {},
+        emoji: kratom ? '🍃' : '💨',
+        description: [r.brand, tiers.join(' · '), r.needs_review ? `ต้องตรวจสอบ: ${r.review_notes ?? ''}` : null, r.source_code !== r.sku_code ? `รหัสเดิม ${r.source_code}` : null].filter(Boolean).join('\n') || undefined,
+      });
+      // saveProduct always creates products as active; a SKU without a price must not be sellable at ฿0.
+      d.products.find((p) => p.id === id)!.active = active;
+      if (existing) res.updated++; else res.created++;
+      if (!active) res.inactive++;
+    } catch (e) {
+      res.failed.push({ sku: r.sku_code, error: (e as Error).message });
+    }
+  }
+  if (res.created || res.updated) audit(d, ctx, 'product.import', 'product', 'sku_master', `SKU master: ${res.created} created, ${res.updated} updated, ${res.inactive} inactive`, 'info');
+  return res;
+}
+
 export function saveSupplier(d: DB, ctx: Ctx, p: Partial<Supplier> & { name: string }): ID {
   guard(d, ctx, 'purchasing:edit');
   if (!p.name.trim()) fail('INVALID', 'Supplier name is required');
