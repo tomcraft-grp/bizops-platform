@@ -3,19 +3,21 @@ import { Printer, Search, UserPlus } from 'lucide-react';
 import type { DB, DocType, ID, MediaFile } from '../domain/types';
 import { Block, PrintDoc, renderDoc } from '../domain/printing';
 import { qrSvg, printDoc, downloadDocHtml } from '../lib/print';
-import { Badge, Button, Empty, Field, Input, Modal, Select, useRun, SearchBox } from './kit';
-import { useDB } from '../domain/store';
+import { Badge, Button, Empty, Field, Input, Modal, Select, useRun, SearchBox, Tx } from './kit';
+import { useDB, useLang } from '../domain/store';
 import { addCustomer } from '../domain/master';
 import { customerLifetimeSpend, pointsBalance, tierFor } from '../domain/loyalty';
 import { customerCredit, customerOutstanding } from '../domain/payments';
 import { loadMediaUrl } from '../lib/media';
 import { cx, money } from '../lib/util';
 import { enqueueJob, markPrinted } from '../domain/printing';
+import { t as tl } from '../lib/i18n';
 
 export function QR({ data, size = 140 }: { data: string; size?: number }) {
+  const lang = useLang();
   const [svg, setSvg] = useState('');
   useEffect(() => { let on = true; qrSvg(data, size).then((s) => on && setSvg(s)).catch(() => undefined); return () => { on = false; }; }, [data, size]);
-  return <div className="qr-box" style={{ width: size, height: size, background: '#fff', padding: 6, borderRadius: 8, display: 'inline-block', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: svg }} role="img" aria-label="QR code" />;
+  return <div className="qr-box" style={{ width: size, height: size, background: '#fff', padding: 6, borderRadius: 8, display: 'inline-block', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: svg }} role="img" aria-label={tl(lang, 'QR code')} />;
 }
 
 export function DocPreview({ doc }: { doc: PrintDoc }) {
@@ -54,8 +56,8 @@ export function PrintModal({ docType, refId, onClose, station, jobId, title }: {
     <Modal title={title ?? eff.title} size={eff.paper === 'A4' ? 'lg' : undefined} onClose={onClose}
       footer={<>
         {eff.paper !== 'A4' && <Select sm style={{ width: 110 }} value={paper || eff.paper} onChange={(e) => setPaper(e.target.value as '58mm' | '80mm')}><option value="58mm">58 mm</option><option value="80mm">80 mm</option></Select>}
-        <Button onClick={() => downloadDocHtml(eff)}>Save as HTML/PDF</Button>
-        <Button variant="primary" onClick={async () => { await printDoc(eff); if (jobId) run((d, c) => markPrinted(d, c, jobId)); }}><Printer size={16} /> Print</Button>
+        <Button onClick={() => downloadDocHtml(eff)}><Tx>Save as HTML/PDF</Tx></Button>
+        <Button variant="primary" onClick={async () => { await printDoc(eff); if (jobId) run((d, c) => markPrinted(d, c, jobId)); }}><Printer size={16} />{' '}<Tx>Print</Tx></Button>
       </>}>
       <div style={{ background: 'var(--surface-3)', padding: 16, borderRadius: 12 }}><DocPreview doc={eff} /></div>
     </Modal>
@@ -69,6 +71,7 @@ export const enqueueFromUI = enqueueJob;
 
 // ---------- customer picker
 export function CustomerPicker({ onPick, onClose, allowNone }: { onPick: (id: ID | undefined) => void; onClose: () => void; allowNone?: boolean }) {
+  const lang = useLang();
   const db = useDB();
   const run = useRun();
   const [q, setQ] = useState('');
@@ -79,17 +82,17 @@ export function CustomerPicker({ onPick, onClose, allowNone }: { onPick: (id: ID
     return db.customers.filter((c) => !s || (c.name + c.phone + c.code).toLowerCase().includes(s)).slice(0, 40);
   }, [db.customers, q]);
   return (
-    <Modal title="Select customer" onClose={onClose} footer={allowNone ? <Button onClick={() => onPick(undefined)}>Walk-in (no customer)</Button> : undefined}>
+    <Modal title="Select customer" onClose={onClose} footer={allowNone ? <Button onClick={() => onPick(undefined)}><Tx>Walk-in (no customer)</Tx></Button> : undefined}>
       {!adding ? (
         <>
-          <div className="row"><div className="grow"><SearchBox value={q} onChange={setQ} placeholder="Name, phone or member code" /></div><Button onClick={() => setAdding(true)}><UserPlus size={16} /> New</Button></div>
+          <div className="row"><div className="grow"><SearchBox value={q} onChange={setQ} placeholder="Name, phone or member code" /></div><Button onClick={() => setAdding(true)}><UserPlus size={16} />{' '}<Tx>New</Tx></Button></div>
           <div className="col gap-4 mt8" style={{ maxHeight: 380, overflow: 'auto' }}>
             {list.map((c) => {
               const t = tierFor(db, customerLifetimeSpend(db, c.id));
               return (
                 <button key={c.id} className="menu-item" onClick={() => onPick(c.id)}>
                   <div className="grow"><div style={{ fontWeight: 600 }}>{c.name}</div><div className="muted" style={{ fontSize: 12 }}>{c.code} · {c.phone}</div></div>
-                  <div style={{ textAlign: 'right', fontSize: 12 }}><Badge tone={c.group === 'wholesale' ? 'info' : ''}>{c.group === 'wholesale' ? 'Wholesale' : t.name}</Badge><div className="muted">{pointsBalance(db, c.id)} pts</div></div>
+                  <div style={{ textAlign: 'right', fontSize: 12 }}><Badge tone={c.group === 'wholesale' ? 'info' : ''}>{c.group === 'wholesale' ? <Tx>{'Wholesale'}</Tx> : t.name}</Badge><div className="muted">{pointsBalance(db, c.id)}{' '}<Tx>pts</Tx></div></div>
                 </button>
               );
             })}
@@ -99,8 +102,8 @@ export function CustomerPicker({ onPick, onClose, allowNone }: { onPick: (id: ID
       ) : (
         <div className="col">
           <Field label="Name"><Input autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-          <Field label="Phone"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="08x-xxx-xxxx" /></Field>
-          <div className="row"><Button onClick={() => setAdding(false)}>Back</Button><Button variant="primary" onClick={() => run((d, c) => addCustomer(d, c, { name: f.name, phone: f.phone, marketing: false }), { ok: 'Customer created', onOk: (id) => onPick(id) })}>Create & select</Button></div>
+          <Field label="Phone"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder={tl(lang, '08x-xxx-xxxx')} /></Field>
+          <div className="row"><Button onClick={() => setAdding(false)}><Tx>Back</Tx></Button><Button variant="primary" onClick={() => run((d, c) => addCustomer(d, c, { name: f.name, phone: f.phone, marketing: false }), { ok: 'Customer created', onOk: (id) => onPick(id) })}><Tx>Create & select</Tx></Button></div>
         </div>
       )}
     </Modal>
@@ -115,10 +118,10 @@ export function CustomerSummary({ id }: { id: ID }) {
   const cred = customerCredit(db, id);
   return (
     <div className="row wrap gap-6" style={{ fontSize: 12 }}>
-      <Badge tone="info">{c.group === 'wholesale' ? 'Wholesale' : t.name}</Badge>
-      <span className="chip">{pointsBalance(db, id).toLocaleString()} pts</span>
-      {out > 0 && <span className="chip" style={{ color: 'var(--crit-text)' }}>Owes {money(out)}</span>}
-      {cred > 0 && <span className="chip" style={{ color: 'var(--good-text)' }}>Credit {money(cred)}</span>}
+      <Badge tone="info">{c.group === 'wholesale' ? <Tx>{'Wholesale'}</Tx> : t.name}</Badge>
+      <span className="chip">{pointsBalance(db, id).toLocaleString()}{' '}<Tx>pts</Tx></span>
+      {out > 0 && <span className="chip" style={{ color: 'var(--crit-text)' }}><Tx>Owes</Tx>{' '}{money(out)}</span>}
+      {cred > 0 && <span className="chip" style={{ color: 'var(--good-text)' }}><Tx>Credit</Tx>{' '}{money(cred)}</span>}
     </div>
   );
 }

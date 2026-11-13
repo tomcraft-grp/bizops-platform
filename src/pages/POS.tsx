@@ -1,24 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Banknote, Check, CreditCard, Gift, Minus, Pause, Percent, Play, Plus, QrCode, Tag, Trash2, UserRound, X, Landmark, MoreHorizontal, Receipt } from 'lucide-react';
-import { useDB } from '../domain/store';
+import { useDB, useLang } from '../domain/store';
 import { createOrder, quoteOrder, NewOrderLine } from '../domain/orders';
 import { onHand } from '../domain/inventory';
 import { servingsPossible } from '../domain/master';
 import { PAY_METHODS } from '../domain/meta';
 import { customerCredit, customerOutstanding } from '../domain/payments';
-import { Badge, Banner, Button, Empty, Field, Input, Modal, NumInput, PageHead, SearchBox, useHas, useRun, useUser } from '../ui/kit';
+import { Badge, Banner, Button, Empty, Field, Input, Modal, NumInput, PageHead, SearchBox, useHas, useRun, useUser, Tx } from '../ui/kit';
 import { CustomerPicker, CustomerSummary, DocPreview, PrintModal, ProductEmoji, QR } from '../ui/shared';
 import { renderDoc } from '../domain/printing';
 import { cx, money, qtyFmt, r2 } from '../lib/util';
 import { promptPayPayload } from '../lib/promptpay';
 import type { ID, PayMethod, Product } from '../domain/types';
+import { t as tl } from '../lib/i18n';
 
 interface CartLine { key: string; productId: ID; qty: number; modifiers: { group: string; option: string }[]; note?: string }
 interface Pay { method: PayMethod; amount: number; reference?: string }
 const METHOD_ICON: Record<string, React.ReactNode> = { cash: <Banknote size={16} />, qr: <QrCode size={16} />, card: <CreditCard size={16} />, transfer: <Landmark size={16} />, other: <MoreHorizontal size={16} /> };
 
 export default function POS() {
+  const lang = useLang();
   const db = useDB();
   const user = useUser();
   const run = useRun();
@@ -74,10 +76,10 @@ export default function POS() {
 
   return (
     <>
-      <PageHead title="Point of sale" desc={`${branch.name} · stock is deducted from ${db.warehouses.find((w) => w.id === wh)?.name}`}
+      <PageHead title="Point of sale" desc={<Tx vars={{ branch: branch.name, wh: String(db.warehouses.find((w) => w.id === wh)?.name) }}>{'{branch} · stock is deducted from {wh}'}</Tx>}
         actions={<>
-          {branches.length > 1 && <select aria-label="Branch" className="select sm" style={{ width: 'auto' }} value={branchId} onChange={(e) => setBranchId(e.target.value)}>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>}
-          {parked.length > 0 && <Button size="sm" onClick={() => { const p = parked[0]; setCart(p.cart); setCustomerId(p.customerId); setParked((x) => x.slice(1)); }}><Play size={14} /> Recall ({parked.length})</Button>}
+          {branches.length > 1 && <select aria-label={tl(lang, 'Branch')} className="select sm" style={{ width: 'auto' }} value={branchId} onChange={(e) => setBranchId(e.target.value)}>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>}
+          {parked.length > 0 && <Button size="sm" onClick={() => { const p = parked[0]; setCart(p.cart); setCustomerId(p.customerId); setParked((x) => x.slice(1)); }}><Play size={14} />{' '}<Tx>Recall (</Tx>{parked.length})</Button>}
         </>} />
       <div className="pos">
         <div className="pos-left">
@@ -91,9 +93,9 @@ export default function POS() {
               const out = st <= 0 && !db.org.allowNegativeStock;
               return (
                 <button key={p.id} className={cx('tile', out && 'out')} disabled={out} onClick={() => onTile(p)} aria-label={`Add ${p.name}`}>
-                  <div className="row between"><ProductEmoji p={p} size={40} />{p.kind === 'menu' ? (st < 6 ? <Badge tone="warn">{st} left</Badge> : null) : st <= (p.levels[wh]?.min ?? 0) ? <Badge tone={st <= 0 ? 'bad' : 'warn'}>{st <= 0 ? 'Out' : `${qtyFmt(st)} left`}</Badge> : null}</div>
+                  <div className="row between"><ProductEmoji p={p} size={40} />{p.kind === 'menu' ? (st < 6 ? <Badge tone="warn">{st}{' '}<Tx>left</Tx></Badge> : null) : st <= (p.levels[wh]?.min ?? 0) ? <Badge tone={st <= 0 ? 'bad' : 'warn'}>{st <= 0 ? <Tx>{'Out'}</Tx> : <Tx vars={{ n: qtyFmt(st) }}>{'{n} left'}</Tx>}</Badge> : null}</div>
                   <div className="nm">{p.name}</div>
-                  <div className="pr"><b>{money(p.price)}</b>{p.modifiers?.length ? <span className="muted" style={{ fontSize: 11 }}>options</span> : <span className="muted" style={{ fontSize: 11 }}>{p.kind === 'menu' ? '' : `${qtyFmt(st)} ${p.unit}`}</span>}</div>
+                  <div className="pr"><b>{money(p.price)}</b>{p.modifiers?.length ? <span className="muted" style={{ fontSize: 11 }}><Tx>options</Tx></span> : <span className="muted" style={{ fontSize: 11 }}>{p.kind === 'menu' ? '' : `${qtyFmt(st)} ${p.unit}`}</span>}</div>
                 </button>
               );
             })}
@@ -103,17 +105,17 @@ export default function POS() {
 
         <div className="card cart">
           <div className="card-h" style={{ paddingBottom: 10 }}>
-            <h2>Current sale {itemsCount > 0 && <span className="muted" style={{ fontWeight: 400 }}>· {itemsCount} items</span>}</h2>
-            <div className="row gap-6">{cart.length > 0 && <Button size="sm" variant="ghost" onClick={park} title="Park this sale"><Pause size={14} /> Park</Button>}{cart.length > 0 && <Button size="sm" variant="ghost" onClick={reset}><Trash2 size={14} /></Button>}</div>
+            <h2><Tx>Current sale</Tx>{' '}{itemsCount > 0 && <span className="muted" style={{ fontWeight: 400 }}>· {itemsCount}{' '}<Tx>items</Tx></span>}</h2>
+            <div className="row gap-6">{cart.length > 0 && <Button size="sm" variant="ghost" onClick={park} title={tl(lang, 'Park this sale')}><Pause size={14} />{' '}<Tx>Park</Tx></Button>}{cart.length > 0 && <Button size="sm" variant="ghost" onClick={reset}><Trash2 size={14} /></Button>}</div>
           </div>
           <div style={{ padding: '0 16px 10px' }} className="col gap-6">
             <div className="row">
-              <button className="btn block" style={{ justifyContent: 'flex-start' }} onClick={() => setPickCust(true)}><UserRound size={16} />{customerId ? db.customers.find((c) => c.id === customerId)?.name : 'Add customer (optional)'}</button>
+              <button className="btn block" style={{ justifyContent: 'flex-start' }} onClick={() => setPickCust(true)}><UserRound size={16} />{customerId ? db.customers.find((c) => c.id === customerId)?.name : <Tx>{'Add customer (optional)'}</Tx>}</button>
               {customerId && <Button icon size="sm" variant="ghost" onClick={() => { setCustomerId(undefined); setCouponId(''); }}><X size={15} /></Button>}
             </div>
             {customerId && <CustomerSummary id={customerId} />}
             {branch.type === 'kitchen' && (
-              <div className="row"><div className="seg grow"><button className={cx(orderType === 'takeaway' && 'on')} style={{ flex: 1 }} onClick={() => setOrderType('takeaway')}>Takeaway</button><button className={cx(orderType === 'dine_in' && 'on')} style={{ flex: 1 }} onClick={() => setOrderType('dine_in')}>Dine-in</button></div>{orderType === 'dine_in' && <Input sm style={{ width: 80 }} placeholder="Table" value={table} onChange={(e) => setTable(e.target.value)} />}</div>
+              <div className="row"><div className="seg grow"><button className={cx(orderType === 'takeaway' && 'on')} style={{ flex: 1 }} onClick={() => setOrderType('takeaway')}><Tx>Takeaway</Tx></button><button className={cx(orderType === 'dine_in' && 'on')} style={{ flex: 1 }} onClick={() => setOrderType('dine_in')}><Tx>Dine-in</Tx></button></div>{orderType === 'dine_in' && <Input sm style={{ width: 80 }} placeholder={tl(lang, 'Table')} value={table} onChange={(e) => setTable(e.target.value)} />}</div>
             )}
           </div>
           <div className="cart-lines">
@@ -130,34 +132,34 @@ export default function POS() {
                     {c.note && <div className="muted" style={{ fontSize: 12 }}>“{c.note}”</div>}
                   </div>
                   <div style={{ textAlign: 'right' }}><b className="num">{money((ql?.unitPrice ?? 0) * c.qty - disc)}</b>{disc > 0 && <div className="good" style={{ fontSize: 11.5 }}>−{money(disc)}</div>}</div>
-                  <div className="qty"><button onClick={() => setCart((x) => x.map((l) => (l.key === c.key ? { ...l, qty: Math.max(0, l.qty - 1) } : l)).filter((l) => l.qty > 0))} aria-label="Decrease"><Minus size={13} /></button><span>{c.qty}</span><button onClick={() => add(p, c.modifiers, 1, c.note)} aria-label="Increase"><Plus size={13} /></button></div>
-                  <div className="muted num" style={{ textAlign: 'right', fontSize: 12 }}>{money(ql?.unitPrice ?? 0)} each</div>
+                  <div className="qty"><button onClick={() => setCart((x) => x.map((l) => (l.key === c.key ? { ...l, qty: Math.max(0, l.qty - 1) } : l)).filter((l) => l.qty > 0))} aria-label={tl(lang, 'Decrease')}><Minus size={13} /></button><span>{c.qty}</span><button onClick={() => add(p, c.modifiers, 1, c.note)} aria-label={tl(lang, 'Increase')}><Plus size={13} /></button></div>
+                  <div className="muted num" style={{ textAlign: 'right', fontSize: 12 }}>{money(ql?.unitPrice ?? 0)}{' '}<Tx>each</Tx></div>
                 </div>
               );
             })}
-            {quote?.freeLines.map((f) => <div key={f.productId + f.promoId} className="cart-line"><div><b>{db.products.find((p) => p.id === f.productId)?.name}</b> <Badge tone="good"><Gift size={11} /> free</Badge></div><div className="num right">{money(0)}</div></div>)}
+            {quote?.freeLines.map((f) => <div key={f.productId + f.promoId} className="cart-line"><div><b>{db.products.find((p) => p.id === f.productId)?.name}</b> <Badge tone="good"><Gift size={11} />{' '}<Tx>free</Tx></Badge></div><div className="num right">{money(0)}</div></div>)}
           </div>
           <div style={{ padding: '10px 16px 14px', borderTop: '1px solid var(--border)' }}>
             {quote && (
               <>
                 <div className="row gap-6 mb8">
-                  <div className="input-icon grow"><Tag /><input className="input sm" style={{ paddingLeft: 30 }} placeholder="Promo code (e.g. WELCOME50)" value={promoCode} onChange={(e) => setPromoCode(e.target.value)} /></div>
+                  <div className="input-icon grow"><Tag /><input className="input sm" style={{ paddingLeft: 30 }} placeholder={tl(lang, 'Promo code (e.g. WELCOME50)')} value={promoCode} onChange={(e) => setPromoCode(e.target.value)} /></div>
                   {canDiscount && <Button size="sm" onClick={() => setShowManual((s) => !s)}><Percent size={14} /></Button>}
                 </div>
-                {coupons.length > 0 && <select className="select sm mb8" value={couponId} onChange={(e) => setCouponId(e.target.value)}><option value="">Apply a coupon…</option>{coupons.map((c) => <option key={c.id} value={c.id}>{c.title} · {c.code}</option>)}</select>}
-                {showManual && canDiscount && <div className="row mb8"><span className="muted">Manual discount ฿</span><NumInput value={manual || ''} onChange={(n) => setManual(isNaN(n) ? 0 : n)} className="input sm" /><Badge tone="warn">audited</Badge></div>}
+                {coupons.length > 0 && <select className="select sm mb8" value={couponId} onChange={(e) => setCouponId(e.target.value)}><option value="">{tl(lang, 'Apply a coupon…')}</option>{coupons.map((c) => <option key={c.id} value={c.id}>{c.title} · {c.code}</option>)}</select>}
+                {showManual && canDiscount && <div className="row mb8"><span className="muted"><Tx>Manual discount ฿</Tx></span><NumInput value={manual || ''} onChange={(n) => setManual(isNaN(n) ? 0 : n)} className="input sm" /><Badge tone="warn"><Tx>audited</Tx></Badge></div>}
                 {quote.couponNote && <div className="bad" style={{ fontSize: 12 }}>{quote.couponNote}</div>}
                 <div className="totals">
-                  <div><span className="muted">Subtotal</span><span className="num">{money(quote.subtotal)}</span></div>
-                  {quote.applied.map((a) => (a.discount > 0 || a.entitlements || a.bonusPoints || a.freeItems.length) ? <div key={a.promoId} className="good" style={{ fontSize: 13 }}><span>{a.name}</span><span className="num">{a.discount > 0 ? '−' + money(a.discount) : a.entitlements ? `+${a.entitlements} event pick${a.entitlements > 1 ? 's' : ''}` : a.bonusPoints ? `+${a.bonusPoints} pts` : 'free item'}</span></div> : null)}
-                  {quote.bonusMultiplier > 0 && <div className="good" style={{ fontSize: 13 }}><span>Double points today</span><span>×{1 + quote.bonusMultiplier}</span></div>}
-                  {quote.couponDiscount > 0 && <div className="good" style={{ fontSize: 13 }}><span>Coupon</span><span className="num">−{money(quote.couponDiscount)}</span></div>}
-                  {quote.manual > 0 && <div style={{ fontSize: 13 }}><span>Manual discount</span><span className="num">−{money(quote.manual)}</span></div>}
-                  <div className="grand"><span>Total</span><span className="num">{money(quote.total)}</span></div>
+                  <div><span className="muted"><Tx>Subtotal</Tx></span><span className="num">{money(quote.subtotal)}</span></div>
+                  {quote.applied.map((a) => (a.discount > 0 || a.entitlements || a.bonusPoints || a.freeItems.length) ? <div key={a.promoId} className="good" style={{ fontSize: 13 }}><span>{a.name}</span><span className="num">{a.discount > 0 ? '−' + money(a.discount) : a.entitlements ? <Tx vars={{ n: a.entitlements }}>{a.entitlements > 1 ? '+{n} event picks' : '+{n} event pick'}</Tx> : a.bonusPoints ? <Tx vars={{ n: a.bonusPoints }}>{'+{n} pts'}</Tx> : <Tx>{'free item'}</Tx>}</span></div> : null)}
+                  {quote.bonusMultiplier > 0 && <div className="good" style={{ fontSize: 13 }}><span><Tx>Double points today</Tx></span><span>×{1 + quote.bonusMultiplier}</span></div>}
+                  {quote.couponDiscount > 0 && <div className="good" style={{ fontSize: 13 }}><span><Tx>Coupon</Tx></span><span className="num">−{money(quote.couponDiscount)}</span></div>}
+                  {quote.manual > 0 && <div style={{ fontSize: 13 }}><span><Tx>Manual discount</Tx></span><span className="num">−{money(quote.manual)}</span></div>}
+                  <div className="grand"><span><Tx>Total</Tx></span><span className="num">{money(quote.total)}</span></div>
                 </div>
               </>
             )}
-            <Button variant="primary" size="lg" className="block mt8" disabled={!cart.length || !canCharge} onClick={() => setPaying(true)}>{canCharge ? `Charge ${quote ? money(quote.total) : ''}` : 'No permission to charge'}</Button>
+            <Button variant="primary" size="lg" className="block mt8" disabled={!cart.length || !canCharge} onClick={() => setPaying(true)}>{canCharge ? <Tx vars={{ amount: quote ? money(quote.total) : '' }}>{'Charge {amount}'}</Tx> : <Tx>{'No permission to charge'}</Tx>}</Button>
           </div>
         </div>
       </div>
@@ -183,12 +185,13 @@ export default function POS() {
 }
 
 function ModifierModal({ p, onClose, onAdd }: { p: Product; onClose: () => void; onAdd: (mods: { group: string; option: string }[], qty: number, note?: string) => void }) {
+  const lang = useLang();
   const [sel, setSel] = useState<Record<string, string>>({});
   const [qty, setQty] = useState(1);
   const [note, setNote] = useState('');
   const delta = (p.modifiers ?? []).reduce((s, g) => s + (g.options.find((o) => o.name === sel[g.name])?.priceDelta ?? 0), 0);
   return (
-    <Modal title={p.name} desc={money(p.price)} size="sm" onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={() => onAdd(Object.entries(sel).filter(([, v]) => v).map(([group, option]) => ({ group, option })), qty, note || undefined)}>Add · {money((p.price + delta) * qty)}</Button></>}>
+    <Modal title={p.name} desc={money(p.price)} size="sm" onClose={onClose} footer={<><Button onClick={onClose}><Tx>Cancel</Tx></Button><Button variant="primary" onClick={() => onAdd(Object.entries(sel).filter(([, v]) => v).map(([group, option]) => ({ group, option })), qty, note || undefined)}><Tx>Add ·</Tx>{' '}{money((p.price + delta) * qty)}</Button></>}>
       <div className="col gap-16">
         {(p.modifiers ?? []).map((g) => (
           <div key={g.name}>
@@ -198,8 +201,8 @@ function ModifierModal({ p, onClose, onAdd }: { p: Product; onClose: () => void;
             </div>
           </div>
         ))}
-        <Field label="Note for the kitchen / bar"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. less ice" /></Field>
-        <div className="row between"><span className="lbl-s">Quantity</span><div className="qty"><button onClick={() => setQty(Math.max(1, qty - 1))}><Minus size={13} /></button><span>{qty}</span><button onClick={() => setQty(qty + 1)}><Plus size={13} /></button></div></div>
+        <Field label="Note for the kitchen / bar"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={tl(lang, 'e.g. less ice')} /></Field>
+        <div className="row between"><span className="lbl-s"><Tx>Quantity</Tx></span><div className="qty"><button onClick={() => setQty(Math.max(1, qty - 1))}><Minus size={13} /></button><span>{qty}</span><button onClick={() => setQty(qty + 1)}><Plus size={13} /></button></div></div>
       </div>
     </Modal>
   );
@@ -229,33 +232,33 @@ function PayModal({ total, customerId, onClose, onPay }: { total: number; custom
   const canLater = !!cust && cust.creditLimit > 0 && remaining <= available + 0.004;
   return (
     <Modal title={`Charge ${money(total)}`} onClose={onClose} footer={
-      <><Button onClick={onClose}>Back</Button>
-        <Button variant="primary" size="lg" disabled={!(settled || (payLater && canLater))} onClick={() => onPay(pays, { useCredit, payLater: payLater && !settled, key: key.current, creditUsed })}><Check size={18} /> {settled ? 'Complete sale' : payLater ? `Put ${money(remaining)} on account` : 'Complete sale'}</Button></>}>
+      <><Button onClick={onClose}><Tx>Back</Tx></Button>
+        <Button variant="primary" size="lg" disabled={!(settled || (payLater && canLater))} onClick={() => onPay(pays, { useCredit, payLater: payLater && !settled, key: key.current, creditUsed })}><Check size={18} /> {settled ? <Tx>{'Complete sale'}</Tx> : payLater ? <Tx vars={{ amount: money(remaining) }}>{'Put {amount} on account'}</Tx> : <Tx>{'Complete sale'}</Tx>}</Button></>}>
       <div className="col gap-16">
-        {cust && credit > 0 && <label className="check"><input type="checkbox" checked={useCredit} onChange={(e) => setUseCredit(e.target.checked)} /> Use customer credit ({money(credit)} available)</label>}
+        {cust && credit > 0 && <label className="check"><input type="checkbox" checked={useCredit} onChange={(e) => setUseCredit(e.target.checked)} />{' '}<Tx>Use customer credit (</Tx>{money(credit)}{' '}<Tx>available)</Tx></label>}
         <div className="grid g2" style={{ gap: 10 }}>
-          <div className="card card-b" style={{ background: 'var(--surface-2)' }}><div className="muted">Amount due</div><div style={{ fontSize: 28, fontWeight: 700 }} className="num">{money(due)}</div></div>
-          <div className="card card-b" style={{ background: remaining > 0 ? 'var(--warn-soft)' : 'var(--good-soft)' }}><div className="muted">{remaining > 0 ? 'Remaining' : change > 0 ? 'Change due' : 'Settled'}</div><div style={{ fontSize: 28, fontWeight: 700 }} className="num">{remaining > 0 ? money(remaining) : money(change)}</div></div>
+          <div className="card card-b" style={{ background: 'var(--surface-2)' }}><div className="muted"><Tx>Amount due</Tx></div><div style={{ fontSize: 28, fontWeight: 700 }} className="num">{money(due)}</div></div>
+          <div className="card card-b" style={{ background: remaining > 0 ? 'var(--warn-soft)' : 'var(--good-soft)' }}><div className="muted">{remaining > 0 ? <Tx>{'Remaining'}</Tx> : change > 0 ? <Tx>{'Change due'}</Tx> : <Tx>{'Settled'}</Tx>}</div><div style={{ fontSize: 28, fontWeight: 700 }} className="num">{remaining > 0 ? money(remaining) : money(change)}</div></div>
         </div>
-        {pays.map((p, i) => <div key={i} className="row between chip" style={{ padding: '6px 10px' }}><span className="row gap-6">{METHOD_ICON[p.method]}{PAY_METHODS.find((m) => m.key === p.method)?.label}</span><span className="row gap-6"><b className="num">{money(p.amount)}</b><Button size="sm" icon variant="ghost" onClick={() => setPays(pays.filter((_, k) => k !== i))}><X size={14} /></Button></span></div>)}
+        {pays.map((p, i) => <div key={i} className="row between chip" style={{ padding: '6px 10px' }}><span className="row gap-6"><Tx>{METHOD_ICON[p.method]}</Tx><Tx>{PAY_METHODS.find((m) => m.key === p.method)?.label}</Tx></span><span className="row gap-6"><b className="num">{money(p.amount)}</b><Button size="sm" icon variant="ghost" onClick={() => setPays(pays.filter((_, k) => k !== i))}><X size={14} /></Button></span></div>)}
         {!settled && (
           <>
-            <div className="row wrap gap-6">{PAY_METHODS.map((m) => <Button key={m.key} variant={method === m.key ? 'primary' : undefined} onClick={() => setMethod(m.key)}>{METHOD_ICON[m.key]} {m.label}</Button>)}</div>
-            {method === 'qr' && <div className="row gap-16 wrap" style={{ alignItems: 'center' }}><QR data={promptPayPayload(db.org.promptPayId, tender)} size={150} /><div className="text2" style={{ fontSize: 13 }}>Customer scans with any banking app.<br />PromptPay ID <b>{db.org.promptPayId}</b> · <b>{money(tender)}</b><br /><span className="muted">Confirm only after the payment notification arrives.</span></div></div>}
+            <div className="row wrap gap-6">{PAY_METHODS.map((m) => <Button key={m.key} variant={method === m.key ? 'primary' : undefined} onClick={() => setMethod(m.key)}><Tx>{METHOD_ICON[m.key]}</Tx> <Tx>{m.label}</Tx></Button>)}</div>
+            {method === 'qr' && <div className="row gap-16 wrap" style={{ alignItems: 'center' }}><QR data={promptPayPayload(db.org.promptPayId, tender)} size={150} /><div className="text2" style={{ fontSize: 13 }}><Tx>Customer scans with any banking app.</Tx><br /><Tx>PromptPay ID</Tx>{' '}<b>{db.org.promptPayId}</b> · <b>{money(tender)}</b><br /><span className="muted"><Tx>Confirm only after the payment notification arrives.</Tx></span></div></div>}
             <div className="row">
               <Field label={method === 'cash' ? 'Cash received' : 'Amount'}><NumInput value={tender} onChange={setTender} /></Field>
-              <div style={{ alignSelf: 'flex-end' }}><Button variant="soft" onClick={addPay}>Add payment</Button></div>
+              <div style={{ alignSelf: 'flex-end' }}><Button variant="soft" onClick={addPay}><Tx>Add payment</Tx></Button></div>
             </div>
-            {method === 'cash' && <div className="row wrap gap-6">{[remaining, 100, 500, 1000].filter((v, i, a) => v > 0 && a.indexOf(v) === i).map((v) => <Button key={v} size="sm" onClick={() => setTender(v)}>{v === remaining ? 'Exact' : money(v)}</Button>)}</div>}
+            {method === 'cash' && <div className="row wrap gap-6">{[remaining, 100, 500, 1000].filter((v, i, a) => v > 0 && a.indexOf(v) === i).map((v) => <Button key={v} size="sm" onClick={() => setTender(v)}>{v === remaining ? <Tx>{'Exact'}</Tx> : money(v)}</Button>)}</div>}
           </>
         )}
         {!settled && cust && (
           <div className="card card-b" style={{ background: 'var(--surface-2)' }}>
-            <label className="check"><input type="checkbox" checked={payLater} disabled={!canLater} onChange={(e) => setPayLater(e.target.checked)} /> <b>Leave {money(remaining)} on account</b></label>
-            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>Credit limit {money(cust.creditLimit)} · outstanding {money(out)} · available {money(Math.max(0, available))}{!canLater && cust.creditLimit <= 0 ? ' — this customer has no credit terms.' : !canLater ? ' — amount exceeds available credit.' : ''}</div>
+            <label className="check"><input type="checkbox" checked={payLater} disabled={!canLater} onChange={(e) => setPayLater(e.target.checked)} /> <b><Tx>Leave</Tx>{' '}{money(remaining)}{' '}<Tx>on account</Tx></b></label>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}><Tx>Credit limit</Tx>{' '}{money(cust.creditLimit)}{' '}<Tx>· outstanding</Tx>{' '}{money(out)}{' '}<Tx>· available</Tx>{' '}{money(Math.max(0, available))}{!canLater && cust.creditLimit <= 0 ? <Tx>{' — this customer has no credit terms.'}</Tx> : !canLater ? <Tx>{' — amount exceeds available credit.'}</Tx> : ''}</div>
           </div>
         )}
-        {!settled && !cust && <Banner>To leave a balance unpaid, first select a customer with credit terms.</Banner>}
+        {!settled && !cust && <Banner><Tx>To leave a balance unpaid, first select a customer with credit terms.</Tx></Banner>}
       </div>
     </Modal>
   );
@@ -269,14 +272,14 @@ function DoneModal({ orderId, change, onClose }: { orderId: ID; change: number; 
   const [print, setPrint] = useState(false);
   const ents = o.promotions.reduce((s, a) => s + a.entitlements, 0);
   return (
-    <Modal title={<span className="row gap-6"><Check color="var(--good)" /> Sale complete — {o.no}</span>} onClose={onClose} footer={<><Button onClick={() => setPrint(true)}>Print / reprint receipt</Button><Button variant="primary" onClick={onClose}>New sale</Button></>}>
+    <Modal title={<span className="row gap-6"><Check color="var(--good)" />{' '}<Tx>Sale complete —</Tx>{' '}{o.no}</span>} onClose={onClose} footer={<><Button onClick={() => setPrint(true)}><Tx>Print / reprint receipt</Tx></Button><Button variant="primary" onClick={onClose}><Tx>New sale</Tx></Button></>}>
       <div className="grid g2" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,340px)" }}>
         <div className="col">
           <div style={{ fontSize: 30, fontWeight: 700 }} className="num">{money(o.total)}</div>
-          {change > 0 && <Banner tone="good"><b>Give change {money(change)}</b></Banner>}
-          {o.customerId && <div className="col gap-6">{o.pointsEarned > 0 && <Badge tone="info">+{o.pointsEarned} points earned</Badge>}{ents > 0 && <Badge tone="info">+{ents} lucky-draw pick{ents > 1 ? 's' : ''} — customer can choose numbers in the Events page or LINE app</Badge>}{o.promotions.some((a) => a.couponIds?.length) && <Badge tone="info">Coupon issued to customer</Badge>}</div>}
+          {change > 0 && <Banner tone="good"><b><Tx>Give change</Tx>{' '}{money(change)}</b></Banner>}
+          {o.customerId && <div className="col gap-6">{o.pointsEarned > 0 && <Badge tone="info">+{o.pointsEarned}{' '}<Tx>points earned</Tx></Badge>}{ents > 0 && <Badge tone="info">+{ents}{' '}<Tx>lucky-draw pick</Tx>{ents > 1 ? 's' : ''}{' '}<Tx>— customer can choose numbers in the Events page or LINE app</Tx></Badge>}{o.promotions.some((a) => a.couponIds?.length) && <Badge tone="info"><Tx>Coupon issued to customer</Tx></Badge>}</div>}
           {jobs.length > 0 && (
-            <div className="card card-b"><div className="lbl-s mb8">Print jobs</div>{jobs.map((j) => <div key={j.id} className="row between" style={{ fontSize: 13 }}><span>{j.docType.replace('_', ' ')}{j.station ? ` · ${j.station}` : ''} → {db.printers.find((p) => p.id === j.printerId)?.name ?? 'no printer'}</span><Badge tone={j.status === 'printed' ? 'good' : j.status === 'failed' ? 'bad' : 'warn'} dot>{j.status}</Badge></div>)}<div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Failed or manual jobs can be retried in <Link to="/printing">Printing</Link>.</div></div>
+            <div className="card card-b"><div className="lbl-s mb8"><Tx>Print jobs</Tx></div>{jobs.map((j) => <div key={j.id} className="row between" style={{ fontSize: 13 }}><span>{j.docType.replace('_', ' ')}{j.station ? ` · ${j.station}` : ''} → {db.printers.find((p) => p.id === j.printerId)?.name ?? <Tx>{'no printer'}</Tx>}</span><Badge tone={j.status === 'printed' ? 'good' : j.status === 'failed' ? 'bad' : 'warn'} dot>{j.status}</Badge></div>)}<div className="muted" style={{ fontSize: 12, marginTop: 6 }}><Tx>Failed or manual jobs can be retried in</Tx>{' '}<Link to="/printing"><Tx>Printing</Tx></Link>.</div></div>
           )}
         </div>
         <div style={{ background: 'var(--surface-3)', padding: 12, borderRadius: 12, maxHeight: 420, overflow: 'auto' }}><DocPreview doc={doc} /></div>

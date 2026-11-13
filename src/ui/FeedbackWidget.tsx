@@ -50,7 +50,7 @@ export function FeedbackButton() {
 
   return (
     <>
-      <button type="button" className="feedback-fab" onClick={openModal} aria-label="Send feedback or report an issue on this page">
+      <button type="button" className="feedback-fab" onClick={openModal} aria-label={t(lang, 'Send feedback or report an issue on this page')}>
         <MessageSquarePlus size={18} /><span>{t(lang, 'Feedback')}</span>
       </button>
       {open && (

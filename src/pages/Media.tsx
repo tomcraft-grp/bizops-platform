@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { Download, Eye, FileText, ShieldAlert, Upload } from 'lucide-react';
 import { useDB, toast } from '../domain/store';
-import { Badge, Banner, Button, Card, DataTable, Empty, Kpi, Modal, PageHead, Select, Tabs, useHas } from '../ui/kit';
+import { Badge, Banner, Button, Card, DataTable, Empty, Kpi, Modal, PageHead, Select, Tabs, useHas, Tx } from '../ui/kit';
 import { MediaImg, useMediaSrc } from '../ui/shared';
 import { signedUrl, uploadMedia } from '../ui/upload';
 import { retentionYears } from '../lib/media';
@@ -42,8 +42,8 @@ export default function Media() {
               <div className="row wrap">
                 <Select style={{ width: 220 }} value={upKind} onChange={(e) => setUpKind(e.target.value as MediaFile['kind'])}>{KINDS.map((k) => <option key={k.v} value={k.v}>{k.label}</option>)}</Select>
                 <input ref={file} type="file" hidden accept="image/jpeg,image/png,image/webp,application/pdf" onChange={async (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; setBusy(true); try { await uploadMedia(f, upKind); toast('success', `${f.name} stored — scanning…`); } catch (err) { toast('error', (err as Error).message); } setBusy(false); }} />
-                <Button variant="primary" onClick={() => file.current?.click()}><Upload size={15} /> {busy ? 'Processing…' : 'Choose file'}</Button>
-                <span className="muted" style={{ fontSize: 12 }}>JPEG / PNG / WebP / PDF, ≤ 8 MB. The real file type is detected from its bytes; disguised files are rejected; exact duplicates of slips/invoices are blocked.</span>
+                <Button variant="primary" onClick={() => file.current?.click()}><Upload size={15} /> {busy ? <Tx>{'Processing…'}</Tx> : <Tx>{'Choose file'}</Tx>}</Button>
+                <span className="muted" style={{ fontSize: 12 }}><Tx>JPEG / PNG / WebP / PDF, ≤ 8 MB. The real file type is detected from its bytes; disguised files are rejected; exact duplicates of slips/invoices are blocked.</Tx></span>
               </div>
             </Card>
           )}
@@ -52,12 +52,12 @@ export default function Media() {
               toolbar={<Select sm style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}><option value="">All types</option>{KINDS.map((k) => <option key={k.v} value={k.v}>{k.label}</option>)}</Select>}
               cols={[
                 { key: 'i', header: '', width: 56, render: (x) => (x.mime.startsWith('image') ? <MediaImg m={x.private ? undefined : x} size={40} fallback="🔒" /> : <span className="img-thumb" style={{ width: 40, height: 40 }}><FileText size={18} /></span>) },
-                { key: 'n', header: 'File', render: (x) => <><b>{x.name}</b><div className="sub">{KINDS.find((k) => k.v === x.kind)?.label} · {(x.size / 1024).toFixed(0)} KB · {x.mime}</div></> },
+                { key: 'n', header: 'File', render: (x) => <><b>{x.name}</b><div className="sub"><Tx>{KINDS.find((k) => k.v === x.kind)?.label}</Tx> · {(x.size / 1024).toFixed(0)}{' '}<Tx>KB ·</Tx>{' '}{x.mime}</div></> },
                 { key: 'st', header: 'Status', render: (x) => <Badge tone={x.status === 'available' ? 'good' : x.status === 'scanning' ? 'warn' : 'bad'} dot>{x.status}</Badge> },
-                { key: 'p', header: 'Access', hideSm: true, render: (x) => (x.private ? <Badge tone="info">private</Badge> : <Badge>public</Badge>) },
+                { key: 'p', header: 'Access', hideSm: true, render: (x) => (x.private ? <Badge tone="info"><Tx>private</Tx></Badge> : <Badge><Tx>public</Tx></Badge>) },
                 { key: 'c', header: 'SHA-256', hideSm: true, render: (x) => <span className="mono muted">{x.checksum.slice(0, 12)}…</span> },
                 { key: 'd', header: 'Uploaded', hideSm: true, render: (x) => dateFmt(x.createdAt) },
-                { key: 'a', header: '', render: (x) => <Button size="sm" onClick={() => setView(x.id)}>Open</Button> },
+                { key: 'a', header: '', render: (x) => <Button size="sm" onClick={() => setView(x.id)}><Tx>Open</Tx></Button> },
               ]} />
           </Card>
         </>
@@ -68,8 +68,8 @@ export default function Media() {
       )}
       {tab === 'policy' && (
         <div className="grid g2">
-          <Card title="Security controls"><div className="col gap-6">{['Private by default (slips, invoices, uploads)', 'Stable media IDs & storage keys — no hard-coded public URLs', 'Signed URLs that expire after 60 seconds; every access logged', 'Real content-type detection from file bytes; MIME/extension mismatch rejected', 'Size limit 8 MB; image optimisation to WebP + thumbnails in a background job', 'Malware scan before availability (prototype detects the EICAR test signature)', 'Organization-level isolation; encryption in transit & at rest (storage layer)', 'A slip image alone never confirms a payment — review & approval are separate steps'].map((t) => <div key={t} className="row gap-6"><ShieldAlert size={14} color="var(--good)" />{t}</div>)}</div></Card>
-          <Card title="Retention (proposed — needs owner approval)" flush><table className="t compact"><thead><tr><th>Type</th><th className="num">Keep</th></tr></thead><tbody>{KINDS.map((k) => <tr key={k.v}><td>{k.label}</td><td className="num">{retentionYears[k.v] ? `${retentionYears[k.v]} years` : 'while product exists'}</td></tr>)}</tbody></table></Card>
+          <Card title="Security controls"><div className="col gap-6">{['Private by default (slips, invoices, uploads)', 'Stable media IDs & storage keys — no hard-coded public URLs', 'Signed URLs that expire after 60 seconds; every access logged', 'Real content-type detection from file bytes; MIME/extension mismatch rejected', 'Size limit 8 MB; image optimisation to WebP + thumbnails in a background job', 'Malware scan before availability (prototype detects the EICAR test signature)', 'Organization-level isolation; encryption in transit & at rest (storage layer)', 'A slip image alone never confirms a payment — review & approval are separate steps'].map((t) => <div key={t} className="row gap-6"><ShieldAlert size={14} color="var(--good)" /><Tx>{t}</Tx></div>)}</div></Card>
+          <Card title="Retention (proposed — needs owner approval)" flush><table className="t compact"><thead><tr><th><Tx>Type</Tx></th><th className="num"><Tx>Keep</Tx></th></tr></thead><tbody>{KINDS.map((k) => <tr key={k.v}><td><Tx>{k.label}</Tx></td><td className="num">{retentionYears[k.v] ? <Tx vars={{ n: retentionYears[k.v] }}>{'{n} years'}</Tx> : <Tx>{'while product exists'}</Tx>}</td></tr>)}</tbody></table></Card>
         </div>
       )}
       {m && <FileModal m={m} canDownload={canDownload} onClose={() => setView(null)} />}
@@ -82,20 +82,20 @@ function FileModal({ m, onClose, canDownload }: { m: MediaFile; onClose: () => v
   const [url, setUrl] = useState<string | null>(null);
   const [exp, setExp] = useState(0);
   return (
-    <Modal title={m.name} size="lg" onClose={onClose} footer={canDownload && m.status !== 'quarantined' ? <Button variant="primary" onClick={async () => { const u = await signedUrl(m.id, 'view'); if (!u) { toast('error', 'File is not available'); return; } setUrl(u); setExp(Date.now() + 60000); }}><Eye size={15} /> Generate signed link (60 s)</Button> : undefined}>
+    <Modal title={m.name} size="lg" onClose={onClose} footer={canDownload && m.status !== 'quarantined' ? <Button variant="primary" onClick={async () => { const u = await signedUrl(m.id, 'view'); if (!u) { toast('error', 'File is not available'); return; } setUrl(u); setExp(Date.now() + 60000); }}><Eye size={15} />{' '}<Tx>Generate signed link (60 s)</Tx></Button> : undefined}>
       <div className="grid g2">
         <div style={{ background: 'var(--surface-3)', borderRadius: 12, padding: 12, display: 'grid', placeItems: 'center', minHeight: 220 }}>
-          {m.mime.startsWith('image') ? (m.private && !url ? <div className="muted center"><ShieldAlert size={28} /><div>Private file — generate a signed link to view.</div></div> : <img src={url ?? src ?? m.dataUrl} alt={m.name} style={{ maxWidth: '100%', maxHeight: 320, borderRadius: 8 }} />) : (m.private && !url ? <div className="muted center">Private PDF — generate a signed link.</div> : <a href={url ?? '#'} target="_blank" rel="noreferrer">Open PDF</a>)}
+          {m.mime.startsWith('image') ? (m.private && !url ? <div className="muted center"><ShieldAlert size={28} /><div><Tx>Private file — generate a signed link to view.</Tx></div></div> : <img src={url ?? src ?? m.dataUrl} alt={m.name} style={{ maxWidth: '100%', maxHeight: 320, borderRadius: 8 }} />) : (m.private && !url ? <div className="muted center"><Tx>Private PDF — generate a signed link.</Tx></div> : <a href={url ?? '#'} target="_blank" rel="noreferrer"><Tx>Open PDF</Tx></a>)}
         </div>
         <div className="col gap-6">
-          <div className="row between"><span className="muted">Status</span><Badge tone={m.status === 'available' ? 'good' : m.status === 'scanning' ? 'warn' : 'bad'} dot>{m.status}</Badge></div>
-          <div className="row between"><span className="muted">Type</span><span>{m.mime}</span></div><div className="row between"><span className="muted">Size</span><span>{(m.size / 1024).toFixed(1)} KB</span></div>
-          {m.width && <div className="row between"><span className="muted">Dimensions</span><span>{m.width}×{m.height}</span></div>}
-          <div className="row between"><span className="muted">Variants</span><span>{m.variants.map((v) => `${v.name} ${v.width}px`).join(', ') || '–'}</span></div>
-          <div className="row between"><span className="muted">SHA-256</span><span className="mono">{m.checksum.slice(0, 16)}…</span></div>
-          <div className="row between"><span className="muted">Retain until</span><span>{retentionYears[m.kind] ? dateFmt(addDays(m.createdAt, retentionYears[m.kind] * 365).toISOString()) : 'n/a'}</span></div>
+          <div className="row between"><span className="muted"><Tx>Status</Tx></span><Badge tone={m.status === 'available' ? 'good' : m.status === 'scanning' ? 'warn' : 'bad'} dot>{m.status}</Badge></div>
+          <div className="row between"><span className="muted"><Tx>Type</Tx></span><span>{m.mime}</span></div><div className="row between"><span className="muted"><Tx>Size</Tx></span><span>{(m.size / 1024).toFixed(1)}{' '}<Tx>KB</Tx></span></div>
+          {m.width && <div className="row between"><span className="muted"><Tx>Dimensions</Tx></span><span>{m.width}×{m.height}</span></div>}
+          <div className="row between"><span className="muted"><Tx>Variants</Tx></span><span>{m.variants.map((v) => `${v.name} ${v.width}px`).join(', ') || '–'}</span></div>
+          <div className="row between"><span className="muted"><Tx>SHA-256</Tx></span><span className="mono">{m.checksum.slice(0, 16)}…</span></div>
+          <div className="row between"><span className="muted"><Tx>Retain until</Tx></span><span>{retentionYears[m.kind] ? dateFmt(addDays(m.createdAt, retentionYears[m.kind] * 365).toISOString()) : 'n/a'}</span></div>
           {m.scanNote && <Banner tone={m.status === 'quarantined' ? 'bad' : 'info'}>{m.scanNote}</Banner>}
-          {url && <Banner tone="good">Signed link active until {new Date(exp).toLocaleTimeString()} (access logged). <a href={url} download={m.name}><Download size={12} /> Download</a></Banner>}
+          {url && <Banner tone="good"><Tx>Signed link active until</Tx>{' '}{new Date(exp).toLocaleTimeString()}{' '}<Tx>(access logged).</Tx>{' '}<a href={url} download={m.name}><Download size={12} />{' '}<Tx>Download</Tx></a></Banner>}
         </div>
       </div>
     </Modal>

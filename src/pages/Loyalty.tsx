@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Gift, Plus, Sparkles } from 'lucide-react';
 import { useDB } from '../domain/store';
 import { adjustPoints, cancelRedemption, expirePoints, fulfillRedemption, lifetimeSpendMap, pointsMap, tierFor } from '../domain/loyalty';
-import { Badge, Banner, Button, Card, DataTable, Empty, Field, Input, Kpi, Modal, NumInput, PageHead, Select, Tabs, Textarea, useConfirm, useHas, useRun } from '../ui/kit';
+import { Badge, Banner, Button, Card, DataTable, Empty, Field, Input, Kpi, Modal, NumInput, PageHead, Select, Tabs, Textarea, useConfirm, useHas, useRun, Tx } from '../ui/kit';
 import { Donut, HBars } from '../ui/charts';
 import { dateFmt, dateTimeFmt, money0, compact } from '../lib/util';
 import type { Reward } from '../domain/types';
@@ -30,12 +30,12 @@ export default function Loyalty() {
   return (
     <>
       <PageHead title="Loyalty & rewards" desc="Points are an append-only ledger (earn, bonus, redeem, expire, reverse). Balances are derived, redemptions are atomic, and double-spending is prevented."
-        actions={canEdit && <><Button onClick={() => setAdj(true)}>Adjust points</Button><Button variant="primary" onClick={() => setRw('new')}><Plus size={15} /> New reward</Button></>} />
+        actions={canEdit && <><Button onClick={() => setAdj(true)}><Tx>Adjust points</Tx></Button><Button variant="primary" onClick={() => setRw('new')}><Plus size={15} />{' '}<Tx>New reward</Tx></Button></>} />
       <div className="grid g4 mb16">
         <Kpi label="Points outstanding" value={outstanding.toLocaleString()} sub={`≈ ${money0(outstanding * db.org.pointValue)} liability at ฿${db.org.pointValue}/pt`} />
         <Kpi label="Issued" value={issued.toLocaleString()} sub="earn + bonus + adjustments" />
         <Kpi label="Redeemed" value={redeemed.toLocaleString()} sub={`${db.rewardRedemptions.filter((r) => r.status !== 'cancelled').length} redemptions`} />
-        <Kpi label="Expiring in 60 days" value={expSoon.toLocaleString()} sub={`${expired.toLocaleString()} already expired`} />
+        <Kpi label="Expiring in 60 days" value={expSoon.toLocaleString()} sub={<Tx vars={{ n: expired.toLocaleString() }}>{'{n} already expired'}</Tx>} />
       </div>
       <Tabs value={tab} onChange={setTab} tabs={[{ v: 'overview', label: 'Overview' }, { v: 'rewards', label: 'Reward catalog', count: db.rewards.length }, { v: 'redemptions', label: 'Redemptions' }, { v: 'ledger', label: 'Points ledger' }, { v: 'rules', label: 'Earning rules' }]} />
 
@@ -50,10 +50,10 @@ export default function Loyalty() {
       {tab === 'rewards' && (
         <div className="grid g-auto">
           {db.rewards.map((r) => (
-            <Card key={r.id} title={<span>{r.emoji} {r.name}</span>} sub={r.description} actions={<Badge tone={r.active ? 'good' : ''}>{r.active ? 'active' : 'hidden'}</Badge>}>
-              <div className="row between"><b style={{ fontSize: 20 }}>{r.cost.toLocaleString()} pts</b><span className="muted">{r.stock == null ? 'Unlimited' : `${r.stock} in stock`}</span></div>
-              <div className="muted mt8" style={{ fontSize: 12 }}>{r.kind === 'coupon' ? `Issues a ${r.couponKind === 'percent' ? r.couponValue + '%' : '฿' + r.couponValue} coupon` : `Free item: ${db.products.find((p) => p.id === r.productId)?.name}`} · {db.rewardRedemptions.filter((x) => x.rewardId === r.id && x.status !== 'cancelled').length} redeemed</div>
-              {canEdit && <div className="row mt8"><Button size="sm" onClick={() => setRw(r)}>Edit</Button><Button size="sm" variant="ghost" onClick={() => run((d) => { d.rewards.find((x) => x.id === r.id)!.active = !r.active; }, { ok: r.active ? 'Reward hidden' : 'Reward visible' })}>{r.active ? 'Hide' : 'Show'}</Button></div>}
+            <Card key={r.id} title={<span>{r.emoji} {r.name}</span>} sub={r.description} actions={<Badge tone={r.active ? 'good' : ''}>{r.active ? <Tx>{'active'}</Tx> : <Tx>{'hidden'}</Tx>}</Badge>}>
+              <div className="row between"><b style={{ fontSize: 20 }}>{r.cost.toLocaleString()}{' '}<Tx>pts</Tx></b><span className="muted">{r.stock == null ? <Tx>{'Unlimited'}</Tx> : <Tx vars={{ n: r.stock }}>{'{n} in stock'}</Tx>}</span></div>
+              <div className="muted mt8" style={{ fontSize: 12 }}>{r.kind === 'coupon' ? <Tx vars={{ v: r.couponKind === 'percent' ? r.couponValue + '%' : '฿' + r.couponValue }}>{'Issues a {v} coupon'}</Tx> : <Tx vars={{ name: String(db.products.find((p) => p.id === r.productId)?.name) }}>{'Free item: {name}'}</Tx>} · {db.rewardRedemptions.filter((x) => x.rewardId === r.id && x.status !== 'cancelled').length}{' '}<Tx>redeemed</Tx></div>
+              {canEdit && <div className="row mt8"><Button size="sm" onClick={() => setRw(r)}><Tx>Edit</Tx></Button><Button size="sm" variant="ghost" onClick={() => run((d) => { d.rewards.find((x) => x.id === r.id)!.active = !r.active; }, { ok: r.active ? 'Reward hidden' : 'Reward visible' })}>{r.active ? <Tx>{'Hide'}</Tx> : <Tx>{'Show'}</Tx>}</Button></div>}
             </Card>
           ))}
         </div>
@@ -66,12 +66,12 @@ export default function Loyalty() {
               { key: 'r', header: 'Reward', render: (r) => db.rewards.find((x) => x.id === r.rewardId)?.name }, { key: 'p', header: 'Points', num: true, render: (r) => r.points },
               { key: 'code', header: 'Code', render: (r) => <span className="mono">{r.code}</span> },
               { key: 's', header: 'Status', render: (r) => <Badge tone={r.status === 'issued' ? 'warn' : r.status === 'fulfilled' ? 'good' : 'bad'} dot>{r.status}</Badge> },
-              { key: 'a', header: '', render: (r) => r.status === 'issued' && canEdit ? <div className="row gap-4">{!r.couponId && <Button size="sm" onClick={() => run((d, c) => fulfillRedemption(d, c, r.id), { ok: 'Marked as handed over' })}>Hand over</Button>}<Button size="sm" variant="ghost" onClick={async () => { const x = await confirm({ title: 'Cancel redemption?', body: 'Points are restored and stock/coupon released.', reason: true, danger: true }); if (x.ok) run((d, c) => cancelRedemption(d, c, r.id, x.reason), { ok: 'Points restored' }); }}>Cancel</Button></div> : null },
+              { key: 'a', header: '', render: (r) => r.status === 'issued' && canEdit ? <div className="row gap-4">{!r.couponId && <Button size="sm" onClick={() => run((d, c) => fulfillRedemption(d, c, r.id), { ok: 'Marked as handed over' })}><Tx>Hand over</Tx></Button>}<Button size="sm" variant="ghost" onClick={async () => { const x = await confirm({ title: 'Cancel redemption?', body: 'Points are restored and stock/coupon released.', reason: true, danger: true }); if (x.ok) run((d, c) => cancelRedemption(d, c, r.id, x.reason), { ok: 'Points restored' }); }}><Tx>Cancel</Tx></Button></div> : null },
             ]} />
         </Card>
       )}
       {tab === 'ledger' && (
-        <Card flush title="Points ledger" actions={canEdit && <Button size="sm" onClick={() => run((d, c) => { const n = expirePoints(d, c); if (!n) throw new Error('Nothing to expire right now'); return n; }, { ok: 'Expired batches processed' })}>Run expiry</Button>}>
+        <Card flush title="Points ledger" actions={canEdit && <Button size="sm" onClick={() => run((d, c) => { const n = expirePoints(d, c); if (!n) throw new Error('Nothing to expire right now'); return n; }, { ok: 'Expired batches processed' })}><Tx>Run expiry</Tx></Button>}>
           <DataTable rows={[...db.pointsLedger].reverse()} rowKey={(p) => p.id} pageSize={14} search={(p) => `${db.customers.find((c) => c.id === p.customerId)?.name} ${p.type} ${p.note ?? ''}`}
             cols={[
               { key: 'd', header: 'Date', render: (p) => dateTimeFmt(p.ts) }, { key: 'c', header: 'Customer', render: (p) => db.customers.find((c) => c.id === p.customerId)?.name },
@@ -103,10 +103,10 @@ function Rules() {
           <Field label="Liability value per point (฿)" hint="Used only for the outstanding-points estimate"><NumInput value={f.pv} onChange={(n) => setF({ ...f, pv: n })} /></Field>
           <Field label="Category multipliers (JSON)" hint={`Categories: ${cats.join(', ')}`}><Input value={f.mult} onChange={(e) => setF({ ...f, mult: e.target.value })} /></Field>
         </div>
-        <div className="mt16"><Button variant="primary" disabled={!canEdit} onClick={() => run((d) => { const m = JSON.parse(f.mult); d.loyalty.earnBahtPerPoint = f.per; d.loyalty.expiryMonths = f.exp; d.loyalty.categoryMultipliers = m; d.org.pointValue = f.pv; }, { ok: 'Rules saved — applies to new orders', perm: 'loyalty:edit' })}>Save rules</Button></div>
+        <div className="mt16"><Button variant="primary" disabled={!canEdit} onClick={() => run((d) => { const m = JSON.parse(f.mult); d.loyalty.earnBahtPerPoint = f.per; d.loyalty.expiryMonths = f.exp; d.loyalty.categoryMultipliers = m; d.org.pointValue = f.pv; }, { ok: 'Rules saved — applies to new orders', perm: 'loyalty:edit' })}><Tx>Save rules</Tx></Button></div>
       </Card>
-      <Card title="Tiers"><table className="t compact"><thead><tr><th>Tier</th><th className="num">Lifetime spend ≥</th><th className="num">Multiplier</th></tr></thead><tbody>{db.loyalty.tiers.map((t) => <tr key={t.name}><td><b style={{ color: t.color }}>{t.name}</b></td><td className="num">{money0(t.minSpend)}</td><td className="num">×{t.multiplier}</td></tr>)}</tbody></table>
-        <div className="muted mt8" style={{ fontSize: 12.5 }}>Points = floor( Σ line net ÷ baht-per-point × category multiplier × tier multiplier × (1 + promo multiplier) ). Promotions can add bonus points or double-points days.</div></Card>
+      <Card title="Tiers"><table className="t compact"><thead><tr><th><Tx>Tier</Tx></th><th className="num"><Tx>Lifetime spend ≥</Tx></th><th className="num"><Tx>Multiplier</Tx></th></tr></thead><tbody>{db.loyalty.tiers.map((t) => <tr key={t.name}><td><b style={{ color: t.color }}>{t.name}</b></td><td className="num">{money0(t.minSpend)}</td><td className="num">×{t.multiplier}</td></tr>)}</tbody></table>
+        <div className="muted mt8" style={{ fontSize: 12.5 }}><Tx>Points = floor( Σ line net ÷ baht-per-point × category multiplier × tier multiplier × (1 + promo multiplier) ). Promotions can add bonus points or double-points days.</Tx></div></Card>
     </div>
   );
 }
@@ -118,12 +118,12 @@ function AdjustModal({ onClose }: { onClose: () => void }) {
   const [pts, setPts] = useState(0);
   const [reason, setReason] = useState('');
   return (
-    <Modal title="Manual points adjustment" size="sm" onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!cid || !pts || !reason.trim()} onClick={() => run((d, c) => adjustPoints(d, c, cid, pts, reason), { ok: 'Points adjusted (audited)', perm: 'loyalty:edit', onOk: onClose })}>Apply</Button></>}>
+    <Modal title="Manual points adjustment" size="sm" onClose={onClose} footer={<><Button onClick={onClose}><Tx>Cancel</Tx></Button><Button variant="primary" disabled={!cid || !pts || !reason.trim()} onClick={() => run((d, c) => adjustPoints(d, c, cid, pts, reason), { ok: 'Points adjusted (audited)', perm: 'loyalty:edit', onOk: onClose })}><Tx>Apply</Tx></Button></>}>
       <div className="col">
         <Field label="Customer"><Select value={cid} onChange={(e) => setCid(e.target.value)}><option value="">Select…</option>{db.customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select></Field>
         <Field label="Points (+ add, − deduct)"><NumInput value={pts || ''} onChange={(n) => setPts(isNaN(n) ? 0 : Math.round(n))} /></Field>
         <Field label="Reason (required)"><Textarea value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
-        <Banner tone="warn">Every manual adjustment is written to the audit log with your name.</Banner>
+        <Banner tone="warn"><Tx>Every manual adjustment is written to the audit log with your name.</Tx></Banner>
       </div>
     </Modal>
   );
@@ -134,7 +134,7 @@ function RewardModal({ r, onClose }: { r: Reward | null; onClose: () => void }) 
   const run = useRun();
   const [f, setF] = useState<Reward>(r ?? { id: '', name: '', description: '', cost: 300, stock: null, active: true, emoji: '🎁', kind: 'coupon', couponKind: 'fixed', couponValue: 50 });
   return (
-    <Modal title={r ? 'Edit reward' : 'New reward'} onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!f.name || f.cost <= 0} onClick={() => run((d) => { if (r) Object.assign(d.rewards.find((x) => x.id === r.id)!, f); else d.rewards.push({ ...f, id: 'RW' + (d.rewards.length + 10) }); }, { ok: 'Reward saved', perm: 'loyalty:edit', onOk: onClose })}>Save</Button></>}>
+    <Modal title={r ? 'Edit reward' : 'New reward'} onClose={onClose} footer={<><Button onClick={onClose}><Tx>Cancel</Tx></Button><Button variant="primary" disabled={!f.name || f.cost <= 0} onClick={() => run((d) => { if (r) Object.assign(d.rewards.find((x) => x.id === r.id)!, f); else d.rewards.push({ ...f, id: 'RW' + (d.rewards.length + 10) }); }, { ok: 'Reward saved', perm: 'loyalty:edit', onOk: onClose })}><Tx>Save</Tx></Button></>}>
       <div className="form-grid">
         <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label="Emoji"><Input value={f.emoji} onChange={(e) => setF({ ...f, emoji: e.target.value })} /></Field>

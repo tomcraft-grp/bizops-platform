@@ -6,7 +6,7 @@ import {
   addFeedbackNote, listFeedback, setFeedbackPriority, setFeedbackStatus,
 } from '../lib/feedbackApi';
 import { useLang } from '../domain/store';
-import { Badge, Banner, Button, Card, DataTable, Drawer, Empty, Field, KV, Kpi, PageHead, Select, Textarea, useHas } from '../ui/kit';
+import { Badge, Banner, Button, Card, DataTable, Drawer, Empty, Field, KV, Kpi, PageHead, Select, Textarea, useHas, Tx } from '../ui/kit';
 import { dateTimeFmt } from '../lib/util';
 import { t } from '../lib/i18n';
 import { useAuth } from '../auth/AuthProvider';
@@ -56,8 +56,8 @@ export default function FeedbackIssues() {
   return (
     <>
       <PageHead title="Feedback & issues" desc="Every issue, idea or requested improvement submitted from the global Feedback button, with the exact page it came from — centralized across every tester, not just this browser."
-        actions={<Button onClick={refresh}><RefreshCw size={14} /> Refresh</Button>} />
-      {err && <div className="mb16"><Banner tone="bad">Could not reach the centralized feedback store: {err}</Banner></div>}
+        actions={<Button onClick={refresh}><RefreshCw size={14} />{' '}<Tx>Refresh</Tx></Button>} />
+      {err && <div className="mb16"><Banner tone="bad"><Tx>Could not reach the centralized feedback store:</Tx>{' '}{err}</Banner></div>}
       <div className="grid g4 mb16">
         <Kpi label="Total submitted" value={rows.length} />
         <Kpi label="Open" value={openCount} tone={openCount ? 'bad' : 'good'} />
@@ -123,7 +123,7 @@ function IssueDrawer({ issue: f, onClose, onChanged }: { issue: FeedbackIssue; o
         <div className="row wrap" style={{ gap: 8 }}>
           <Badge tone={CATEGORY_TONE[f.category]}>{categoryLabel(f.category)}</Badge>
           <Badge tone={STATUS_TONE[f.status]} dot>{statusLabel(f.status)}</Badge>
-          <Badge tone={PRIORITY_TONE[f.priority]}>{t(lang, priorityLabel(f.priority))}{lang === 'th' ? '' : ' priority'}</Badge>
+          <Badge tone={PRIORITY_TONE[f.priority]}>{t(lang, priorityLabel(f.priority))}{lang === 'th' ? '' : <Tx>{' priority'}</Tx>}</Badge>
         </div>
         <Card title="Description"><div className="text2" style={{ whiteSpace: 'pre-wrap' }}>{f.description}</div></Card>
         {f.remark && <Card title="Remark / additional notes"><div className="text2" style={{ whiteSpace: 'pre-wrap' }}>{f.remark}</div></Card>}
