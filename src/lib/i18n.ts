@@ -5,6 +5,7 @@
 // Data values (names, codes, amounts) are never passed through here, only fixed UI copy.
 import type { ReactNode } from 'react';
 import { TH_BACKOFFICE } from './i18n.backoffice';
+import { TH_FEEDBACK } from './i18n.feedback';
 
 export type Lang = 'en' | 'th';
 
@@ -124,6 +125,8 @@ export const TH: Record<string, string> = {
 // Back-office labels (tabs, column headers, buttons, report captions, …) live in their own file to keep this
 // one readable. Entries above win over that file on a duplicate key.
 for (const [k, v] of Object.entries(TH_BACKOFFICE)) if (!(k in TH)) TH[k] = v;
+// Feedback & Issue system (customer app + back office) — lib/i18n.feedback.ts. Existing wording wins on a shared key.
+for (const [k, v] of Object.entries(TH_FEEDBACK)) if (!(k in TH)) TH[k] = v;
 
 /** Translate an English source string. `{name}` placeholders are filled from `vars` AFTER lookup, so the
  *  dictionary key is the template (e.g. 'Type {word} to confirm') and dynamic values are never translated. */

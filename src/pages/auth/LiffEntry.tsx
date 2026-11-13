@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { signInWithLine } from '../../lib/liff';
 import { Banner, Button, Card } from '../../ui/kit';
+import { setLang } from '../../domain/store';
 
 export default function LiffEntry() {
   const nav = useNavigate();
@@ -21,7 +22,13 @@ export default function LiffEntry() {
     });
   };
 
-  useEffect(() => { if (!started.current) { started.current = true; run(); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    // Customers arriving from LINE get Thai by default unless they already chose a language.
+    try { if (!localStorage.getItem('bizops.lang')) setLang('th'); } catch { /* storage unavailable: keep default */ }
+    run();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="auth-shell">

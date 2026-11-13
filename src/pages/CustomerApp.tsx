@@ -20,13 +20,17 @@ import { STATUS_LABEL } from '../domain/meta';
 import { linkLineMember } from '../domain/master';
 import { useAuth } from '../auth/AuthProvider';
 import { supabase } from '../lib/supabase';
+import FeedbackCenter, { useFeedbackNotifications } from './customer/FeedbackCenter';
 
 type Tab = 'home' | 'shop' | 'rewards' | 'pay' | 'events' | 'profile';
 
 export default function CustomerApp() {
   const db = useDB();
   const [cid, setCid] = useState<ID | null>(() => { try { return sessionStorage.getItem('bizops.cust'); } catch { return null; } });
-  const [tab, setTab] = useState<Tab>('home');
+  const [tab, setTabRaw] = useState<Tab>('home');
+  // Remember the last non-profile tab so feedback can say which part of the app it is about.
+  const [lastArea, setLastArea] = useState<string>('home');
+  const setTab = (t: Tab) => { if (t !== 'profile') setLastArea(t); setTabRaw(t); };
   const login = (id: ID | null) => { setCid(id); try { if (id) sessionStorage.setItem('bizops.cust', id); else sessionStorage.removeItem('bizops.cust'); } catch { /* ignore */ } };
   const me = cid ? db.customers.find((c) => c.id === cid) : undefined;
 
@@ -47,6 +51,7 @@ export default function CustomerApp() {
 
   const tabs: [Tab, JSX.Element, string][] = [['home', <Home size={18} key="h" />, 'Home'], ['shop', <ShoppingBag size={18} key="s" />, 'Shop'], ['rewards', <Gift size={18} key="r" />, 'Rewards'], ['pay', <Wallet size={18} key="p" />, 'Pay'], ['events', <Hash size={18} key="e" />, 'Events']];
   if (lineId) tabs.push(['profile', <UserRound size={18} key="u" />, 'โปรไฟล์']);
+  const fbNotes = useFeedbackNotifications(!!lineId && !needsSignup);
 
   // DEV APP Customer: the published layout (or a staff preview via ?layout=<version id>). Without one, the
   // built-in layout below is used unchanged.
@@ -89,10 +94,15 @@ export default function CustomerApp() {
                 {tab === 'rewards' && <RewardsTab id={me.id} />}
                 {tab === 'pay' && <PayTab id={me.id} />}
                 {tab === 'events' && <EventsTab id={me.id} />}
-                {tab === 'profile' && lineId && <MemberForm mode="edit" />}
+                {tab === 'profile' && lineId && <><MemberForm mode="edit" /><hr style={{ border: 0, borderTop: '1px solid var(--border)', width: '100%' }} /><FeedbackCenter fromArea={lastArea} notes={fbNotes} /></>}
               </div>
               <nav className={cx('phone-nav', cfg?.theme.navStyle === 'floating' && 'floating')} style={{ gridTemplateColumns: `repeat(${navTabs.length}, 1fr)` }}>
-                {navTabs.map(([k, i, l]) => <button key={k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{i}{l}</button>)}
+                {navTabs.map(([k, i, l]) => (
+                  <button key={k} className={cx(tab === k && 'on')} onClick={() => setTab(k)} style={{ position: 'relative' }}>
+                    {i}{l}
+                    {k === 'profile' && fbNotes.unread > 0 && <span aria-label={`${fbNotes.unread} new feedback updates`} style={{ position: 'absolute', top: 4, right: '50%', marginRight: -16, minWidth: 16, height: 16, borderRadius: 8, background: 'var(--crit, #d92d20)', color: '#fff', fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{fbNotes.unread}</span>}
+                  </button>
+                ))}
               </nav>
             </>
           )}
