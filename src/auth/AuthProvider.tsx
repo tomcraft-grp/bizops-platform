@@ -9,6 +9,8 @@ export type ProfileRole = 'SUPER_ADMIN' | 'ADMIN' | 'USER';
 export interface Profile {
   id: string; email: string; display_name: string | null; role: ProfileRole; status: 'active' | 'disabled';
   created_at: string; updated_at: string;
+  // LINE members (see lib/liff.ts): no email/password, just LINE + phone + PDPA consent.
+  phone?: string | null; line_user_id?: string | null; pdpa_consent_at?: string | null;
 }
 interface AuthState {
   session: Session | null; profile: Profile | null; loading: boolean;

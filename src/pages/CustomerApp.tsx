@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Gift, Hash, Home, Minus, Plus, ShoppingBag, Wallet, X } from 'lucide-react';
+import { ArrowLeft, Gift, Hash, Home, Minus, Plus, ShoppingBag, UserRound, Wallet, X } from 'lucide-react';
 import { useDB, useStore, toast, act } from '../domain/store';
 import { customerLifetimeSpend, expiringSoon, pointsBalance, redeemReward, tierFor } from '../domain/loyalty';
 import { allocatedMap, customerCredit, customerOutstanding, orderBalance, outstandingOrders, submitSlip } from '../domain/payments';
@@ -15,8 +15,11 @@ import { promptPayPayload } from '../lib/promptpay';
 import { cx, dateFmt, dateTimeFmt, dayKey, money, money0, r2 } from '../lib/util';
 import type { ID } from '../domain/types';
 import { STATUS_LABEL } from '../domain/meta';
+import { addCustomer } from '../domain/master';
+import { useAuth } from '../auth/AuthProvider';
+import { supabase } from '../lib/supabase';
 
-type Tab = 'home' | 'shop' | 'rewards' | 'pay' | 'events';
+type Tab = 'home' | 'shop' | 'rewards' | 'pay' | 'events' | 'profile';
 
 export default function CustomerApp() {
   const db = useDB();
@@ -24,6 +27,32 @@ export default function CustomerApp() {
   const [tab, setTab] = useState<Tab>('home');
   const login = (id: ID | null) => { setCid(id); try { if (id) sessionStorage.setItem('bizops.cust', id); else sessionStorage.removeItem('bizops.cust'); } catch { /* ignore */ } };
   const me = cid ? db.customers.find((c) => c.id === cid) : undefined;
+
+  // Signed in with LINE (see lib/liff.ts): skip the simulated customer picker and open this LINE account's
+  // own member record, creating it on first visit. Customer data itself is still the local prototype store.
+  // The member's name/phone live in Supabase (profiles) and are mirrored onto the local record.
+  const { session, profile } = useAuth();
+  const lineMeta = session?.user.user_metadata as { line_user_id?: string; display_name?: string } | undefined;
+  const lineId = lineMeta?.line_user_id;
+  const needsSignup = !!lineId && !!profile && (!profile.phone || !profile.pdpa_consent_at);
+  useEffect(() => {
+    if (!lineId) return;
+    const name = profile?.display_name || lineMeta?.display_name || 'LINE member';
+    const phone = profile?.phone ?? '';
+    const id = act((d, c) => {
+      const found = d.customers.find((x) => x.lineUserId === lineId);
+      // Direct assignment (not updateCustomer): a demo customer may share the number, which must not block the real member.
+      if (found) { found.name = name; found.phone = phone; return found.id; }
+      const newId = addCustomer(d, c, { name, phone: '' });
+      Object.assign(d.customers.find((x) => x.id === newId)!, { lineUserId: lineId, phone });
+      return newId;
+    });
+    if (id !== cid) login(id);
+  }, [lineId, profile?.display_name, profile?.phone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const tabs: [Tab, JSX.Element, string][] = [['home', <Home size={18} key="h" />, 'Home'], ['shop', <ShoppingBag size={18} key="s" />, 'Shop'], ['rewards', <Gift size={18} key="r" />, 'Rewards'], ['pay', <Wallet size={18} key="p" />, 'Pay'], ['events', <Hash size={18} key="e" />, 'Events']];
+  if (lineId) tabs.push(['profile', <UserRound size={18} key="u" />, 'โปรไฟล์']);
+
   return (
     <div className="standalone">
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 340px) auto', gap: 40, alignItems: 'center', maxWidth: 860, width: '100%' }} className="cust-wrap">
@@ -32,11 +61,11 @@ export default function CustomerApp() {
           <h1>Customer app (LINE LIFF)</h1>
           <p className="text2">This is what a customer sees inside LINE. It runs on the same data as the staff app: redeem a reward, pay an invoice with a slip, order from the LINE shop and pick lucky-draw numbers — then watch the staff side react.</p>
           <Banner>LINE Login is simulated. In production the LIFF app authenticates the customer with their LINE account and links it to this customer record.</Banner>
-          {me && <Button onClick={() => login(null)}>Sign out / switch customer</Button>}
+          {me && !lineId && <Button onClick={() => login(null)}>Sign out / switch customer</Button>}
         </div>
         <div className="phone">
           <div className="phone-top"><b>{db.org.name.split(' ')[0]} ☕</b><span style={{ fontSize: 12, opacity: 0.9 }}>LINE</span></div>
-          {!me ? <Login onPick={login} /> : (
+          {needsSignup ? <div className="phone-body"><MemberForm mode="signup" /></div> : !me ? (lineId ? <div className="phone-body center"><div className="spinner" /></div> : <Login onPick={login} />) : (
             <>
               <div className="phone-body" role="region" aria-label="Customer app content" tabIndex={0}>
                 {tab === 'home' && <HomeTab id={me.id} go={setTab} />}
@@ -44,9 +73,10 @@ export default function CustomerApp() {
                 {tab === 'rewards' && <RewardsTab id={me.id} />}
                 {tab === 'pay' && <PayTab id={me.id} />}
                 {tab === 'events' && <EventsTab id={me.id} />}
+                {tab === 'profile' && lineId && <MemberForm mode="edit" />}
               </div>
-              <nav className="phone-nav">
-                {([['home', <Home size={18} key="h" />, 'Home'], ['shop', <ShoppingBag size={18} key="s" />, 'Shop'], ['rewards', <Gift size={18} key="r" />, 'Rewards'], ['pay', <Wallet size={18} key="p" />, 'Pay'], ['events', <Hash size={18} key="e" />, 'Events']] as [Tab, JSX.Element, string][]).map(([k, i, l]) => <button key={k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{i}{l}</button>)}
+              <nav className="phone-nav" style={{ gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}>
+                {tabs.map(([k, i, l]) => <button key={k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{i}{l}</button>)}
               </nav>
             </>
           )}
@@ -54,6 +84,56 @@ export default function CustomerApp() {
       </div>
       <style>{`@media (max-width: 900px){.cust-wrap{grid-template-columns:1fr !important}} @media (max-width:560px){.phone{border:0;border-radius:0;height:100vh;max-height:none;width:100vw}.standalone{padding:0}}`}</style>
     </div>
+  );
+}
+
+// First visit (mode "signup") and the profile tab (mode "edit") for LINE members. Saved to Supabase
+// profiles under RLS (a member can only update their own row); line_user_id/role are protected server-side.
+function MemberForm({ mode }: { mode: 'signup' | 'edit' }) {
+  const { session, profile, refreshProfile } = useAuth();
+  const picture = (session?.user.user_metadata as { picture?: string } | undefined)?.picture;
+  const [name, setName] = useState(profile?.display_name ?? '');
+  const [phone, setPhone] = useState(profile?.phone ?? '');
+  const [consent, setConsent] = useState(!!profile?.pdpa_consent_at);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || !profile) return;
+    const digits = phone.replace(/\D/g, '');
+    if (!name.trim()) return setErr('กรุณากรอกชื่อ');
+    if (!/^0\d{8,9}$/.test(digits)) return setErr('กรุณากรอกเบอร์โทรให้ถูกต้อง เช่น 0812345678');
+    if (!consent) return setErr('กรุณายอมรับนโยบายข้อมูลส่วนบุคคล');
+    setBusy(true); setErr(null); setSaved(false);
+    const patch: Record<string, string> = { display_name: name.trim(), phone: digits };
+    if (!profile.pdpa_consent_at) patch.pdpa_consent_at = new Date().toISOString();
+    const { error } = await supabase.from('profiles').update(patch).eq('id', profile.id);
+    if (error) { setBusy(false); return setErr(error.message); }
+    await refreshProfile();
+    setBusy(false); setSaved(true);
+  };
+
+  return (
+    <form onSubmit={submit} className="col gap-12">
+      <div className="center" style={{ padding: '8px 0 4px' }}>
+        {picture ? <img src={picture} alt="" width={72} height={72} style={{ borderRadius: '50%', objectFit: 'cover' }} /> : <div style={{ fontSize: 40 }}>☕</div>}
+        <h2 style={{ marginTop: 8 }}>{mode === 'signup' ? 'ยินดีต้อนรับสมาชิกใหม่' : 'โปรไฟล์ของฉัน'}</h2>
+        {mode === 'signup' && <div className="muted" style={{ fontSize: 13 }}>กรอกข้อมูลครั้งเดียว แล้วใช้บัตรสมาชิกได้เลย</div>}
+      </div>
+      {err && <Banner tone="bad">{err}</Banner>}
+      {saved && mode === 'edit' && <Banner tone="good">บันทึกแล้ว</Banner>}
+      <Field label="ชื่อ"><Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" maxLength={60} required /></Field>
+      <Field label="เบอร์โทร" hint="ใช้ค้นหาสมาชิกตอนสะสมแต้มที่ร้าน"><Input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="numeric" autoComplete="tel" placeholder="08xxxxxxxx" maxLength={12} required /></Field>
+      {!profile?.pdpa_consent_at && (
+        <label className="row gap-6" style={{ alignItems: 'flex-start', fontSize: 13 }}>
+          <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} style={{ marginTop: 3 }} />
+          <span>ยินยอมให้ร้านเก็บชื่อ เบอร์โทร และบัญชี LINE เพื่อใช้ในระบบสมาชิกและสะสมแต้ม ตามนโยบายคุ้มครองข้อมูลส่วนบุคคล (PDPA)</span>
+        </label>
+      )}
+      <Button type="submit" variant="primary" className="block" loading={busy} disabled={busy}>{mode === 'signup' ? 'สมัครสมาชิก' : 'บันทึก'}</Button>
+    </form>
   );
 }
 

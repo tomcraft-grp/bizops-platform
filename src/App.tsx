@@ -34,6 +34,7 @@ import Register from './pages/auth/Register';
 import ForgotPassword from './pages/auth/ForgotPassword';
 import ResetPassword from './pages/auth/ResetPassword';
 import Unauthorized from './pages/auth/Unauthorized';
+import LiffEntry from './pages/auth/LiffEntry';
 import { useAuth } from './auth/AuthProvider';
 import { RequireAuth, RequireRole } from './auth/guards';
 
@@ -69,6 +70,7 @@ export default function App() {
       <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/liff" element={<LiffEntry />} />
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />

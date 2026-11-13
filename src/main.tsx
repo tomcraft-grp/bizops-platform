@@ -4,6 +4,11 @@ import './styles.css';
 import App from './App';
 import { AuthProvider } from './auth/AuthProvider';
 import { applyTheme, boot, useStore } from './domain/store';
+import { isLiffEntry } from './lib/liff';
+
+// LINE opens the LIFF endpoint as ".../?entry=liff" (LINE does not allow a #hash in the endpoint URL),
+// so route it to the LINE sign-in page before the hash router starts.
+if (isLiffEntry() && !window.location.hash.startsWith('#/liff')) window.location.hash = '#/liff';
 
 applyTheme(useStore.getState().ui.theme);
 const root = createRoot(document.getElementById('root')!);

@@ -17,6 +17,7 @@
     "docs:accounting": "tsx scripts/gen-accounting-docs.ts"
   },
   "dependencies": {
+    "@line/liff": "2.29.2",
     "@supabase/supabase-js": "^2.119.0",
     "immer": "10.1.1",
     "lucide-react": "0.469.0",
