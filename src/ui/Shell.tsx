@@ -25,6 +25,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
   ] },
   { title: 'Customers', items: [
     { to: '/customers', label: 'Customers', icon: <Users />, perm: 'customers:view' },
+    { to: '/members', label: 'LINE members', icon: <Smartphone />, perm: 'customers:view' },
     { to: '/receivables', label: 'Receivables', icon: <Wallet />, perm: 'receivables:view', badge: 'slips' },
     { to: '/loyalty', label: 'Loyalty & rewards', icon: <Heart />, perm: 'loyalty:view' },
     { to: '/promotions', label: 'Promotions', icon: <Percent />, perm: 'promotions:view' },

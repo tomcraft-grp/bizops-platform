@@ -33,7 +33,6 @@ export default function Login() {
           <Button type="submit" variant="primary" className="block" loading={busy} disabled={busy}>Sign in</Button>
           <div className="row between" style={{ fontSize: 13 }}>
             <Link to="/forgot-password">Forgot password?</Link>
-            <Link to="/register">Create an account</Link>
           </div>
         </form>
       </Card>

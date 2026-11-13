@@ -30,11 +30,11 @@ import Blueprint from './pages/Blueprint';
 import CustomerApp from './pages/CustomerApp';
 import FeedbackIssues from './pages/FeedbackIssues';
 import Login from './pages/auth/Login';
-import Register from './pages/auth/Register';
 import ForgotPassword from './pages/auth/ForgotPassword';
 import ResetPassword from './pages/auth/ResetPassword';
 import Unauthorized from './pages/auth/Unauthorized';
 import LiffEntry from './pages/auth/LiffEntry';
+import LineMembers from './pages/LineMembers';
 import { useAuth } from './auth/AuthProvider';
 import { RequireAuth, RequireRole } from './auth/guards';
 
@@ -71,7 +71,8 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/liff" element={<LiffEntry />} />
-          <Route path="/register" element={<Register />} />
+          {/* Public email sign-up is off (Supabase disable_signup): customers join via LINE, staff are added by an admin. */}
+          <Route path="/register" element={<Navigate to="/login" replace />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
@@ -83,6 +84,7 @@ export default function App() {
             <Route path="channels" element={<G perm="channels:view"><Channels /></G>} />
             <Route path="kds" element={<G perm="kds:view"><KDS /></G>} />
             <Route path="customers" element={<G perm="customers:view"><Customers /></G>} />
+            <Route path="members" element={<G perm="customers:view"><LineMembers /></G>} />
             <Route path="receivables" element={<G perm="receivables:view"><Receivables /></G>} />
             <Route path="loyalty" element={<G perm="loyalty:view"><Loyalty /></G>} />
             <Route path="promotions" element={<G perm="promotions:view"><Promotions /></G>} />
