@@ -30,6 +30,7 @@ import Blueprint from './pages/Blueprint';
 import CustomerApp from './pages/CustomerApp';
 import FeedbackIssues from './pages/FeedbackIssues';
 import DevApp from './pages/DevApp';
+import Finance from './pages/Finance';
 import Login from './pages/auth/Login';
 import ForgotPassword from './pages/auth/ForgotPassword';
 import ResetPassword from './pages/auth/ResetPassword';
@@ -102,6 +103,7 @@ export default function App() {
             <Route path="customers" element={<G perm="customers:view"><Customers /></G>} />
             <Route path="members" element={<G perm="customers:view"><LineMembers /></G>} />
             <Route path="receivables" element={<G perm="receivables:view"><Receivables /></G>} />
+            <Route path="payment-review" element={<G perm="receivables:view"><Finance /></G>} />
             <Route path="loyalty" element={<G perm="loyalty:view"><Loyalty /></G>} />
             <Route path="promotions" element={<G perm="promotions:view"><Promotions /></G>} />
             <Route path="events" element={<G perm="events:view"><Events /></G>} />

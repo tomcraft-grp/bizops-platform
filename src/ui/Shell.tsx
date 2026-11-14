@@ -28,6 +28,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
     { to: '/customers', label: 'Customers', icon: <Users />, perm: 'customers:view' },
     { to: '/members', label: 'LINE members', icon: <Smartphone />, perm: 'customers:view' },
     { to: '/receivables', label: 'Receivables', icon: <Wallet />, perm: 'receivables:view', badge: 'slips' },
+    { to: '/payment-review', label: 'Payment review', icon: <Wallet />, perm: 'receivables:view' },
     { to: '/loyalty', label: 'Loyalty & rewards', icon: <Heart />, perm: 'loyalty:view' },
     { to: '/promotions', label: 'Promotions', icon: <Percent />, perm: 'promotions:view' },
     { to: '/events', label: 'Events', icon: <Hash />, perm: 'events:view' },
