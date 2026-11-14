@@ -95,24 +95,30 @@ comment on schema customer_app_views is
 
 -- SKU catalogue for customers: active SKUs that have a price. ONLY code, names, brand, type, unit and the
 -- selling/sticker price. cost_price, friend_price, wholesale_price, review notes and import metadata are never exposed.
--- (Skipped when public.sku_master does not exist yet; re-run this block after the SKU master migration.)
+-- Source: public.sku_registry (the central SKU table since 20261114200000; sku_code is the NEW automatic code), or the
+-- original public.sku_master TABLE when this runs on a database that has not had that migration yet (the view keeps
+-- following the table when it is renamed later). public.sku_master is a compatibility VIEW with legacy codes once the
+-- SKU migration has run, so it is never used as the source then. Skipped when neither exists.
 do $$
+declare src regclass := coalesce(to_regclass('public.sku_registry'), to_regclass('public.sku_master'));
 begin
-  if to_regclass('public.sku_master') is null then
-    raise notice 'public.sku_master not found: customer_app_views.sku_catalog not created';
+  if src is null then
+    raise notice 'no SKU table found: customer_app_views.sku_catalog not created';
     return;
   end if;
-  execute $v$
+  execute format($v$
     create or replace view customer_app_views.sku_catalog with (security_barrier = true) as
       select s.sku_code, s.name_full, s.name_th, s.name_en, s.brand, s.product_type,
              coalesce(s.unit_th, s.unit_en) as unit,
              coalesce(s.selling_price, s.retail_price) as price,
              s.retail_price
-      from public.sku_master s
+      from %s s
       where s.status = 'active' and coalesce(s.selling_price, s.retail_price) is not null
-  $v$;
+  $v$, src);
   execute 'revoke all on customer_app_views.sku_catalog from public, anon, authenticated';
-  execute 'create index if not exists sku_master_status_name_idx on public.sku_master (status, name_full)';
+  if (select relkind from pg_class where oid = src) = 'r' then  -- an index can only be created on a real table
+    execute format('create index if not exists sku_status_name_idx on %s (status, name_full)', src);
+  end if;
 end $$;
 
 -- ---------------------------------------------------------------------------------------------- registry
