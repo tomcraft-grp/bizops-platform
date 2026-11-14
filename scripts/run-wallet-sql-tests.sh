@@ -7,7 +7,7 @@
 # Needs a Supabase management token in ~/.supabase-token. Usage: scripts/run-wallet-sql-tests.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
-FILES=(supabase/migrations/20261115100000_customer_shop.sql supabase/migrations/20261115200000_wallet_payments.sql supabase/tests/wallet_payments.sql)
+FILES=(supabase/migrations/20261115100000_customer_shop.sql supabase/migrations/20261115200000_wallet_payments.sql supabase/migrations/20261115300000_online_ordering.sql supabase/tests/wallet_payments.sql)
 for f in "${FILES[@]}"; do [ -s "$f" ] || { echo "REFUSING TO RUN: $f is missing or empty" >&2; exit 2; }; done
 PAYLOAD=$(mktemp); BODY=$(mktemp)
 trap 'rm -f "$PAYLOAD" "$BODY"' EXIT

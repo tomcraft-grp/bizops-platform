@@ -6,6 +6,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 MODE="${1:-clean}"
+# This proof compares the schema before and after "migration + rollback" INSIDE a rolled-back transaction, so it only means something while the
+# live database does not have the migration yet. Once it is applied, the "before" snapshot already contains it: refuse instead of reporting nonsense.
+APPLIED=$(bash "$(dirname "$0")/db-readonly.sh" "select to_regclass('public.finance_wallets') is not null as applied")
+case "$APPLIED" in *'"applied":true'*) echo "REFUSING: the wallet migration is already applied to the live database, so this proof can no longer be run here (it passed before it was applied; see the commit message)." >&2; exit 3;; esac
 GUARD=$(mktemp); trap 'rm -f "$GUARD"' EXIT
 if [ "$MODE" = "guard" ]; then
   printf "%s\n" "insert into public.finance_bank_accounts (code, bank_name_en, bank_name_th, account_no, account_name, sort_order) values ('KBANK', 'Kasikornbank', 'ธนาคารกสิกรไทย', '1234567890', 'Guard test', 99);" > "$GUARD"
