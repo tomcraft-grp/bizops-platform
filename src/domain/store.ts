@@ -3,6 +3,8 @@ import { produce, setAutoFreeze } from 'immer';
 import type { DB } from './types';
 import { Ctx, AppError, currentUser, hasPerm, userPerms } from './core';
 import { buildSeed } from './seed';
+import { buildLiveDB, LIVE_DB_VERSION } from './seedData';
+import { DEMO_SEED } from './demo';
 import { kvDel, kvGet, kvSet } from '../lib/idb';
 import { t, type Lang } from '../lib/i18n';
 
@@ -11,7 +13,7 @@ import { t, type Lang } from '../lib/i18n';
 // Consequence: state is read-only outside act() — any accidental in-place mutation now throws instead of silently corrupting the ledger.
 setAutoFreeze(true);
 const KEY = 'db';
-const VERSION = 6;
+const VERSION = DEMO_SEED ? 6 : LIVE_DB_VERSION;
 
 export type Theme = 'light' | 'dark' | 'system';
 interface UIState {
@@ -42,6 +44,15 @@ export async function boot() {
   try { db = await kvGet<DB>(KEY); } catch { db = undefined; }
   let seedErrors: string[] = [];
   if (!db || db.version !== VERSION || !db.orders) {
+    // A database from an older build (it held generated demo data) is replaced by a clean one. Keep a copy first so
+    // nothing typed into the old prototype is lost; it is only a local browser copy, never sent anywhere.
+    if (db && !DEMO_SEED) { try { await kvSet(`db.backup.v${db.version ?? 'x'}`, db); } catch { /* ignore */ } }
+    if (!DEMO_SEED) {
+      db = buildLiveDB(new Date().toISOString());
+      await kvSet(KEY, db);
+      useStore.setState({ db, ready: true, seedErrors: [] });
+      return;
+    }
     await new Promise((r) => setTimeout(r, 30));
     const t0 = performance.now();
     const seeded = buildSeed(new Date());
@@ -57,6 +68,7 @@ export async function boot() {
 }
 
 export async function resetDemoData() {
+  if (!DEMO_SEED) throw new Error('Demo data is disabled in this build');
   useStore.setState({ ready: false });
   await kvDel(KEY);
   await boot();

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, CheckCircle2, CircleDashed, FlaskConical, Hammer } from 'lucide-react';
 import { Badge, Banner, Card, PageHead, Seg, Tabs, Tx } from '../ui/kit';
 import { QualityGates } from './QualityGates';
+import { DEMO_SEED } from '../domain/demo';
 
 type Status = 'built' | 'partial' | 'simulated' | 'planned';
 interface Row { area: string; ref: string; status: Status; built: string; gap?: string; to?: string }
@@ -87,15 +88,15 @@ const ICON: Record<Status, JSX.Element> = { built: <CheckCircle2 size={14} />, p
 const TONE: Record<Status, 'good' | 'warn' | 'info' | ''> = { built: 'good', partial: 'warn', simulated: 'info', planned: '' };
 
 export default function Blueprint() {
-  const [tab, setTab] = useState<'tour' | 'coverage' | 'review' | 'decisions' | 'arch' | 'quality'>('tour');
+  const [tab, setTab] = useState<'tour' | 'coverage' | 'review' | 'decisions' | 'arch' | 'quality'>(DEMO_SEED ? 'tour' : 'coverage');
   const [f, setF] = useState<Status | 'all'>('all');
   const rows = useMemo(() => ROWS.filter((r) => f === 'all' || r.status === f), [f]);
   const counts = (s: Status) => ROWS.filter((r) => r.status === s).length;
   return (
     <>
       <PageHead title="Blueprint & scope" desc="What this prototype covers against the requirements document, what was improved, and what still needs decisions or real integrations. Honest status, not marketing." />
-      <Tabs value={tab} onChange={setTab} tabs={[{ v: 'tour', label: 'Try these workflows' }, { v: 'coverage', label: 'Requirements coverage' }, { v: 'review', label: 'Improvements & plan gaps' }, { v: 'decisions', label: 'Decisions & scope' }, { v: 'arch', label: 'Architecture' }, { v: 'quality', label: 'Quality & release gates' }]} />
-      {tab === 'tour' && (
+      <Tabs value={tab} onChange={setTab} tabs={[...(DEMO_SEED ? [{ v: 'tour' as const, label: 'Try these workflows' }] : []), { v: 'coverage', label: 'Requirements coverage' }, { v: 'review', label: 'Improvements & plan gaps' }, { v: 'decisions', label: 'Decisions & scope' }, { v: 'arch', label: 'Architecture' }, { v: 'quality', label: 'Quality & release gates' }]} />
+      {DEMO_SEED && tab === 'tour' && (
         <div className="grid g2">
           {TOUR.map((x, i) => (
             <Card key={x.t} title={<span>{i + 1}. <Tx>{x.t}</Tx></span>} actions={<Link to={x.to}><Tx>Open</Tx>{' '}<ArrowRight size={13} style={{ verticalAlign: -2 }} /></Link>}>

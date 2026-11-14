@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { Activity, Download, Lock, Play, RotateCcw, Upload, UserPlus } from 'lucide-react';
 import { act, exportBackup, importBackup, resetDemoData, toast, useDB, useStore, useLang } from '../domain/store';
+import { DEMO_SEED } from '../domain/demo';
 import { MODULES, hasPerm } from '../domain/core';
 import { runIntegrityChecks, runSelfTests, TestResult } from '../domain/integrity';
 import { updateOrg } from '../domain/master';
@@ -138,12 +139,12 @@ function SettingsInner() {
         <Card title="Branches & warehouses" flush><table className="t compact"><thead><tr><th><Tx>Branch</Tx></th><th><Tx>Type</Tx></th><th><Tx>Default warehouse</Tx></th></tr></thead><tbody>{db.branches.map((b) => <tr key={b.id}><td><b>{b.name}</b><div className="sub">{b.address}</div></td><td>{b.type}</td><td>{db.warehouses.find((w) => w.id === b.defaultWarehouseId)?.name}</td></tr>)}</tbody></table></Card>
         <Card title="Data & backup">
           <div className="col">
-            <div className="muted"><Tx>All demo data lives in your browser (IndexedDB). Nothing is sent anywhere.</Tx></div>
+            <div className="muted"><Tx>Local working data lives in your browser (IndexedDB). Use Export to keep a copy.</Tx></div>
             <div className="row wrap">
               <Button onClick={() => download(`bizops-backup-${new Date().toISOString().slice(0, 10)}.json`, exportBackup(), 'application/json')}><Download size={15} />{' '}<Tx>Export backup</Tx></Button>
               <input ref={file} type="file" accept="application/json" hidden onChange={async (e) => { const fl = e.target.files?.[0]; e.target.value = ''; if (!fl) return; try { await importBackup(await fl.text()); toast('success', 'Backup restored'); } catch (err) { toast('error', (err as Error).message); } }} />
               <Button onClick={() => file.current?.click()}><Upload size={15} />{' '}<Tx>Restore backup</Tx></Button>
-              <Button variant="danger" onClick={async () => { const x = await confirm({ title: 'Reset all demo data?', body: 'Everything you created is deleted and the demo business is regenerated from scratch.', typeToConfirm: 'RESET', danger: true, confirmLabel: 'Reset data' }); if (x.ok) { await resetDemoData(); toast('success', 'Demo data regenerated'); } }}><RotateCcw size={15} />{' '}<Tx>Reset demo data</Tx></Button>
+              {DEMO_SEED && <Button variant="danger" onClick={async () => { const x = await confirm({ title: 'Reset all demo data?', body: 'Everything you created is deleted and the demo business is regenerated from scratch.', typeToConfirm: 'RESET', danger: true, confirmLabel: 'Reset data' }); if (x.ok) { await resetDemoData(); toast('success', 'Demo data regenerated'); } }}><RotateCcw size={15} />{' '}<Tx>Reset demo data</Tx></Button>}
             </div>
           </div>
         </Card>

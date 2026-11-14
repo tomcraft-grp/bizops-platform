@@ -22,7 +22,8 @@ export default defineConfig({
   webServer: {
     command: 'npm run build && npx vite preview --port 4173 --strictPort',
     url: 'http://localhost:4173',
-    reuseExistingServer: true,
+    env: { VITE_DEMO_SEED: '1' }, // e2e fixtures need the deterministic demo business; the real build never has it
+    reuseExistingServer: false,
     timeout: 180_000,
   },
   projects: [{ name: 'chrome-desktop' }],

@@ -228,6 +228,28 @@ export const PRINT_RULES: PrintRule[] = [
   { id: 'PRL13', docType: 'kitchen_ticket', station: 'kitchen', printerId: 'PT2', priority: 1 },
 ];
 
+/** Placeholder identity used before anyone signs in; has NO permissions (role-none does not exist). Replaced by the real Supabase profile. */
+export const PENDING_USER_ID = 'PENDING';
+export const LIVE_DB_VERSION = 7;
+
+/**
+ * Starting database for the real application: structure and configuration only (roles, chart of accounts,
+ * tax codes, posting map, loyalty rules, print rules) and NO business records, demo people, suppliers, rewards
+ * or demo shop identity. Business identity (org name, tax id, address, PromptPay) must be entered in Settings.
+ */
+export function buildLiveDB(nowIso: string): DB {
+  const d = emptyDB(nowIso);
+  d.version = LIVE_DB_VERSION;
+  d.users = [{ id: PENDING_USER_ID, name: 'Not signed in', email: '', roleId: 'role-none', branchIds: [], active: true, color: '#898781' }];
+  d.meta.currentUserId = PENDING_USER_ID;
+  d.org = { ...d.org, name: '', legalName: '', taxId: '', address: '', phone: '', promptPayId: '', receiptFooter: '' };
+  d.suppliers = [];
+  d.rewards = [];
+  d.channelAccounts = d.channelAccounts.map((a) => ({ ...a, shopName: '', verified: false }));
+  d.setup = { ...d.setup, stageOwners: {} };
+  return d;
+}
+
 export function emptyDB(nowIso: string): DB {
   return {
     version: 6,

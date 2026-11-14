@@ -38,6 +38,8 @@ import LiffEntry from './pages/auth/LiffEntry';
 import LineMembers from './pages/LineMembers';
 import { useAuth } from './auth/AuthProvider';
 import { RequireAuth, RequireRole } from './auth/guards';
+import { DEMO_SEED } from './domain/demo';
+import { PENDING_USER_ID } from './domain/seedData';
 
 const G = ({ perm, children }: { perm: string; children: ReactNode }) => <Gate perm={perm}>{children}</Gate>;
 
@@ -49,8 +51,21 @@ function RoleBridge() {
   const { profile } = useAuth();
   useEffect(() => {
     if (!profile) return;
-    const targetUserId = profile.role === 'SUPER_ADMIN' ? 'U1' : profile.role === 'ADMIN' ? 'U2' : null;
-    if (targetUserId) act((d) => { d.meta.currentUserId = targetUserId; });
+    if (DEMO_SEED) {
+      const targetUserId = profile.role === 'SUPER_ADMIN' ? 'U1' : profile.role === 'ADMIN' ? 'U2' : null;
+      if (targetUserId) act((d) => { d.meta.currentUserId = targetUserId; });
+      return;
+    }
+    // Real app: the acting user IS the signed-in Supabase profile (no simulated people).
+    const roleId = profile.role === 'SUPER_ADMIN' ? 'role-owner' : profile.role === 'ADMIN' ? 'role-manager' : 'role-none';
+    act((d) => {
+      d.users = d.users.filter((u) => u.id !== PENDING_USER_ID);
+      const name = profile.display_name || profile.email;
+      const u = d.users.find((x) => x.id === profile.id);
+      if (u) { u.name = name; u.email = profile.email; u.roleId = roleId; u.active = profile.status === 'active'; }
+      else d.users.push({ id: profile.id, name, email: profile.email, roleId, branchIds: [], active: profile.status === 'active', color: '#2a78d6' });
+      d.meta.currentUserId = profile.id;
+    });
   }, [profile]);
   return null;
 }
