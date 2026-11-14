@@ -66,7 +66,7 @@ export function FeedbackButton() {
             </div>
             <Field label="Subject"><Input value={subject} maxLength={120} onChange={(e) => setSubject(e.target.value)} placeholder={t(lang, 'A short summary (optional)')} /></Field>
             <Field label="Description" hint="What's the issue, idea, or additional feature you'd like to see on this page?">
-              <Textarea autoFocus rows={5} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Describe what you noticed or what you'd like changed…" />
+              <Textarea autoFocus rows={5} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t(lang, "Describe what you noticed or what you'd like changed…")} />
             </Field>
             <AttachmentPicker files={files} onChange={setFiles} disabled={busy} />
           </div>

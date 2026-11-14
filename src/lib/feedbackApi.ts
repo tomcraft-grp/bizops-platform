@@ -12,6 +12,7 @@ export type FeedbackStatus = 'submitted' | 'under_review' | 'accepted' | 'in_pro
 export type FeedbackPriority = 'low' | 'medium' | 'high' | 'critical';
 export type FeedbackCategory = 'bug' | 'feature_request' | 'general' | 'ui_ux' | 'data_issue' | 'other';
 export type CommentKind = 'internal' | 'reply' | 'customer';
+export type EnglishContextStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type DevLinkKind = 'project' | 'module' | 'branch' | 'commit' | 'pull_request' | 'release' | 'deployment';
 type Tone = 'good' | 'warn' | 'bad' | 'info' | 'serious' | '';
 
@@ -22,6 +23,9 @@ export interface FeedbackIssue {
   os_info: string | null; device_type: string | null; app_version: string | null;
   root_cause: string | null; resolution: string | null; remark: string | null;
   created_at: string; updated_at: string; last_activity_at: string; resolved_at: string | null; archived_at: string | null;
+  // English technical context (migration 20261115600000): absent/null on issues that were never processed; the description above is never changed by it
+  english_context?: string | null; english_context_status?: EnglishContextStatus; english_context_error?: string | null; english_context_at?: string | null;
+  english_context_source?: 'ai' | 'manual' | null; english_context_model?: string | null; english_context_attempts?: number; english_context_started_at?: string | null;
 }
 export interface FeedbackComment { id: string; issue_id: string; author_id: string | null; author_label: string; kind: CommentKind; body: string; requests_info: boolean; created_at: string }
 export interface FeedbackAttachment { id: string; issue_id: string; comment_id: string | null; storage_path: string; file_name: string; mime_type: string; size_bytes: number; created_at: string }
@@ -113,8 +117,10 @@ async function uploadAttachments(issueId: string, files: File[], commentId?: str
   return failed;
 }
 
-export async function attachmentUrl(path: string): Promise<string> {
-  const { data, error } = await supabase.storage.from('feedback-attachments').createSignedUrl(path, 300);
+export const COPY_LINK_TTL_SECONDS = 24 * 60 * 60;
+/** A short-lived signed link (the bucket is private). `download` makes the browser save the file under that name instead of showing it. */
+export async function attachmentUrl(path: string, opts: { expiresIn?: number; download?: string } = {}): Promise<string> {
+  const { data, error } = await supabase.storage.from('feedback-attachments').createSignedUrl(path, opts.expiresIn ?? 300, opts.download ? { download: opts.download } : undefined);
   if (error || !data) throw new Error(error?.message ?? 'Could not open the file');
   return data.signedUrl;
 }
@@ -138,7 +144,97 @@ export async function submitFeedback(i: SubmitInput): Promise<{ issue: FeedbackI
   fail(error);
   const issue = data as FeedbackIssue;
   const failedFiles = i.files?.length ? await uploadAttachments(issue.id, i.files) : [];
+  // The English context is asked for AFTER the issue and its files are saved, and is never awaited: it cannot delay or fail the submission.
+  void requestEnglishContext(issue.id);
   return { issue, failedFiles };
+}
+
+// ------------------------------------------------------------------------------------------------ English technical context
+// The English version is produced by the Edge Function feedback-english-context (it holds the AI key; the browser never sees one). Submitting
+// feedback never waits for it and never fails because of it: the issue is saved first, the generation is asked for afterwards.
+export interface ContextResult { status: EnglishContextStatus; error?: string; already?: boolean }
+
+/** Asks the server to generate (or regenerate) the English context. Never throws: a problem comes back as { status: 'failed', error: 'CODE: message' }. */
+export async function requestEnglishContext(issueId: string): Promise<ContextResult> {
+  try {
+    const { data, error } = await supabase.functions.invoke('feedback-english-context', { body: { issue_id: issueId } });
+    if (!error) return (data ?? { status: 'failed', error: 'AI_UNAVAILABLE: empty answer' }) as ContextResult;
+    const res = (error as { context?: Response }).context;
+    const body = res && typeof res.json === 'function' ? await res.json().catch(() => null) as { error?: string } | null : null;
+    if (body?.error) return { status: 'failed', error: String(body.error) };
+    if (res?.status === 404) return { status: 'failed', error: 'AI_NOT_DEPLOYED: the English-context service is not installed yet' };
+    return { status: 'failed', error: 'AI_UNAVAILABLE: the English-context service could not be reached' };
+  } catch (e) {
+    return { status: 'failed', error: `AI_UNAVAILABLE: ${(e as Error).message}` };
+  }
+}
+
+/** Staff write or correct the English text by hand (kept apart from the original description, which is never touched). */
+export async function setEnglishContext(issueId: string, text: string): Promise<FeedbackIssue> {
+  const { data, error } = await supabase.rpc('feedback_set_english_context', { p_issue: issueId, p_context: text });
+  fail(error);
+  return data as FeedbackIssue;
+}
+
+/** A generation that has been "processing" for more than 5 minutes has died (the database allows a new one after the same time). */
+export const CONTEXT_STALE_MS = 5 * 60 * 1000;
+export function contextState(i: Pick<FeedbackIssue, 'english_context_status' | 'english_context_started_at' | 'english_context_error'>, now = Date.now()): { status: EnglishContextStatus; error: string | null } {
+  const status = i.english_context_status ?? 'pending';
+  if (status === 'processing') {
+    const started = i.english_context_started_at ? Date.parse(i.english_context_started_at) : 0;
+    if (!started || now - started > CONTEXT_STALE_MS) return { status: 'failed', error: 'AI_TIMEOUT: the previous attempt did not finish' };
+  }
+  return { status, error: i.english_context_error ?? null };
+}
+
+/** Thai / English / both, from the share of Thai letters: only used to label the original text, never to change it. */
+export function detectLanguage(text: string): 'th' | 'en' | 'mixed' | 'unknown' {
+  const letters = text.match(/\p{L}/gu) ?? [];
+  if (letters.length === 0) return 'unknown';
+  const thai = letters.filter((c) => /[\u0E00-\u0E7F]/.test(c)).length / letters.length;
+  return thai >= 0.6 ? 'th' : thai <= 0.05 ? 'en' : 'mixed';
+}
+
+/** The nine sections of the English context, in order (the Edge Function produces exactly these; tests/unit/feedbackContext.test.ts keeps both lists equal). */
+export const ENGLISH_CONTEXT_SECTIONS = ['Issue Title', 'Background', 'Problem Description', 'Expected Behavior', 'Actual Behavior', 'Impact', 'Technical Evidence', 'Implementation Requirements', 'Acceptance Criteria'] as const;
+/** A starting point for writing the English context by hand. */
+export const englishContextTemplate = () => ENGLISH_CONTEXT_SECTIONS.map((s) => `## ${s}\nNot provided`).join('\n\n');
+
+/** Splits a stored English context into its "## Heading" sections for display; null when it has none (e.g. free text written by hand). */
+export function parseContext(text: string | null | undefined): { title: string; body: string }[] | null {
+  const src = (text ?? '').replace(/\r\n/g, '\n');
+  const parts = src.split(/^## +(.+?) *$/m);
+  if (parts.length < 3) return null;
+  const out: { title: string; body: string }[] = [];
+  for (let i = 1; i < parts.length; i += 2) out.push({ title: parts[i], body: (parts[i + 1] ?? '').trim() });
+  return out;
+}
+
+/** Text for "Copy English Context": exactly what is stored (headings and bullets included), nothing added. */
+export const englishContextCopy = (i: Pick<FeedbackIssue, 'english_context'>) => (i.english_context ?? '').trim();
+
+export interface CopyAttachment { file_name: string; mime_type: string; size_bytes: number; created_at: string; url: string }
+const kb = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/**
+ * Text for "Copy Context + Attachments": the English context followed by a list of the attached files with private links. The images are NOT
+ * embedded in the text and the text says so; the links stop working after COPY_LINK_TTL_SECONDS.
+ */
+export function contextWithAttachments(issue: Pick<FeedbackIssue, 'id' | 'english_context'>, atts: CopyAttachment[], now = new Date()): string {
+  const expires = new Date(now.getTime() + COPY_LINK_TTL_SECONDS * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+  const head = atts.length
+    ? [`## Attachments (${atts.length})`, `These files are attached to issue ${issue.id}. They are NOT embedded in this text: open each link to view the file. The links are private and stop working after ${expires}.`]
+    : ['## Attachments', `No files are attached to issue ${issue.id}.`];
+  const lines = atts.map((a, i) => `${i + 1}. ${a.file_name} (${a.mime_type}, ${kb(a.size_bytes)}, uploaded ${a.created_at.slice(0, 10)}) - ${a.url}`);
+  return [englishContextCopy(issue), '', ...head, ...lines].join('\n').trim() + '\n';
+}
+
+/** Signed links (24 h) for the attachments of an issue, for "Copy Context + Attachments". Files whose link cannot be made are listed without one. */
+export async function attachmentsForCopy(items: FeedbackAttachment[]): Promise<CopyAttachment[]> {
+  return Promise.all(items.map(async (a) => ({
+    file_name: a.file_name, mime_type: a.mime_type, size_bytes: a.size_bytes, created_at: a.created_at,
+    url: await attachmentUrl(a.storage_path, { expiresIn: COPY_LINK_TTL_SECONDS }).catch(() => '(link unavailable)'),
+  })));
 }
 
 /** RLS returns only the caller's own issues for customers, and everything for staff. */

@@ -11,6 +11,7 @@ import {
 import { toast, useLang } from '../domain/store';
 import { Banner, Button, Card, DataTable, Drawer, Empty, Field, Input, KV, Kpi, PageHead, Popover, Select, Tabs, Textarea, Tx, useConfirm } from '../ui/kit';
 import { AttachmentList, AttachmentPicker, CategoryBadge, PriorityBadge, StatusBadge } from '../ui/feedbackParts';
+import { EnglishContextCard, EvidenceCard, OriginalFeedbackCard } from '../ui/FeedbackContext';
 import { dateTimeFmt } from '../lib/util';
 import { t } from '../lib/i18n';
 
@@ -168,6 +169,7 @@ function IssueDrawer({ issueId, issue, staff, staffName, onClose, onChanged }: {
     }
     await run(() => staffUpdate(issue.id, { status: to, reason, resolution: to === 'resolved' ? resolution : undefined }), 'Status updated');
   };
+  const issueFiles = (th?.attachments ?? []).filter((a) => !a.comment_id);   // what came with the original report (comment attachments stay in the conversation)
   const conversation = (th?.comments ?? []).filter((c) => c.kind !== 'internal');
   const internal = (th?.comments ?? []).filter((c) => c.kind === 'internal');
 
@@ -175,11 +177,9 @@ function IssueDrawer({ issueId, issue, staff, staffName, onClose, onChanged }: {
     <Drawer title={<><span className="mono muted" style={{ fontSize: 13 }}>{issue.id}</span> {issue.title}</>} sub={`${issue.submitter_label} · ${dateTimeFmt(issue.created_at)}`} onClose={onClose}>
       <div className="col gap-16">
         <div className="row wrap" style={{ gap: 8 }}><StatusBadge status={issue.status} /><PriorityBadge priority={issue.priority} /><CategoryBadge category={issue.category} /></div>
-        <Card title="Original feedback">
-          <div style={{ whiteSpace: 'pre-wrap' }}>{issue.description}</div>
-          {issue.remark && <div className="muted mt8" style={{ whiteSpace: 'pre-wrap' }}>{issue.remark}</div>}
-          <div className="mt8"><AttachmentList items={(th?.attachments ?? []).filter((a) => !a.comment_id)} /></div>
-        </Card>
+        <OriginalFeedbackCard issue={issue} />
+        <EnglishContextCard issue={issue} attachments={issueFiles} onChanged={onChanged} />
+        <EvidenceCard attachments={issueFiles} loading={!th} />
 
         <Card title="Workflow">
           <div className="form-grid">
