@@ -226,7 +226,7 @@ test.describe('checkout and payment', () => {
     await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await expect(page.locator('.sp-sheet')).toContainText('฿370');                          // 320 + 50 shipping
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
-    await expect(page.locator('.sp-order-detail')).toContainText(/SO-\d{6}-\d{5}/);
+    await expect(page.locator('.sp-order-detail')).toContainText(/ORD-\d{6}/);
     expect(fake.orders).toHaveLength(1);
     const call = fake.calls.find((c) => c.fn === 'shop_place_order')!;
     expect(Object.keys(call.args).sort()).toEqual(['p_address', 'p_expected_total', 'p_fulfilment', 'p_items', 'p_key', 'p_name', 'p_note', 'p_payment_method', 'p_phone', 'p_slip_path', 'p_slip_ref', 'p_slip_sha256', 'p_slip_transfer_at', 'p_slip_type']);   // the payment choice and the slip are the only additions: still no price, amount or balance

@@ -133,7 +133,7 @@ test.describe('settings', () => {
   });
   test('Thai wording', async ({ page }) => {
     const fake = new FakeShop(); seed(fake, 'admin-order-007'); await openAdmin(page, fake, 'th');
-    await expect(page.getByRole('row', { name: /SO-/ })).toContainText('ยังไม่ชำระ');
+    await expect(page.getByRole('row', { name: /ORD-/ })).toContainText('ยังไม่ชำระ');
     await expect(page.getByRole('tab', { name: 'ตั้งค่า' }).or(page.getByRole('tab', { name: 'Settings' }))).toBeVisible();
   });
 });

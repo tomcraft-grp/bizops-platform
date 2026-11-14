@@ -232,8 +232,8 @@ export class FakeShop {
     const q = this.quote(a.p_items, String(a.p_fulfilment)) as unknown as { ok: boolean; problems: unknown[]; total: number; subtotal: number; shipping_fee: number; lines: { ok: boolean; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[] };
     if (!q.ok) this.err('CART_INVALID', JSON.stringify(q.problems));
     if (a.p_expected_total != null && Number(a.p_expected_total) !== q.total) this.err('PRICE_CHANGED', String(q.total));
-    const n = this.orders.length + 1; const no = `SO-202611-${String(n).padStart(5, '0')}`; const now = new Date(Date.now() + n * 1000).toISOString();
-    const inv: FInvoice = { id: `inv-${n}`, invoice_no: `INV-202611-${String(n).padStart(5, '0')}`, amount: q.total, paid: 0, cancelled: false, evidence: [], req: null, source_ref: no, created_at: now };
+    const n = this.orders.length + 1; const no = `ORD-${String(n).padStart(6, '0')}`; const now = new Date(Date.now() + n * 1000).toISOString();
+    const inv: FInvoice = { id: `inv-${n}`, invoice_no: `INV-${String(n).padStart(6, '0')}`, amount: q.total, paid: 0, cancelled: false, evidence: [], req: null, source_ref: no, created_at: now };
     const o: FOrder = { id: `ord-${n}`, order_no: no, status: 'new', fulfilment: String(a.p_fulfilment), contact_name: String(a.p_name).trim(), contact_phone: phone, delivery_address: a.p_fulfilment === 'delivery' ? (String(a.p_address ?? '').trim() || null) : null,
       note: (a.p_note as string | null) ?? null, items: q.lines.map((l, i) => ({ line_no: i + 1, sku_code: l.sku_code, name: l.name, unit: l.unit, unit_price: l.unit_price, qty: l.qty, line_total: l.line_total, image_url: l.image_url })),
       subtotal: q.subtotal, discount: 0, shipping_fee: q.shipping_fee, total: q.total, created_at: now, key, hash: norm, invoice: inv, status_note: null, cancel_reason: null, payment_pref: pm };

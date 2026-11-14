@@ -115,3 +115,28 @@ describe('online ordering text and contract', () => {
     expect(place).not.toMatch(/p_price|p_amount|p_balance|p_status/);
   });
 });
+
+describe('document numbering belongs to the database', () => {
+  const sql = read('supabase/migrations/20261115500000_document_numbering.sql');
+  it('the six formats are configuration rows: ORD / INV / PAY / WAL / DEP / AR-RC, six digits', () => {
+    for (const row of ["'ORDER',      'ORD',", "'INVOICE',    'INV',", "'PAYMENT',    'PAY',", "'WALLET',     'WAL',", "'DEPOSIT',    'DEP',", "'AR_RECEIPT', 'AR-RC',"]) expect(sql, row).toContain(row);
+    expect(sql).toContain("period_mode in ('none', 'year', 'month', 'fiscal_year')");
+  });
+  it("a number is taken inside the document's own transaction (a row lock), so a failure gives it back", () => {
+    expect(sql).toContain('on conflict (doc_type, period_key) do update set last_seq = public.doc_counters.last_seq + 1');
+    const gen = sql.slice(sql.indexOf('create or replace function public.next_doc_no('), sql.indexOf('revoke execute on function public.next_doc_no'));
+    expect(gen).not.toContain('nextval(');                                                              // no sequence is used by the generator itself
+    expect(sql).toContain('revoke execute on function public.next_doc_no(text, date) from public, anon, authenticated');   // clients cannot take a number
+  });
+  it('the migration refuses to finish if any function still takes a number from an old sequence, and then retires them', () => {
+    expect(sql).toContain('an old numbering sequence is still used by');
+    expect(sql).toContain('drop sequence if exists public.shop_order_seq, public.finance_invoice_seq, public.finance_receipt_seq, public.finance_wallet_txn_seq, public.finance_deposit_seq, public.ar_receipt_seq');
+  });
+  it('the app never builds a document number: no ORD-/INV-/PAY-/WAL-/DEP- literal in the source', () => {
+    const files = ['src/shop/api.ts', 'src/shop/CartPage.tsx', 'src/shop/Orders.tsx', 'src/wallet/api.ts', 'src/wallet/Wallet.tsx', 'src/wallet/PayInvoice.tsx', 'src/finance/CustomerInvoices.tsx', 'src/finance/api.ts'];
+    for (const f of files) expect(read(f), f).not.toMatch(/['"`](ORD|INV|PAY|WAL|DEP)-/);
+  });
+  it('the customer invoice list still hides shop invoices, with the old SO- and the new ORD- numbers', () => {
+    expect(read('src/shop/Orders.tsx')).toContain('/^(SO|ORD)-/');
+  });
+});

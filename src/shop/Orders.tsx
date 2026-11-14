@@ -66,7 +66,7 @@ function OrderList({ onOpen }: { onOpen: (id: string) => void }) {
               </li>))}</ul>}
       {!st.error && st.orders.length > 0 && st.orders.length < st.total && <button type="button" className="btn block sp-more" disabled={st.loading} onClick={() => load(st.orders.length)}>{st.loading ? '…' : t('common.loadMore')}</button>}
       {/* invoices the shop issued by hand (not for a shop order) keep their own payment cards here */}
-      {(filter === 'all' || filter === 'unpaid') && <CustomerInvoices lang={lang} hide={(r) => r.source_ref?.startsWith('SO-') ?? false} />}
+      {(filter === 'all' || filter === 'unpaid') && <CustomerInvoices lang={lang} hide={(r) => /^(SO|ORD)-/.test(r.source_ref ?? '')} />}
     </div>
   );
 }
