@@ -10,7 +10,7 @@ describe('DEV APP Customer: layout schema', () => {
     const c = defaultLayout('Sabaidee');
     expect(validateLayout(c)).toEqual([]);
     expect(c.home.map((s) => s.type)).toEqual(['memberCard', 'outstandingNotice', 'myCoupons', 'offers']);
-    expect(c.nav.map((n) => n.key)).toEqual(['home', 'shop', 'rewards', 'pay', 'events', 'profile']);
+    expect(c.nav.map((n) => n.key)).toEqual(['home', 'shop', 'cart', 'pay', 'rewards', 'events', 'profile']);
   });
 
   it('every component in the palette produces a valid section with its defaults', () => {
@@ -52,7 +52,7 @@ describe('DEV APP Customer: layout schema', () => {
     const c = defaultLayout(); c.nav[0].visible = false;
     expect(validateLayout(c).some((i) => i.message.includes('Home tab'))).toBe(true);
     const d = clone(defaultLayout()) as unknown as Record<string, any>; d.nav.push({ key: 'admin', label: 'x', visible: true }); d.nav.push({ ...d.nav[1] });
-    expect(paths(d)).toEqual(expect.arrayContaining(['nav.6', 'nav.7']));
+    expect(paths(d)).toEqual(expect.arrayContaining(['nav.7', 'nav.8']));
   });
 
   it('normalize fills fields added later so older stored layouts keep working', () => {
@@ -68,7 +68,7 @@ describe('DEV APP Customer: layout schema', () => {
     b.theme.primary = '#ff0000'; b.nav[1].label = 'Menu'; b.home.reverse(); b.home.push(newSection('banner')); b.home = b.home.filter((s) => s.type !== 'offers');
     const d = diffLayouts(a, b).join('\n');
     expect(d).toMatch(/theme\.primary: "#2068c4" → "#ff0000"/);
-    expect(d).toMatch(/navigation:.*shop:Shop.*→.*shop:Menu/);
+    expect(d).toMatch(/navigation:.*shop:สินค้า.*→.*shop:Menu/);
     expect(d).toMatch(/added Banner/); expect(d).toMatch(/removed Offers for you/); expect(d).toMatch(/reordered/);
     expect(diffLayouts(a, clone(a))).toEqual([]);
   });

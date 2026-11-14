@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell, Boxes, Calculator, ChefHat, ChevronsLeft, ChevronsRight, CircleUser, Factory, FileImage, Gift, Heart, LayoutDashboard, Layers, Languages, LineChart, Lock, LogOut, Menu, Monitor, Moon,
   Package, Percent, Printer, Receipt, Search, Settings, ShieldCheck, ShoppingBag, ShoppingCart, Smartphone, Sparkles, Store, Sun, Tag, Truck, Users, Wallet, Radio, Hash, FileText, Activity, Map, Check, MessageSquarePlus,
-  Palette,
+  Palette, Landmark,
 } from 'lucide-react';
 import { act, setLang, setTheme, toggleCollapsed, setUI, useDB, useLang, useStore } from '../domain/store';
 import { currentUser, hasPerm, userPerms } from '../domain/core';
@@ -23,6 +23,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
   { title: 'Sell', items: [
     { to: '/pos', label: 'POS', icon: <ShoppingCart />, perm: 'pos:view' },
     { to: '/orders', label: 'Orders', icon: <ShoppingBag />, perm: 'orders:view', badge: 'orders' },
+    { to: '/shop-admin', label: 'Online shop', icon: <Store />, perm: 'orders:view' },
     { to: '/channels', label: 'Channels', icon: <Radio />, perm: 'channels:view', badge: 'sync' },
     { to: '/kds', label: 'Kitchen display', icon: <ChefHat />, perm: 'kds:view' },
   ] },
@@ -31,6 +32,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
     { to: '/members', label: 'LINE members', icon: <Smartphone />, perm: 'customers:view' },
     { to: '/receivables', label: 'Receivables', icon: <Wallet />, perm: 'receivables:view', badge: 'slips' },
     { to: '/payment-review', label: 'Payment review', icon: <Wallet />, perm: 'receivables:view' },
+    { to: '/payments', label: 'Payments & wallet', icon: <Landmark />, perm: 'receivables:view' },
     { to: '/loyalty', label: 'Loyalty & rewards', icon: <Heart />, perm: 'loyalty:view' },
     { to: '/promotions', label: 'Promotions', icon: <Percent />, perm: 'promotions:view' },
     { to: '/events', label: 'Events', icon: <Hash />, perm: 'events:view' },

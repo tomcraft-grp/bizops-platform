@@ -32,6 +32,8 @@ import FeedbackIssues from './pages/FeedbackIssues';
 import DevApp from './pages/DevApp';
 import Finance from './pages/Finance';
 import ExpensesPage from './expenses/ExpensesPage';
+import ShopAdmin from './shop/ShopAdmin';
+import PaymentsAdmin from './wallet/PaymentsAdmin';
 import Login from './pages/auth/Login';
 import ForgotPassword from './pages/auth/ForgotPassword';
 import ResetPassword from './pages/auth/ResetPassword';
@@ -100,12 +102,14 @@ export default function App() {
             <Route index element={<G perm="dashboard:view"><Dashboard /></G>} />
             <Route path="pos" element={<G perm="pos:view"><POS /></G>} />
             <Route path="orders" element={<G perm="orders:view"><Orders /></G>} />
+            <Route path="shop-admin" element={<G perm="orders:view"><ShopAdmin /></G>} />
             <Route path="channels" element={<G perm="channels:view"><Channels /></G>} />
             <Route path="kds" element={<G perm="kds:view"><KDS /></G>} />
             <Route path="customers" element={<G perm="customers:view"><Customers /></G>} />
             <Route path="members" element={<G perm="customers:view"><LineMembers /></G>} />
             <Route path="receivables" element={<G perm="receivables:view"><Receivables /></G>} />
             <Route path="payment-review" element={<G perm="receivables:view"><Finance /></G>} />
+            <Route path="payments" element={<G perm="receivables:view"><PaymentsAdmin /></G>} />
             <Route path="loyalty" element={<G perm="loyalty:view"><Loyalty /></G>} />
             <Route path="promotions" element={<G perm="promotions:view"><Promotions /></G>} />
             <Route path="events" element={<G perm="events:view"><Events /></G>} />

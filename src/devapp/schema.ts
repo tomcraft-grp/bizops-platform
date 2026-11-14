@@ -18,16 +18,16 @@ export const DEVICES: { v: Device; label: string; width: number }[] = [
 ];
 export const deviceForWidth = (w: number): Device => (w >= 1000 ? 'desktop' : w >= 600 ? 'tablet' : 'mobile');
 
-export type TabKey = 'home' | 'shop' | 'rewards' | 'pay' | 'events' | 'profile';
-/** Tabs a layout may rename or reorder but never hide. */
-export const ALWAYS_VISIBLE: TabKey[] = ['home', 'profile'];
-export const TAB_KEYS: TabKey[] = ['home', 'shop', 'rewards', 'pay', 'events', 'profile'];
+export type TabKey = 'home' | 'shop' | 'cart' | 'rewards' | 'pay' | 'events' | 'profile';
+/** Tabs a layout may rename, restyle or reorder but never hide: the way to order, pay and manage one's details always exists. */
+export const ALWAYS_VISIBLE: TabKey[] = ['home', 'shop', 'cart', 'pay', 'profile'];
+export const TAB_KEYS: TabKey[] = ['home', 'shop', 'cart', 'pay', 'rewards', 'events', 'profile'];
 
 /** App tabs other than Home: each has its own editable page around a fixed core block. */
 export type PageTab = Exclude<TabKey, 'home'>;
-export const PAGE_TABS: PageTab[] = ['shop', 'rewards', 'pay', 'events', 'profile'];
-export type CoreType = 'shopCore' | 'rewardsCore' | 'payCore' | 'eventsCore' | 'profileCore';
-export const CORE_OF: Record<PageTab, CoreType> = { shop: 'shopCore', rewards: 'rewardsCore', pay: 'payCore', events: 'eventsCore', profile: 'profileCore' };
+export const PAGE_TABS: PageTab[] = ['shop', 'cart', 'pay', 'rewards', 'events', 'profile'];
+export type CoreType = 'shopCore' | 'cartCore' | 'rewardsCore' | 'payCore' | 'eventsCore' | 'profileCore';
+export const CORE_OF: Record<PageTab, CoreType> = { shop: 'shopCore', cart: 'cartCore', pay: 'payCore', rewards: 'rewardsCore', events: 'eventsCore', profile: 'profileCore' };
 export const isCoreType = (t: string): t is CoreType => (Object.values(CORE_OF) as string[]).includes(t);
 /** A page of the app: 'home', a tab key, or a custom page ('page:<id>'). */
 export type PageRef = TabKey | `page:${string}`;
@@ -235,9 +235,10 @@ export const SECTION_DEFS: SectionDef[] = [
 ];
 /** The built-in features of each tab. Exactly one per tab page; movable, never removable. */
 export const CORE_DEFS: SectionDef[] = [
-  { type: 'shopCore', group: 'Page core', label: 'Shop: products & cart', desc: 'The LINE shop: product list, quantities, promotions and Place order', fields: [], defaults: {} },
+  { type: 'shopCore', group: 'Page core', label: 'Shop: products', desc: 'Search, categories, filters, the product list and product details with Add to cart (real products from the database)', fields: [], defaults: {} },
+  { type: 'cartCore', group: 'Page core', label: 'Cart & checkout', desc: 'The cart with server-checked prices, delivery details and Place order', fields: [], defaults: {} },
   { type: 'rewardsCore', group: 'Page core', label: 'Rewards: redeem points', desc: 'Points balance, reward list with Redeem, and my redemptions', fields: [], defaults: {} },
-  { type: 'payCore', group: 'Page core', label: 'Pay: statement & slip upload', desc: 'Balance, open invoices, PromptPay QR, slip upload and my orders', fields: [], defaults: {} },
+  { type: 'payCore', group: 'Page core', label: 'Orders & payment', desc: 'My orders and their status, the payment QR (save image), slip upload and payment status', fields: [], defaults: {} },
   { type: 'eventsCore', group: 'Page core', label: 'Events: lucky-draw board', desc: 'Picks left, number board, reservation and my numbers', fields: [], defaults: {} },
   { type: 'profileCore', group: 'Page core', label: 'Profile: member details & feedback', desc: 'Name / phone / PDPA form and the feedback centre (LINE members only)', fields: [], defaults: {} },
 ];
@@ -279,8 +280,9 @@ export function defaultLayout(title: string = BRAND.shortName): LayoutConfig {
     theme: { ...DEFAULT_THEME },
     brand: { title, logoUrl: '', tagline: '', headerStyle: 'classic', showIcons: false },
     nav: [
-      { key: 'home', label: 'Home', visible: true }, { key: 'shop', label: 'Shop', visible: true }, { key: 'rewards', label: 'Rewards', visible: true },
-      { key: 'pay', label: 'Pay', visible: true }, { key: 'events', label: 'Events', visible: true }, { key: 'profile', label: 'โปรไฟล์', visible: true },
+      { key: 'home', label: 'หน้าหลัก', visible: true }, { key: 'shop', label: 'สินค้า', visible: true }, { key: 'cart', label: 'ตะกร้า', visible: true },
+      { key: 'pay', label: 'คำสั่งซื้อ', visible: true }, { key: 'rewards', label: 'ของรางวัล', visible: false }, { key: 'events', label: 'กิจกรรม', visible: false },
+      { key: 'profile', label: 'บัญชีของฉัน', visible: true },
     ],
     home: [mk('member-card', 'memberCard'), mk('outstanding', 'outstandingNotice'), mk('coupons', 'myCoupons'), mk('offers', 'offers')],
     pages: Object.fromEntries(PAGE_TABS.map((t) => [t, defaultPage(t)])) as Record<PageTab, Section[]>,
@@ -471,6 +473,11 @@ export function validateLayout(c: unknown): Issue[] {
     // LINE members edit their name / phone / consent on the profile tab, so it can be renamed or moved but not hidden
     const prof = c.nav.find((t) => isObj(t) && t.key === 'profile') as NavTab | undefined;
     if (prof && !prof.visible) bad('nav', 'The profile tab must stay visible (members edit their details there)');
+    // ordering and paying must work whatever the design: these tabs can be renamed and restyled, not hidden
+    for (const k of ['shop', 'cart', 'pay'] as const) {
+      const n = c.nav.find((t) => isObj(t) && t.key === k) as NavTab | undefined;
+      if (n && !n.visible) bad('nav', `The ${k} tab must stay visible (customers order and pay there)`);
+    }
   }
 
   // custom pages first: links anywhere may point to them
@@ -504,7 +511,7 @@ export function normalizeLayout(c: LayoutConfig): LayoutConfig {
   const base = defaultLayout(c.brand?.title);
   // Home and profile can never be hidden (also repairs layouts stored before this rule existed)
   const nav = c.nav.map((t) => (ALWAYS_VISIBLE.includes(t.key) ? { ...t, visible: true } : t));
-  for (const t of base.nav) if (!nav.some((x) => x.key === t.key)) nav.push({ ...t, visible: false });
+  for (const t of base.nav) if (!nav.some((x) => x.key === t.key)) nav.push({ ...t, visible: ALWAYS_VISIBLE.includes(t.key) });   // a tab added later is hidden, unless the app cannot work without it
   const normSec = (s: Section): Section => {
     const def = sectionDef(s.type);
     const props: Record<string, PropValue> = { ...(def?.defaults ?? {}), ...s.props };

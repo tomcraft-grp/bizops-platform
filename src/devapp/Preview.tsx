@@ -3,26 +3,27 @@
 // renders from the layout. The tabs' built-in features (core blocks) are shown read-only: clicks are blocked so
 // previewing can never create orders, redemptions or payments.
 import { CSSProperties, ReactNode, useEffect, useState } from 'react';
-import { ArrowLeft, Gift, Hash, Home, ShoppingBag, UserRound, Wallet } from 'lucide-react';
+import { ArrowLeft, Gift, Hash, Home, ShoppingBag, ShoppingCart, UserRound, Wallet } from 'lucide-react';
 import { cx } from '../lib/util';
 import type { ID } from '../domain/types';
-import { EventsTab, PayTab, RewardsTab, ShopTab } from '../pages/CustomerApp';
+import { EventsTab, RewardsTab } from '../pages/CustomerApp';
+import { CatalogCore } from '../shop/Catalog';
 import { BrandHeader, CorePlaceholder, EditorHooks, LayoutPage, OnboardingModal, themeVars, useLayoutFont } from './render';
 import { CoreType, customId, Device, DEVICES, isTabRef, LayoutConfig, PageRef, pageSections, TabKey } from './schema';
 import type { Row } from './datasources';
 
 const ICON: Record<TabKey, ReactNode> = {
-  home: <Home size={18} />, shop: <ShoppingBag size={18} />, rewards: <Gift size={18} />, pay: <Wallet size={18} />, events: <Hash size={18} />, profile: <UserRound size={18} />,
+  home: <Home size={18} />, shop: <ShoppingBag size={18} />, cart: <ShoppingCart size={18} />, rewards: <Gift size={18} />, pay: <Wallet size={18} />, events: <Hash size={18} />, profile: <UserRound size={18} />,
 };
 
 /** Read-only rendering of a tab's built-in features for previews. */
 export function previewCore(customerId: ID, go: (t: string) => void) {
   const CoreView = (t: CoreType): ReactNode => (
-    t === 'profileCore' ? <CorePlaceholder type={t} />
+    // the cart, orders and profile need a real signed-in customer: the designer shows what they are, never runs them
+    t === 'profileCore' || t === 'cartCore' || t === 'payCore' ? <CorePlaceholder type={t} />
       : <div style={{ pointerEvents: 'none' }} aria-disabled="true" className="col" >
-        {t === 'shopCore' && <ShopTab id={customerId} go={go as (t: string) => void} />}
+        {t === 'shopCore' && <CatalogCore preview />}
         {t === 'rewardsCore' && <RewardsTab id={customerId} />}
-        {t === 'payCore' && <PayTab id={customerId} />}
         {t === 'eventsCore' && <EventsTab id={customerId} />}
       </div>
   );

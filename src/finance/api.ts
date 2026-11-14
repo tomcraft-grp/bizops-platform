@@ -76,7 +76,7 @@ export const finance = {
     return must(await supabase.from('finance_payment_evidence').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: false }), 'Load slips');
   },
   /** Upload the slip into the caller's own folder of the private bucket, then record it. Settles nothing by itself. */
-  async submitEvidence(p: { invoiceId: string; file: File; claimedAmount: number; transferAt: string | null; bank: string; ref: string }): Promise<string> {
+  async submitEvidence(p: { invoiceId: string; file: File; claimedAmount: number; transferAt: string | null; bank: string; ref: string; bankAccountId?: string | null }): Promise<string> {
     const type = await sniffType(p.file);
     if (!type) throw new Error('Only JPG, PNG or PDF files are accepted');
     if (p.file.size > EVIDENCE_MAX) throw new Error('The file must be 5 MB or smaller');
@@ -88,7 +88,7 @@ export const finance = {
     if (up.error) throw new Error(`Upload slip: ${up.error.message}`);
     const r = await supabase.rpc('finance_submit_evidence', {
       p_invoice: p.invoiceId, p_file_path: path, p_sha256: sum, p_file_type: type, p_claimed_amount: p.claimedAmount,
-      p_transfer_at: p.transferAt, p_bank: p.bank || null, p_ref: p.ref || null,
+      p_transfer_at: p.transferAt, p_bank: p.bank || null, p_ref: p.ref || null, p_bank_account: p.bankAccountId || null,
     });
     if (r.error) { void supabase.storage.from('payment-evidence').remove([path]); throw new Error(r.error.message); }
     return r.data as string;

@@ -14,7 +14,7 @@ describe('DEV APP Customer: every page is editable', () => {
   it('the built-in layout has one page per tab, each holding only its core block (= the original tab)', () => {
     const c = defaultLayout();
     for (const t of PAGE_TABS) expect(c.pages[t].map((s) => s.type)).toEqual([CORE_OF[t]]);
-    expect(pageList(c).map((p) => p.ref)).toEqual(['home', 'shop', 'rewards', 'pay', 'events', 'profile']);
+    expect(pageList(c).map((p) => p.ref)).toEqual(['home', 'shop', 'cart', 'pay', 'rewards', 'events', 'profile']);
   });
   it('layouts stored before pages existed keep working: normalize adds the default pages', () => {
     const old = clone(defaultLayout()) as unknown as Record<string, unknown>; delete old.pages; delete old.customPages;

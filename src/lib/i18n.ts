@@ -6,6 +6,7 @@
 import type { ReactNode } from 'react';
 import { TH_BACKOFFICE } from './i18n.backoffice';
 import { TH_FEEDBACK } from './i18n.feedback';
+import { TH_SHOP } from './i18n.shop';
 
 export type Lang = 'en' | 'th';
 
@@ -127,6 +128,8 @@ export const TH: Record<string, string> = {
 for (const [k, v] of Object.entries(TH_BACKOFFICE)) if (!(k in TH)) TH[k] = v;
 // Feedback & Issue system (customer app + back office) — lib/i18n.feedback.ts. Existing wording wins on a shared key.
 for (const [k, v] of Object.entries(TH_FEEDBACK)) if (!(k in TH)) TH[k] = v;
+// Customer shop payment card + back-office Online shop page — lib/i18n.shop.ts.
+for (const [k, v] of Object.entries(TH_SHOP)) if (!(k in TH)) TH[k] = v;
 
 /** Translate an English source string. `{name}` placeholders are filled from `vars` AFTER lookup, so the
  *  dictionary key is the template (e.g. 'Type {word} to confirm') and dynamic values are never translated. */

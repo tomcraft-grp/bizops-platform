@@ -4,8 +4,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, Upload } from 'lucide-react';
 import { useLang, toast } from '../domain/store';
-import { t as tl } from '../lib/i18n';
+import { Lang, t as tl } from '../lib/i18n';
 import { Badge, Banner, Button, Card, Field, Input } from '../ui/kit';
+import { Choice, MethodCards, useMethods } from '../wallet/ui';
+import { TransferAmount, WalletPayPanel } from '../wallet/PayInvoice';
 import { QR } from '../ui/shared';
 import { dateFmt, dateTimeFmt, money } from '../lib/util';
 import { Evidence, finance, InvoiceRow, QrRequest, Receipt, STATUS, StatusCode } from './api';
@@ -23,9 +25,11 @@ const MSG: Record<StatusCode, { th: string; en: string; tone: 'info' | 'warn' | 
   9: { th: 'QR หมดอายุ กรุณาสร้างใหม่ หากโอนไปแล้วให้อัปโหลดสลิป', en: 'The QR expired. Create a new one. If you already paid, upload your slip.', tone: 'warn' },
 };
 
-export function CustomerInvoices() {
-  const lang = useLang();
-  const [rows, setRows] = useState<InvoiceRow[] | null>(null);
+export function CustomerInvoices({ lang: langProp, hide }: { lang?: Lang; hide?: (r: InvoiceRow) => boolean } = {}) {
+  const storeLang = useLang();
+  const lang = langProp ?? storeLang;
+  const [all, setRows] = useState<InvoiceRow[] | null>(null);
+  const rows = all && hide ? all.filter((r) => !hide(r)) : all;   // e.g. the shop screen hides invoices that belong to shop orders
   const reload = useCallback(() => finance.myInvoices().then(setRows).catch(() => setRows([])), []);
   useEffect(() => { void reload(); }, [reload]);
   // No finance invoices (or the finance tables are not set up yet): the Pay tab is exactly what it was.
@@ -35,15 +39,32 @@ export function CustomerInvoices() {
     <>
       <h2>{tl(lang, 'Invoices')}</h2>
       <div className="card card-b row between"><span className="muted">{tl(lang, 'Total outstanding')}</span><b style={{ fontSize: 22 }} className={owing > 0 ? 'bad' : 'good'}>{money(owing)}</b></div>
-      {rows.map((r) => <InvoiceCard key={r.id} inv={r} onChanged={reload} />)}
+      {rows.map((r) => <InvoiceCard key={r.id} inv={r} lang={lang} onChanged={reload} />)}
     </>
   );
 }
 
-function InvoiceCard({ inv, onChanged }: { inv: InvoiceRow; onChanged: () => void }) {
-  const lang = useLang();
-  const [open, setOpen] = useState(inv.status_code === 1 || inv.status_code === 9);
+export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen }: { inv: InvoiceRow; onChanged: () => void; lang?: Lang; defaultOpen?: boolean }) {
+  const storeLang = useLang();
+  const lang = langProp ?? storeLang;
+  const [open, setOpen] = useState(defaultOpen ?? (inv.status_code === 1 || inv.status_code === 9));
+  // the picked slip is shown as a preview first: nothing is sent until the customer confirms it
+  const [picked, setPicked] = useState<{ file: File; url: string | null } | null>(null);
+  const pickedUrl = useRef<string | null>(null);
+  const pick = (f: File | null) => {
+    if (pickedUrl.current) URL.revokeObjectURL(pickedUrl.current);
+    const url = f && f.type.startsWith('image/') ? URL.createObjectURL(f) : null;
+    pickedUrl.current = url; setPicked(f ? { file: f, url } : null);
+  };
+  useEffect(() => () => { if (pickedUrl.current) URL.revokeObjectURL(pickedUrl.current); }, []);
   const [qr, setQr] = useState<QrRequest | null>(null);
+  // how the customer pays: a bank account, the wallet or the PromptPay QR (all from the database-driven payment methods)
+  const { methods, reload: reloadMethods } = useMethods();
+  const [picked0, setChoice] = useState<Choice>(null);
+  const hasMethods = !!methods && (methods.banks.length > 0 || methods.wallet.balance > 0);
+  const choice: Choice = picked0 ?? (hasMethods ? (methods!.banks.length ? { kind: 'bank', id: methods!.banks[0].id } : methods!.wallet.balance > 0 ? { kind: 'wallet' } : methods!.promptpay ? { kind: 'qr' } : null) : null);
+  const bankChoice = choice?.kind === 'bank' ? methods?.banks.find((b) => b.id === choice.id) : undefined;
+  const showQr = !hasMethods || choice?.kind === 'qr';
   const [busy, setBusy] = useState('');
   const [img, setImg] = useState<string | null>(null);
   const [history, setHistory] = useState<{ ev: Evidence[]; rc: Receipt[] } | null>(null);
@@ -83,9 +104,9 @@ function InvoiceCard({ inv, onChanged }: { inv: InvoiceRow; onChanged: () => voi
     if (!(amount > 0)) return toast('error', tl(lang, 'Enter the amount you transferred'));
     setBusy('slip');
     try {
-      await finance.submitEvidence({ invoiceId: inv.id, file: f, claimedAmount: amount, transferAt: form.when ? new Date(form.when).toISOString() : null, bank: form.bank, ref: form.ref });
+      await finance.submitEvidence({ invoiceId: inv.id, file: f, claimedAmount: amount, transferAt: form.when ? new Date(form.when).toISOString() : null, bank: bankChoice ? bankChoice.code : form.bank, ref: form.ref, bankAccountId: bankChoice?.id ?? null });
       toast('success', tl(lang, 'Slip sent. The shop will verify it shortly.'));
-      setForm((x) => ({ ...x, ref: '' })); onChanged(); void loadHistory();
+      pick(null); setForm((x) => ({ ...x, ref: '' })); onChanged(); void loadHistory();
     } catch (e) { toast('error', (e as Error).message); } finally { setBusy(''); }
   };
   const rejected = history?.ev.find((e) => e.status === 'rejected' && e.reject_reason);
@@ -109,7 +130,13 @@ function InvoiceCard({ inv, onChanged }: { inv: InvoiceRow; onChanged: () => voi
       {payable && !open && <Button variant="primary" className="block mt8" onClick={() => setOpen(true)}>{tl(lang, 'Pay this invoice')}</Button>}
       {open && payable && (
         <div className="col gap-8" style={{ marginTop: 10 }}>
-          {!live
+          {hasMethods && <>
+            <div className="dev-sub">{lang === 'th' ? 'เลือกช่องทางการชำระเงิน' : 'Choose how to pay'}</div>
+            <MethodCards methods={methods!} value={choice} onChange={setChoice} qr />
+          </>}
+          {choice?.kind === 'wallet' && methods && <WalletPayPanel inv={inv} balance={methods.wallet.balance} onPaid={() => { reloadMethods(); onChanged(); void loadHistory(); }} />}
+          {bankChoice && <TransferAmount amount={inv.outstanding} />}
+          {showQr && (!live
             ? <Button variant="primary" className="block" loading={busy === 'qr'} disabled={!!busy} onClick={makeQr}>{tl(lang, 'Create payment QR')} · {money(inv.outstanding)}</Button>
             : <>
               <div className="col gap-4" style={{ alignItems: 'center' }}>
@@ -122,18 +149,27 @@ function InvoiceCard({ inv, onChanged }: { inv: InvoiceRow; onChanged: () => voi
               {img && <div className="col gap-4" style={{ alignItems: 'center' }}><img src={img} alt={tl(lang, 'Payment QR')} style={{ width: '100%', maxWidth: 300, border: '1px solid var(--border)', borderRadius: 8 }} /><span className="muted" style={{ fontSize: 12, textAlign: 'center' }}>{tl(lang, 'If nothing downloaded, press and hold the picture to save it.')}</span></div>}
               <div className="muted" style={{ fontSize: 12 }}>{tl(lang, 'Open any banking app, choose scan from your photos, pick the saved picture and confirm the amount shown.')}</div>
               <Button size="sm" variant="ghost" onClick={makeQr} disabled={!!busy}>{tl(lang, 'Create a new QR')}</Button>
-            </>}
+            </>)}
 
+          {choice?.kind !== 'wallet' && <>
           <div className="dev-sub"><Tx2>{tl(lang, 'After you pay: upload your slip')}</Tx2></div>
           <Field label={tl(lang, 'Amount transferred (฿)')}><Input type="number" inputMode="decimal" min={0} step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></Field>
           <Field label={tl(lang, 'Transfer date and time')}><Input type="datetime-local" value={form.when} onChange={(e) => setForm({ ...form, when: e.target.value })} /></Field>
           <div className="row gap-6">
-            <Field label={tl(lang, 'Bank / channel')}><Input maxLength={60} value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} /></Field>
+            {!bankChoice && <Field label={tl(lang, 'Bank / channel')}><Input maxLength={60} value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} /></Field>}
             <Field label={tl(lang, 'Reference on slip')}><Input maxLength={80} value={form.ref} onChange={(e) => setForm({ ...form, ref: e.target.value })} /></Field>
           </div>
-          <input ref={file} type="file" hidden accept="image/jpeg,image/png,application/pdf" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; void upload(f); }} />
-          <Button variant="primary" className="block" loading={busy === 'slip'} disabled={!!busy} onClick={() => file.current?.click()}><Upload size={15} /> {tl(lang, 'Upload payment slip')}</Button>
+          <input ref={file} type="file" hidden accept="image/jpeg,image/png,application/pdf" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) pick(f); }} />
+          {picked ? (
+            <div className="col gap-8" data-testid="slip-preview">
+              {picked.url ? <img src={picked.url} alt={tl(lang, 'Slip preview')} style={{ width: '100%', maxHeight: 320, objectFit: 'contain', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }} />
+                : <div className="muted" style={{ padding: 12, border: '1px dashed var(--border)', borderRadius: 8 }}>{picked.file.name}</div>}
+              <Button variant="primary" className="block" loading={busy === 'slip'} disabled={!!busy} onClick={() => void upload(picked.file)}><Upload size={15} /> {tl(lang, 'Submit this slip')}</Button>
+              <Button className="block" disabled={!!busy} onClick={() => file.current?.click()}>{tl(lang, 'Choose another picture')}</Button>
+            </div>
+          ) : <Button variant="primary" className="block" disabled={!!busy} onClick={() => file.current?.click()}><Upload size={15} /> {tl(lang, 'Upload payment slip')}</Button>}
           <div className="muted" style={{ fontSize: 12 }}>{tl(lang, 'JPG, PNG or PDF, up to 5 MB. Uploading a slip is not a confirmation of payment: the shop checks it against its bank record first.')}</div>
+          </>}
         </div>
       )}
 

@@ -1,71 +1,80 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { BrandHeader, CouponsSection, LayoutPage, MemberCardSection, OffersSection, OnboardingModal, OutstandingSection, themeVars, useDeviceOf, useLayoutFont } from '../devapp/render';
+import { BrandHeader, LayoutPage, OnboardingModal, themeVars, useDeviceOf, useLayoutFont } from '../devapp/render';
 import { CUSTOMER_APP_ID, useCustomerLayout } from '../devapp/useCustomerLayout';
-import { CoreType, customId, pageSections } from '../devapp/schema';
+import { ALWAYS_VISIBLE, CoreType, customId, pageSections, TabKey } from '../devapp/schema';
 import type { Row } from '../devapp/datasources';
-import { ArrowLeft, Gift, Hash, Home, Minus, Plus, ShoppingBag, UserRound, Wallet, X } from 'lucide-react';
+import { ArrowLeft, Gift, Hash, Home, ShoppingBag, ShoppingCart, UserRound, Wallet, X } from 'lucide-react';
 import { useDB, useStore, toast, act } from '../domain/store';
-import { customerLifetimeSpend, expiringSoon, pointsBalance, redeemReward, tierFor } from '../domain/loyalty';
-import { allocatedMap, customerCredit, customerOutstanding, orderBalance, outstandingOrders, submitSlip } from '../domain/payments';
+import { pointsBalance, redeemReward } from '../domain/loyalty';
 import { availableEntitlements, claimNumber, confirmSelection, occupancy, pad2, releaseSelection } from '../domain/events';
-import { createOrder, quoteOrder } from '../domain/orders';
-import { effectiveStatus } from '../domain/promotions';
-import { Badge, Banner, Button, Card, Empty, Field, Input, NumInput } from '../ui/kit';
-import { ProductEmoji, QR } from '../ui/shared';
-import { uploadMedia } from '../ui/upload';
+import { Badge, Banner, Button, Card, Empty, Field, Input } from '../ui/kit';
 import { useTicker } from '../ui/data';
-import { promptPayPayload } from '../lib/promptpay';
-import { cx, dateFmt, dateTimeFmt, dayKey, money, money0, r2 } from '../lib/util';
+import { cx, dateFmt } from '../lib/util';
 import type { ID } from '../domain/types';
-import { STATUS_LABEL } from '../domain/meta';
 import { linkLineMember } from '../domain/master';
 import { useAuth } from '../auth/AuthProvider';
 import { supabase } from '../lib/supabase';
 import FeedbackCenter, { useFeedbackNotifications } from './customer/FeedbackCenter';
-import { CustomerInvoices } from '../finance/CustomerInvoices';
+import { CatalogCore } from '../shop/Catalog';
+import { CartCore } from '../shop/CartPage';
+import { OrdersCore } from '../shop/Orders';
+import { ShopHome } from '../shop/Home';
+import { AccountSummary } from '../shop/Account';
+import { WalletView } from '../wallet/Wallet';
+import { ShopHeader } from '../shop/Header';
+import { useCart, useCartCount } from '../shop/cart';
+import { useT } from '../shop/i18n';
+import { ShopHost, useShopNav } from '../shop/nav';
 
-type Tab = 'home' | 'shop' | 'rewards' | 'pay' | 'events' | 'profile';
+type Tab = TabKey;
+const ICON: Record<Tab, JSX.Element> = {
+  home: <Home size={18} />, shop: <ShoppingBag size={18} />, cart: <ShoppingCart size={18} />, pay: <Wallet size={18} />, rewards: <Gift size={18} />, events: <Hash size={18} />, profile: <UserRound size={18} />,
+};
+/** The tabs of the built-in app (no published layout). Rewards and events are loyalty features of the staff-side prototype: a layout can still add them. */
+const BUILT_IN: Tab[] = ['home', 'shop', 'cart', 'pay', 'profile'];
+const NAV_KEY = { home: 'nav.home', shop: 'nav.shop', cart: 'nav.cart', pay: 'nav.orders', profile: 'nav.account' } as const;
 
 export default function CustomerApp() {
   const db = useDB();
-  const [cid, setCid] = useState<ID | null>(() => { try { return sessionStorage.getItem('bizops.cust'); } catch { return null; } });
+  const t = useT();
   const [tab, setTabRaw] = useState<Tab>('home');
   // Remember the last non-profile tab so feedback can say which part of the app it is about.
   const [lastArea, setLastArea] = useState<string>('home');
-  const setTab = (t: Tab) => { if (t !== 'profile') setLastArea(t); setTabRaw(t); };
-  const login = (id: ID | null) => { setCid(id); try { if (id) sessionStorage.setItem('bizops.cust', id); else sessionStorage.removeItem('bizops.cust'); } catch { /* ignore */ } };
-  const me = cid ? db.customers.find((c) => c.id === cid) : undefined;
+  const setTab = (x: Tab) => { if (x !== 'profile') setLastArea(x); setTabRaw(x); };
 
-  // Signed in with LINE (see lib/liff.ts): skip the simulated customer picker and open this LINE account's
-  // own member record, creating it on first visit. Customer data itself is still the local prototype store.
-  // The member's name/phone live in Supabase (profiles) and are mirrored onto the local record.
+  // Everything customer-facing (catalogue, cart, orders, payments) belongs to the signed-in Supabase account. The local
+  // store only mirrors it for the loyalty sections a layout may still place (member card, rewards, lucky draw).
   const { session, profile } = useAuth();
+  const uid = session?.user.id ?? null;
   const lineMeta = session?.user.user_metadata as { line_user_id?: string; display_name?: string } | undefined;
   const lineId = lineMeta?.line_user_id;
+  const isStaff = profile?.role === 'ADMIN' || profile?.role === 'SUPER_ADMIN';
   const needsSignup = !!lineId && !!profile && (!profile.phone || !profile.pdpa_consent_at);
+  useEffect(() => { useCart.getState().hydrate(uid); }, [uid]);
+  useEffect(() => { document.body.classList.add('customer-app'); return () => document.body.classList.remove('customer-app'); }, []);   // lets the shell put toasts where they do not cover the menu
+  const [cid, setCid] = useState<ID | null>(null);
+  const memberKey = lineId ?? (uid ? `account:${uid}` : null);
   useEffect(() => {
-    if (!lineId) return;
-    const name = profile?.display_name || lineMeta?.display_name || 'LINE member';
-    const phone = profile?.phone ?? '';
-    const id = act((d, c) => linkLineMember(d, c, { lineUserId: lineId, name, phone }));
-    if (id !== cid) login(id);
-  }, [lineId, profile?.display_name, profile?.phone]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const tabs: [Tab, JSX.Element, string][] = [['home', <Home size={18} key="h" />, 'Home'], ['shop', <ShoppingBag size={18} key="s" />, 'Shop'], ['rewards', <Gift size={18} key="r" />, 'Rewards'], ['pay', <Wallet size={18} key="p" />, 'Pay'], ['events', <Hash size={18} key="e" />, 'Events']];
-  if (lineId) tabs.push(['profile', <UserRound size={18} key="u" />, 'โปรไฟล์']);
+    if (!memberKey) return;
+    const name = profile?.display_name || lineMeta?.display_name || profile?.email || 'Member';
+    setCid(act((d, c) => linkLineMember(d, c, { lineUserId: memberKey, name, phone: profile?.phone ?? '' })));
+  }, [memberKey, profile?.display_name, profile?.phone]); // eslint-disable-line react-hooks/exhaustive-deps
+  const me = cid ? db.customers.find((c) => c.id === cid) : undefined;
   const fbNotes = useFeedbackNotifications(!!lineId && !needsSignup);
+  const cartN = useCartCount();
 
-  // DEV APP Customer: the published layout (or a staff preview via ?layout=<version id>). Without one, the
-  // built-in layout below is used unchanged.
+  // DEV APP Customer: the published layout (or a staff preview via ?layout=<version id>). Without one, the built-in app is used.
   const [params] = useSearchParams();
   const { layout } = useCustomerLayout(CUSTOMER_APP_ID, params.get('layout'));
   const cfg = layout?.config ?? null;
   useLayoutFont(cfg);
   const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
   const device = useDeviceOf(bodyEl);
-  const navTabs = cfg ? cfg.nav.filter((n) => n.visible || n.key === 'home' || n.key === 'profile').flatMap((n) => { const t = tabs.find((x) => x[0] === n.key); return t ? [[t[0], t[1], n.label] as [Tab, JSX.Element, string]] : []; }) : tabs;
-  useEffect(() => { if (navTabs.length && !navTabs.some((t) => t[0] === tab)) setTab(navTabs[0][0]); }, [navTabs.map((t) => t[0]).join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const navTabs = useMemo<[Tab, string][]>(() => (cfg
+    ? cfg.nav.filter((n) => n.visible || ALWAYS_VISIBLE.includes(n.key)).map((n) => [n.key, n.label] as [Tab, string])
+    : BUILT_IN.map((k) => [k, t(NAV_KEY[k as keyof typeof NAV_KEY])] as [Tab, string])), [cfg, t]);
+  useEffect(() => { if (navTabs.length && !navTabs.some((x) => x[0] === tab)) setTab(navTabs[0][0]); }, [navTabs.map((x) => x[0]).join()]); // eslint-disable-line react-hooks/exhaustive-deps
   // Intro pop-up: once per published version unless the member ticks "don't show again" (staff previews always show it).
   const introKey = layout && !layout.preview ? `bizops.intro.${CUSTOMER_APP_ID}.v${layout.versionNo}` : null;
   const [introOpen, setIntroOpen] = useState(false);
@@ -74,78 +83,98 @@ export default function CustomerApp() {
     try { seen = !!introKey && !!localStorage.getItem(introKey); } catch { /* ignore */ }
     setIntroOpen(!!cfg?.onboarding.enabled && cfg.onboarding.slides.length > 0 && !seen);
   }, [introKey, cfg?.onboarding.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
-  const goTab = (t: string) => { if (navTabs.some((x) => x[0] === t)) setTab(t as Tab); };
   // Custom pages made in DEV APP open from links (buttons, banners, product cards…), optionally with the tapped record.
   const [custom, setCustom] = useState<{ id: string; record: Row | null } | null>(null);
+  const goTab = useCallback((x: string) => { if (navTabs.some((n) => n[0] === x)) { setCustom(null); setTab(x as Tab); } }, [navTabs]); // eslint-disable-line react-hooks/exhaustive-deps
   const go = (target: string, record?: Row) => {
     const id = customId(target);
     if (id) { if (cfg?.customPages.some((p) => p.id === id)) setCustom({ id, record: record ?? null }); return; }
-    setCustom(null); goTab(target);
+    // a product tapped in a layout's product list opens the real product page
+    if (target === 'shop' && typeof record?.sku_code === 'string') useShopNav.getState().openProduct(record.sku_code);
+    goTab(target);
   };
-  const openTab = (t: Tab) => { setCustom(null); setTab(t); };
+  const host = useMemo(() => ({ goTab: (x: string) => goTab(x) }), [goTab]);
   const customPage = custom && cfg ? cfg.customPages.find((p) => p.id === custom.id) : undefined;
   /** The tabs' built-in features, placed by the layout's core blocks. Same components as without a layout. */
-  const core = (id: ID) => (t: CoreType) => {
-    switch (t) {
-      case 'shopCore': return <ShopTab id={id} go={openTab} />;
+  const core = (id: ID) => (c: CoreType) => {
+    switch (c) {
+      case 'shopCore': return <CatalogCore />;
+      case 'cartCore': return <CartCore />;
+      case 'payCore': return <OrdersCore />;
       case 'rewardsCore': return <RewardsTab id={id} />;
-      case 'payCore': return <PayTab id={id} />;
       case 'eventsCore': return <EventsTab id={id} />;
-      case 'profileCore': return lineId ? <><MemberForm mode="edit" /><hr style={{ border: 0, borderTop: '1px solid var(--border)', width: '100%' }} /><FeedbackCenter fromArea={lastArea} notes={fbNotes} /></> : null;
+      case 'profileCore': return <ProfileCore showFeedback={!!lineId} lastArea={lastArea} notes={fbNotes} />;
     }
   };
 
   return (
-    <div className="standalone">
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 340px) auto', gap: 40, alignItems: 'center', maxWidth: 860, width: '100%' }} className="cust-wrap">
-        <div className="col gap-16 hide-sm" style={{ maxWidth: 340 }}>
-          <Link to="/" className="row gap-6"><ArrowLeft size={15} /> Back to the staff app</Link>
-          <h1>Customer app (LINE LIFF)</h1>
-          <p className="text2">This is what a customer sees inside LINE. It runs on the same data as the staff app: redeem a reward, pay an invoice with a slip, order from the LINE shop and pick lucky-draw numbers — then watch the staff side react.</p>
-          <Banner>LINE Login is simulated. In production the LIFF app authenticates the customer with their LINE account and links it to this customer record.</Banner>
-          {me && !lineId && <Button onClick={() => login(null)}>Sign out / switch customer</Button>}
-        </div>
-        <div className="phone" style={cfg ? themeVars(cfg) : undefined}>
-          {cfg ? <BrandHeader config={cfg} go={go} /> : <div className="phone-top"><b>{db.org.name.split(' ')[0]} ☕</b><span style={{ fontSize: 12, opacity: 0.9 }}>LINE</span></div>}
-          {layout?.preview && <div style={{ background: 'var(--warn-soft)', color: 'var(--warn-text)', fontSize: 12, padding: '6px 12px' }}>Preview of layout v{layout.versionNo} ({layout.status}) — customers do not see this yet.</div>}
-          {customPage && me && !needsSignup && <div className="ca-backbar"><button type="button" className="ca-hicon" onClick={() => setCustom(null)} aria-label="Back"><ArrowLeft size={16} /></button><b>{customPage.title}</b></div>}
-          {needsSignup ? <div className="phone-body"><MemberForm mode="signup" /></div> : !me ? (lineId ? <div className="phone-body center"><div className="spinner" /></div> : <Login onPick={login} />) : (
-            <>
-              <div className="phone-body" role="region" aria-label="Customer app content" tabIndex={0} ref={setBodyEl}>
-                {cfg ? (
-                  customPage
-                    ? <LayoutPage key={'page:' + customPage.id + JSON.stringify(custom?.record ?? null)} config={cfg} sections={customPage.sections} device={device} customerId={me.id} go={go} core={core(me.id)} selected={custom?.record ?? null} />
-                    : (tab !== 'profile' || lineId) && <LayoutPage key={tab} config={cfg} sections={pageSections(cfg, tab)} device={device} customerId={me.id} go={go} core={core(me.id)} />
-                ) : <>
-                  {/* no published layout: the built-in tabs, unchanged */}
-                  {tab === 'home' && <HomeTab id={me.id} go={setTab} />}
-                  {tab === 'shop' && <ShopTab id={me.id} go={setTab} />}
-                  {tab === 'rewards' && <RewardsTab id={me.id} />}
-                  {tab === 'pay' && <PayTab id={me.id} />}
-                  {tab === 'events' && <EventsTab id={me.id} />}
-                  {tab === 'profile' && lineId && core(me.id)('profileCore')}
-                </>}
-              </div>
-              <nav className={cx('phone-nav', cfg?.theme.navStyle === 'floating' && 'floating')} style={{ gridTemplateColumns: `repeat(${navTabs.length}, 1fr)` }}>
-                {navTabs.map(([k, i, l]) => (
-                  <button key={k} className={cx(tab === k && !customPage && 'on')} onClick={() => openTab(k)} style={{ position: 'relative' }}>
-                    {i}{l}
-                    {k === 'profile' && fbNotes.unread > 0 && <span aria-label={`${fbNotes.unread} new feedback updates`} style={{ position: 'absolute', top: 4, right: '50%', marginRight: -16, minWidth: 16, height: 16, borderRadius: 8, background: 'var(--crit, #d92d20)', color: '#fff', fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{fbNotes.unread}</span>}
-                  </button>
-                ))}
-              </nav>
-            </>
+    <ShopHost.Provider value={host}>
+      <div className="standalone">
+        <div className={cx('cust-wrap', isStaff && 'with-side')}>
+          {isStaff && (
+            <div className="col gap-16 hide-sm" style={{ maxWidth: 340 }}>
+              <Link to="/" className="row gap-6"><ArrowLeft size={15} /> Back to the staff app</Link>
+              <h1>Customer app</h1>
+              <p className="text2">This is what a customer sees inside LINE: real products, a real cart and real orders. Orders you place here are real orders for your own account.</p>
+            </div>
           )}
-          {cfg && introOpen && me && <OnboardingModal config={cfg} storageKey={introKey} onClose={() => setIntroOpen(false)} />}
+          <div className="phone shop-phone" style={cfg ? themeVars(cfg) : undefined}>
+            {cfg ? <BrandHeader config={cfg} go={(x) => go(x)} /> : <ShopHeader />}
+            {layout?.preview && <div style={{ background: 'var(--warn-soft)', color: 'var(--warn-text)', fontSize: 12, padding: '6px 12px' }}>Preview of layout v{layout.versionNo} ({layout.status}) — customers do not see this yet.</div>}
+            {customPage && me && !needsSignup && <div className="ca-backbar"><button type="button" className="ca-hicon" onClick={() => setCustom(null)} aria-label="Back"><ArrowLeft size={16} /></button><b>{customPage.title}</b></div>}
+            {needsSignup ? <div className="phone-body"><MemberForm mode="signup" /></div> : !me ? <div className="phone-body center"><div className="spinner" /></div> : (
+              <>
+                <div className="phone-body" role="region" aria-label="Customer app content" tabIndex={0} ref={setBodyEl}>
+                  {cfg ? (
+                    customPage
+                      ? <LayoutPage key={'page:' + customPage.id + JSON.stringify(custom?.record ?? null)} config={cfg} sections={customPage.sections} device={device} customerId={me.id} go={go} core={core(me.id)} selected={custom?.record ?? null} />
+                      : <LayoutPage key={tab} config={cfg} sections={pageSections(cfg, tab)} device={device} customerId={me.id} go={go} core={core(me.id)} />
+                  ) : <>
+                    {/* no published layout: the built-in app */}
+                    {tab === 'home' && <ShopHome />}
+                    {tab === 'shop' && <CatalogCore />}
+                    {tab === 'cart' && <CartCore />}
+                    {tab === 'pay' && <OrdersCore />}
+                    {tab === 'profile' && core(me.id)('profileCore')}
+                  </>}
+                </div>
+                <nav className={cx('phone-nav', cfg?.theme.navStyle === 'floating' && 'floating')} style={{ gridTemplateColumns: `repeat(${navTabs.length}, 1fr)` }} aria-label="Main">
+                  {navTabs.map(([k, label]) => (
+                    <button key={k} className={cx(tab === k && !customPage && 'on')} onClick={() => { setCustom(null); setTab(k); }} style={{ position: 'relative' }} aria-current={tab === k && !customPage ? 'page' : undefined}>
+                      {ICON[k]}{label}
+                      {k === 'cart' && cartN > 0 && <span className="sp-nav-badge" aria-label={`${cartN}`}>{cartN > 99 ? '99+' : cartN}</span>}
+                      {k === 'profile' && fbNotes.unread > 0 && <span className="sp-nav-badge" aria-label={`${fbNotes.unread} new feedback updates`}>{fbNotes.unread}</span>}
+                    </button>
+                  ))}
+                </nav>
+              </>
+            )}
+            {cfg && introOpen && me && <OnboardingModal config={cfg} storageKey={introKey} onClose={() => setIntroOpen(false)} />}
+          </div>
         </div>
       </div>
-      <style>{`@media (max-width: 900px){.cust-wrap{grid-template-columns:1fr !important}} @media (max-width:560px){.phone{border:0;border-radius:0;height:100vh;max-height:none;width:100vw}.standalone{padding:0}}`}</style>
-    </div>
+    </ShopHost.Provider>
   );
 }
 
-// First visit (mode "signup") and the profile tab (mode "edit") for LINE members. Saved to Supabase
-// profiles under RLS (a member can only update their own row); line_user_id/role are protected server-side.
+/** The Account tab: summary + shortcuts, the member's own details, and (LINE members) the feedback centre. */
+function ProfileCore({ showFeedback, lastArea, notes }: { showFeedback: boolean; lastArea: string; notes: ReturnType<typeof useFeedbackNotifications> }) {
+  // the wallet opens from the account card, or from "Add money" elsewhere (peek for the first render, consume in an effect: StrictMode-safe)
+  const [inWallet, setInWallet] = useState(() => useShopNav.getState().pendingWallet);
+  const pending = useShopNav((s) => s.pendingWallet);
+  useEffect(() => { if (pending) { setInWallet(true); useShopNav.setState({ pendingWallet: false }); } }, [pending]);
+  if (inWallet) return <WalletView onBack={() => setInWallet(false)} />;
+  return (
+    <>
+      <AccountSummary onOpenWallet={() => setInWallet(true)} />
+      <MemberForm mode="edit" />
+      {showFeedback && <><hr style={{ border: 0, borderTop: '1px solid var(--border)', width: '100%' }} /><FeedbackCenter fromArea={lastArea} notes={notes} /></>}
+    </>
+  );
+}
+
+// First visit (mode "signup") and the profile tab (mode "edit"). Saved to Supabase profiles under RLS (a member can only
+// update their own row); line_user_id/role are protected server-side.
 function MemberForm({ mode }: { mode: 'signup' | 'edit' }) {
   const { session, profile, refreshProfile } = useAuth();
   const picture = (session?.user.user_metadata as { picture?: string } | undefined)?.picture;
@@ -175,89 +204,22 @@ function MemberForm({ mode }: { mode: 'signup' | 'edit' }) {
   return (
     <form onSubmit={submit} className="col gap-12">
       <div className="center" style={{ padding: '8px 0 4px' }}>
-        {picture ? <img src={picture} alt="" width={72} height={72} style={{ borderRadius: '50%', objectFit: 'cover' }} /> : <div style={{ fontSize: 40 }}>☕</div>}
-        <h2 style={{ marginTop: 8 }}>{mode === 'signup' ? 'ยินดีต้อนรับสมาชิกใหม่' : 'โปรไฟล์ของฉัน'}</h2>
-        {mode === 'signup' && <div className="muted" style={{ fontSize: 13 }}>กรอกข้อมูลครั้งเดียว แล้วใช้บัตรสมาชิกได้เลย</div>}
+        {mode === 'signup' && (picture ? <img src={picture} alt="" width={72} height={72} style={{ borderRadius: '50%', objectFit: 'cover' }} /> : <div style={{ fontSize: 40 }}>☕</div>)}
+        <h2 style={{ marginTop: 8 }}>{mode === 'signup' ? 'ยินดีต้อนรับสมาชิกใหม่' : 'ข้อมูลของฉัน'}</h2>
+        {mode === 'signup' && <div className="muted" style={{ fontSize: 13 }}>กรอกข้อมูลครั้งเดียว แล้วสั่งซื้อและติดตามคำสั่งซื้อได้เลย</div>}
       </div>
       {err && <Banner tone="bad">{err}</Banner>}
       {saved && mode === 'edit' && <Banner tone="good">บันทึกแล้ว</Banner>}
       <Field label="ชื่อ"><Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" maxLength={60} required /></Field>
-      <Field label="เบอร์โทร" hint="ใช้ค้นหาสมาชิกตอนสะสมแต้มที่ร้าน"><Input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="numeric" autoComplete="tel" placeholder="08xxxxxxxx" maxLength={12} required /></Field>
+      <Field label="เบอร์โทร" hint="ใช้ติดต่อเรื่องคำสั่งซื้อและค้นหาสมาชิกที่ร้าน"><Input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="numeric" autoComplete="tel" placeholder="08xxxxxxxx" maxLength={12} required /></Field>
       {!profile?.pdpa_consent_at && (
         <label className="row gap-6" style={{ alignItems: 'flex-start', fontSize: 13 }}>
           <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} style={{ marginTop: 3 }} />
-          <span>ยินยอมให้ร้านเก็บชื่อ เบอร์โทร และบัญชี LINE เพื่อใช้ในระบบสมาชิกและสะสมแต้ม ตามนโยบายคุ้มครองข้อมูลส่วนบุคคล (PDPA)</span>
+          <span>ยินยอมให้ร้านเก็บชื่อ เบอร์โทร และบัญชี LINE เพื่อใช้ในการสั่งซื้อ จัดส่ง และระบบสมาชิก ตามนโยบายคุ้มครองข้อมูลส่วนบุคคล (PDPA)</span>
         </label>
       )}
       <Button type="submit" variant="primary" className="block" loading={busy} disabled={busy}>{mode === 'signup' ? 'สมัครสมาชิก' : 'บันทึก'}</Button>
     </form>
-  );
-}
-
-function Login({ onPick }: { onPick: (id: ID) => void }) {
-  const db = useDB();
-  return (
-    <div className="phone-body" role="region" aria-label="Customer app content" tabIndex={0}>
-      <div className="center" style={{ padding: '20px 0 6px' }}><div style={{ fontSize: 40 }}>☕</div><h2>Welcome</h2><div className="muted">Sign in with LINE (simulated)</div></div>
-      <div className="col gap-4" style={{ overflow: 'auto' }}>
-        {db.customers.filter((c) => c.group !== 'staff').slice(0, 30).map((c) => (
-          <button key={c.id} className="menu-item" onClick={() => onPick(c.id)}><span className="avatar" style={{ background: '#047a3b', color: '#fff' }}>{c.name[0]}</span><div className="grow"><div style={{ fontWeight: 600 }}>{c.name}</div><div className="muted" style={{ fontSize: 12 }}>{c.group === 'wholesale' ? 'Wholesale account' : `${pointsBalance(db, c.id)} pts`}</div></div></button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// The built-in Home layout (used when no DEV APP layout is published). Same sections, same order, same markup as
-// before; the sections now live in devapp/render.tsx so a configured layout can reuse and rearrange them.
-function HomeTab({ id, go }: { id: ID; go: (t: Tab) => void }) {
-  return (
-    <>
-      <MemberCardSection id={id} />
-      <OutstandingSection id={id} go={go} />
-      <CouponsSection id={id} />
-      <OffersSection />
-    </>
-  );
-}
-
-export function ShopTab({ id, go }: { id: ID; go: (t: Tab) => void }) {
-  const db = useDB();
-  const c = db.customers.find((x) => x.id === id)!;
-  const items = db.products.filter((p) => p.active && ['finished', 'resale'].includes(p.kind) && (p.channelPrices.LINE ?? p.price) > 0);
-  const [cart, setCart] = useState<Record<ID, number>>({});
-  const lines = Object.entries(cart).filter(([, q]) => q > 0).map(([productId, qty]) => ({ productId, qty }));
-  const q = useMemo(() => (lines.length ? quoteOrder(db, { channel: 'LINE', branchId: 'B3', customerId: id, lines, now: new Date().toISOString() }) : null), [db, cart, id]); // eslint-disable-line
-  const [done, setDone] = useState<string | null>(null);
-  const place = () => {
-    try {
-      const oid = act((d, ctx) => createOrder(d, ctx, { channel: 'LINE', branchId: 'B3', customerId: id, lines, payLater: c.group === 'wholesale', idempotencyKey: `liff-${Date.now()}`, shipping: { recipient: c.name, address: c.address ?? 'Bangkok' } }));
-      setDone(db.orders.find((o) => o.id === oid)?.no ?? 'order'); setCart({});
-      toast('success', 'Order placed — the shop will confirm it');
-    } catch (e) { toast('error', (e as Error).message); }
-  };
-  return (
-    <>
-      <h2>LINE shop</h2>
-      {done && <Banner tone="good">Order placed. <a onClick={() => go('pay')} style={{ cursor: 'pointer' }}>Go to Pay</a> to settle it{c.group === 'wholesale' ? ' (or pay within your credit terms)' : ''}.</Banner>}
-      {items.map((p) => {
-        const price = p.channelPrices.LINE ?? p.price;
-        const stock = Object.entries(db.balances).filter(([k]) => k.endsWith('|' + p.id) && k.startsWith('W3')).reduce((s, [, b]) => s + b.qty, 0);
-        return (
-          <div key={p.id} className="row card card-b">
-            <ProductEmoji p={p} size={44} /><div className="grow"><b>{p.name}</b><div className="muted" style={{ fontSize: 12 }}>{money(price)} · {stock > 0 ? `${Math.floor(stock)} in stock` : 'sold out'}</div></div>
-            <div className="qty"><button onClick={() => setCart({ ...cart, [p.id]: Math.max(0, (cart[p.id] || 0) - 1) })}><Minus size={13} /></button><span>{cart[p.id] || 0}</span><button disabled={stock <= (cart[p.id] || 0)} onClick={() => setCart({ ...cart, [p.id]: (cart[p.id] || 0) + 1 })}><Plus size={13} /></button></div>
-          </div>
-        );
-      })}
-      {q && (
-        <div className="card card-b" style={{ position: 'sticky', bottom: 0, background: 'var(--surface)' }}>
-          {q.applied.filter((a) => a.discount > 0).map((a) => <div key={a.promoId} className="row between good" style={{ fontSize: 13 }}><span>{a.name}</span><span>−{money(a.discount)}</span></div>)}
-          <div className="row between" style={{ fontSize: 18 }}><b>Total</b><b>{money(q.total)}</b></div>
-          <Button variant="primary" className="block mt8" onClick={place}>Place order</Button>
-        </div>
-      )}
-    </>
   );
 }
 
@@ -276,67 +238,8 @@ export function RewardsTab({ id }: { id: ID }) {
           <Button size="sm" variant="primary" disabled={pts < r.cost || r.stock === 0} onClick={() => { try { const rid = act((d, c) => redeemReward(d, c, { customerId: id, rewardId: r.id, idempotencyKey: `${id}-${r.id}-${Date.now()}` })); setLast(useStore.getState().db.rewardRedemptions.find((x) => x.id === rid)?.code ?? ''); } catch (e) { toast('error', (e as Error).message); } }}>Redeem</Button>
         </div>
       ))}
+      {!db.rewards.some((r) => r.active) && <Empty title="No rewards yet" />}
       {mine.length > 0 && <Card title="My redemptions">{mine.slice(0, 6).map((r) => <div key={r.id} className="row between" style={{ fontSize: 13, padding: '3px 0' }}><span>{db.rewards.find((x) => x.id === r.rewardId)?.name} <span className="muted">{dateFmt(r.ts)}</span></span><span className="row gap-6"><span className="mono">{r.code}</span><Badge tone={r.status === 'issued' ? 'warn' : r.status === 'fulfilled' ? 'good' : 'bad'}>{r.status}</Badge></span></div>)}</Card>}
-    </>
-  );
-}
-
-export function PayTab({ id }: { id: ID }) {
-  const db = useDB();
-  const alloc = useMemo(() => allocatedMap(db), [db.allocations]);
-  const open = outstandingOrders(db, id, alloc);
-  const owing = r2(open.reduce((s, x) => s + x.balance, 0));
-  const credit = customerCredit(db, id);
-  const [amount, setAmount] = useState<number>(owing);
-  const [ref, setRef] = useState('');
-  const [sel, setSel] = useState<Record<ID, boolean>>({});
-  const [busy, setBusy] = useState(false);
-  const file = useRef<HTMLInputElement>(null);
-  const slips = db.slips.filter((s) => s.customerId === id).slice().reverse();
-  const c = db.customers.find((x) => x.id === id)!;
-  const chosen = open.filter((x) => sel[x.order.id]);
-  const submit = async (f: File | null) => {
-    if (!f) return;
-    setBusy(true);
-    try {
-      const mediaId = await uploadMedia(f, 'payment_slip', { type: 'slip' }, { private: true });
-      const media = useStore.getState().db.media.find((m) => m.id === mediaId)!;
-      act((d, ctx) => submitSlip(d, ctx, { customerId: id, amount, orderIds: chosen.map((x) => x.order.id), reference: ref || undefined, mediaId, checksum: media.checksum }));
-      toast('success', 'Slip sent — the shop will verify it shortly');
-      setRef('');
-    } catch (e) { toast('error', (e as Error).message); }
-    setBusy(false);
-  };
-  return (
-    <>
-      <CustomerInvoices />
-      <h2>Pay & statement</h2>
-      <div className="grid g2" style={{ gap: 10 }}>
-        <div className="card card-b"><div className="muted" style={{ fontSize: 12 }}>You owe</div><b style={{ fontSize: 22 }} className={owing > 0 ? 'bad' : 'good'}>{money(owing)}</b></div>
-        <div className="card card-b"><div className="muted" style={{ fontSize: 12 }}>Credit</div><b style={{ fontSize: 22 }}>{money(credit)}</b></div>
-      </div>
-      {open.length === 0 ? <Empty title="Nothing to pay" hint="You are all settled." /> : (
-        <>
-          <Card title="Open invoices">
-            {open.map((x) => <label key={x.order.id} className="row between check" style={{ padding: '5px 0', width: '100%' }}><span className="row gap-6"><input type="checkbox" checked={!!sel[x.order.id]} onChange={(e) => { const s = { ...sel, [x.order.id]: e.target.checked }; setSel(s); const t = open.filter((o) => s[o.order.id]).reduce((a, o) => a + o.balance, 0); setAmount(r2(t || owing)); }} /> {x.order.no} <span className="muted">{dateFmt(x.order.createdAt)}</span></span><b>{money(x.balance)}</b></label>)}
-          </Card>
-          <Card title="Pay by PromptPay">
-            <div className="row" style={{ justifyContent: 'center' }}><QR data={promptPayPayload(db.org.promptPayId, amount)} size={150} /></div>
-            <div className="center muted" style={{ fontSize: 12 }}>Scan with your banking app · {money(amount)}</div>
-          </Card>
-          <Card title="Upload your transfer slip">
-            <div className="col">
-              <Field label="Amount transferred"><NumInput value={amount} onChange={(n) => setAmount(n || 0)} /></Field>
-              <Field label="Reference (optional)"><Input value={ref} onChange={(e) => setRef(e.target.value)} /></Field>
-              <input ref={file} type="file" hidden accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; void submit(f); }} />
-              <Button variant="primary" onClick={() => file.current?.click()} disabled={busy || !(amount > 0)}>{busy ? 'Uploading…' : 'Take photo / choose image'}</Button>
-              <div className="muted" style={{ fontSize: 12 }}>The shop checks the slip against its bank statement before your balance is updated. Uploading a slip is not a confirmation of payment.</div>
-            </div>
-          </Card>
-        </>
-      )}
-      {slips.length > 0 && <Card title="My slips">{slips.slice(0, 6).map((s) => <div key={s.id} className="row between" style={{ fontSize: 13, padding: '3px 0' }}><span>{money(s.amount)} <span className="muted">{dateTimeFmt(s.createdAt)}</span>{s.rejectReason && <div className="bad" style={{ fontSize: 12 }}>{s.rejectReason}</div>}</span><Badge tone={s.status === 'approved' ? 'good' : s.status === 'rejected' ? 'bad' : 'warn'} dot>{s.status}</Badge></div>)}</Card>}
-      <Card title="My orders">{db.orders.filter((o) => o.customerId === id && o.collectedBy === 'merchant').slice(-6).reverse().map((o) => <div key={o.id} className="row between" style={{ fontSize: 13, padding: '3px 0' }}><span>{o.no} <span className="muted">{dateFmt(o.createdAt)} · {STATUS_LABEL[o.status]}</span></span><span>{money(o.total)} {orderBalance(o, alloc[o.id] || 0) > 0.004 ? <Badge tone="warn">due</Badge> : <Badge tone="good">paid</Badge>}</span></div>)}{c.creditLimit > 0 && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Credit limit {money0(c.creditLimit)} · {c.creditDays} days</div>}</Card>
     </>
   );
 }
@@ -378,4 +281,3 @@ export function EventsTab({ id }: { id: ID }) {
     </>
   );
 }
-export const _ca = [dayKey];

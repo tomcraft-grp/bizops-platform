@@ -1,0 +1,284 @@
+// A fake of the Supabase endpoints the customer shop talks to, for browser tests of the UI. It mirrors the contract of
+// supabase/migrations/20261115100000_customer_shop.sql (which is tested for real by supabase/tests/customer_shop.sql): the
+// server prices everything, an order is idempotent per key, a slip never marks an order paid. Catalogue data is a sample of the
+// real catalogue (tests/shop-e2e/catalog.fixture.json). This file proves the SCREENS; it proves nothing about the database.
+import type { Page, Route } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+const fixture = JSON.parse(readFileSync(new URL('./catalog.fixture.json', import.meta.url), 'utf8')) as unknown[];
+import { promptPayPayload } from '../../src/lib/promptpay';
+import { FakeWallet, NOT_HANDLED } from './fakeWallet';
+
+export const USER_ID = '11111111-1111-4111-8111-111111111111';
+const HOST = 'hlvravynjalculvplrxc.supabase.co';
+export const IMG = 'https://img.test';
+
+export interface FItem {
+  sku_code: string; name: string; name_th: string | null; name_en: string | null; brand: string | null; category: string; unit: string | null; pack_qty: number | null; price: number;
+  barcode: string | null; description_th: string | null; description_en: string | null; specs: { label: string; value: string }[]; family: string | null; badge: string | null;
+  featured: boolean; available: boolean; max_qty: number | null; image_urls: string[]; sku_seq: number;
+}
+interface FInvoice { id: string; invoice_no: string; amount: number; paid: number; cancelled: boolean; evidence: { id: string; status: string; claimed_amount: number; created_at: string; reject_reason?: string | null; reviewed_at?: string }[]; req: null | { ref: string; amount: number; qr_payload: string; expires_at: string }; source_ref: string; created_at: string }
+interface FOrder { id: string; order_no: string; status: string; fulfilment: string; contact_name: string; contact_phone: string; delivery_address: string | null; note: string | null; items: { line_no: number; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[]; subtotal: number; discount: number; shipping_fee: number; total: number; created_at: string; key: string; hash: string; invoice: FInvoice; status_note: string | null; cancel_reason: string | null }
+
+export const settingsDefault = { shop_open: true, closed_message: null as string | null, delivery_enabled: true, pickup_enabled: true, pickup_note: 'รับที่ร้าน 99 ถนนทดสอบ', shipping_fee: 50, free_shipping_min: 1000 as number | null };
+
+export class FakeShop {
+  items: FItem[];
+  settings = { ...settingsDefault };
+  orders: FOrder[] = [];
+  calls: { fn: string; args: Record<string, unknown> }[] = [];
+  layout: unknown = null;
+  /** wallet, deposits and bank accounts (fakeWallet.ts) */
+  w = new FakeWallet(this);
+  private fail = new Map<string, number>();
+  private drop = new Set<string>();
+  private seq = 0;
+  profile = { id: USER_ID, email: 'customer@example.test', display_name: 'สมชาย ใจดี', role: 'USER', status: 'active', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', phone: '0812345678', line_user_id: null as string | null, pdpa_consent_at: '2026-01-01T00:00:00Z' };
+
+  constructor() {
+    this.items = (fixture as Omit<FItem, 'description_th' | 'description_en' | 'specs' | 'family' | 'badge' | 'featured' | 'available' | 'max_qty' | 'image_urls'>[]).map((x) => ({
+      ...x, description_th: null, description_en: null, specs: [], family: null, badge: null, featured: false, available: true, max_qty: null, image_urls: [],
+    }));
+  }
+  item = (sku: string) => this.items.find((i) => i.sku_code === sku)!;
+  /** the same enrichment staff do in the back office: pictures, description, options, featured, sold out, limits */
+  decorate() {
+    const a = this.item('FG-000001'); Object.assign(a, { image_urls: [`${IMG}/FG-000001-a.svg`, `${IMG}/FG-000001-b.svg`], description_th: 'รสผลไม้รวม หอมหวาน', description_en: 'Mixed fruit', specs: [{ label: 'ขนาด', value: '6000 คำ' }, { label: 'แบตเตอรี่', value: 'ชาร์จได้' }], family: 'INFY 6000', badge: 'ขายดี', featured: true });
+    Object.assign(this.item('FG-000002'), { image_urls: [`${IMG}/FG-000002-a.svg`], family: 'INFY 6000', featured: true });
+    Object.assign(this.item('FG-000003'), { max_qty: 2, featured: true });
+    Object.assign(this.item('FG-000004'), { available: false });
+  }
+  failNext(fn: string, times = 1) { this.fail.set(fn, times); }
+  /** the server handles the call, but the answer never reaches the phone (dropped connection) */
+  dropResponseOnce(fn: string) { this.drop.add(fn); }
+  count = (fn: string) => this.calls.filter((c) => c.fn === fn).length;
+
+  // ------------------------------------------------------------ server logic (mirrors the SQL)
+  private err(message: string, details?: string): never { throw Object.assign(new Error(message), { details }); }
+  private state(inv: FInvoice) {
+    const pending = inv.evidence.filter((e) => e.status === 'submitted').length;
+    const last = inv.evidence[0];
+    const reqLive = inv.req && new Date(inv.req.expires_at).getTime() > Date.now();
+    const code = inv.cancelled ? 8 : inv.paid >= inv.amount ? 5 : pending > 0 ? 3 : inv.paid > 0 ? 4 : last?.status === 'rejected' && !reqLive ? 7 : reqLive ? 1 : inv.req ? 9 : 0;
+    const names = ['unpaid', 'awaiting_payment', 'payment_submitted', 'pending_verification', 'partially_paid', 'fully_paid', 'overpaid', 'rejected', 'cancelled', 'expired'];
+    return { invoice_id: inv.id, amount: inv.amount, paid: inv.paid, outstanding: Math.max(inv.amount - inv.paid, 0), unapplied: 0, status_code: code, status: names[code], pending_evidence: pending,
+      request: inv.req && !inv.cancelled ? { ...inv.req, expired: !reqLive } : null };
+  }
+  private invoiceRow(inv: FInvoice) { return { id: inv.id, invoice_no: inv.invoice_no, issue_date: inv.created_at.slice(0, 10), due_date: inv.created_at.slice(0, 10), description: `Online order ${inv.source_ref}`, customer_name: this.profile.display_name, source_ref: inv.source_ref, ...this.state(inv) }; }
+  private orderJson(o: FOrder) {
+    const { key: _k, hash: _h, invoice, ...rest } = o; void _k; void _h;
+    return { ...rest, channel: 'LINE', updated_at: o.created_at, cancelled_at: null, invoice: this.invoiceRow(invoice) };
+  }
+  private quote(items: unknown, fulfilment: string) {
+    if (!Array.isArray(items) || !items.length) this.err('CART_EMPTY');
+    if (items.length > 40) this.err('CART_TOO_LARGE');
+    const merged = new Map<string, number>();
+    for (const e of items as { sku_code?: string; qty?: unknown }[]) { const q = typeof e.qty === 'number' && Number.isInteger(e.qty) && e.qty >= 0 ? e.qty : 0; merged.set(e.sku_code ?? '', (merged.get(e.sku_code ?? '') ?? 0) + q); }
+    const lines: Record<string, unknown>[] = []; const problems: Record<string, unknown>[] = []; let subtotal = 0;
+    for (const [sku, qty] of [...merged].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const v = this.items.find((i) => i.sku_code === sku);
+      const bad = (problem: string, extra: Record<string, unknown> = {}) => { lines.push({ sku_code: sku, qty, ok: false, problem, name: v?.name, unit_price: v?.price, image_url: v?.image_urls[0] ?? null, ...extra }); problems.push({ sku_code: sku, problem, ...extra }); };
+      if (qty < 1 || qty > 99) bad('bad_qty'); else if (!v) bad('not_found'); else if (!v.available) bad('sold_out'); else if (v.max_qty && qty > v.max_qty) bad('over_limit', { max_qty: v.max_qty });
+      else { subtotal += v.price * qty; lines.push({ sku_code: sku, qty, ok: true, name: v.name, unit: v.unit, pack_qty: v.pack_qty, unit_price: v.price, line_total: v.price * qty, max_qty: v.max_qty, image_url: v.image_urls[0] ?? null }); }
+    }
+    let ship = 0;
+    if (fulfilment === 'delivery') { if (!this.settings.delivery_enabled) problems.push({ problem: 'delivery_off' }); ship = this.settings.free_shipping_min != null && subtotal >= this.settings.free_shipping_min ? 0 : this.settings.shipping_fee; }
+    else if (fulfilment === 'pickup') { if (!this.settings.pickup_enabled) problems.push({ problem: 'pickup_off' }); } else problems.push({ problem: 'bad_fulfilment' });
+    return { lines, subtotal, discount: 0, shipping_fee: ship, total: subtotal + ship, fulfilment, free_shipping_min: this.settings.free_shipping_min, ok: problems.length === 0 && subtotal > 0, problems };
+  }
+  private itemJson(i: FItem) { const { sku_seq: _s, ...r } = i; void _s; return { ...r, image_url: i.image_urls[0] ?? null }; }
+  invoiceState(inv: FInvoice) { return this.state(inv); }
+  private payOf(o: FOrder) { return this.state(o.invoice).status_code; }
+
+  rpc(fn: string, a: Record<string, unknown>): unknown {
+    switch (fn) {
+      case 'get_published_customer_layout': return this.layout;
+      case 'customer_app_query': return { columns: [{ key: 'sku_code', label: 'SKU', type: 'text' }, { key: 'name_full', label: 'Name', type: 'text' }, { key: 'price', label: 'Price', type: 'money' }], rows: this.items.slice(0, 3).map((i) => ({ sku_code: i.sku_code, name_full: i.name, price: i.price })) };
+      case 'shop_settings_public': return { ...this.settings, shop_open: this.settings.shop_open };
+      case 'shop_facets': {
+        const cats = new Map<string, FItem[]>(); for (const i of this.items) cats.set(i.category, [...(cats.get(i.category) ?? []), i]);
+        const brands = new Map<string, number>(); for (const i of this.items) if (i.brand) brands.set(i.brand, (brands.get(i.brand) ?? 0) + 1);
+        return { categories: [...cats].map(([code, xs]) => ({ code, name_th: code === 'Puff' ? 'พอตใช้แล้วทิ้ง' : null, name_en: null, count: xs.length, image_url: xs.find((x) => x.image_urls[0])?.image_urls[0] ?? null })),
+          brands: [...brands].map(([brand, count]) => ({ brand, count })).sort((x, y) => y.count - x.count) };
+      }
+      case 'shop_catalog': {
+        const q = String(a.p_search ?? '').trim().toLowerCase();
+        let xs = this.items.filter((i) => (!q || [i.sku_code, i.name, i.name_th, i.name_en, i.brand].some((f) => f?.toLowerCase().includes(q))) && (!a.p_category || i.category === a.p_category) && (!a.p_brand || i.brand === a.p_brand) && (!a.p_featured || i.featured));
+        const sort = String(a.p_sort ?? 'recommended');
+        xs = [...xs].sort((p, r) => sort === 'price_asc' ? p.price - r.price : sort === 'price_desc' ? r.price - p.price : sort === 'newest' ? r.sku_seq - p.sku_seq : sort === 'name' ? p.name.localeCompare(r.name)
+          : (Number(r.featured) - Number(p.featured)) || (Number(r.available) - Number(p.available)) || (p.sku_seq - r.sku_seq));
+        const off = Number(a.p_offset ?? 0), lim = Math.min(Number(a.p_limit ?? 24), 60);
+        return { total: xs.length, items: xs.slice(off, off + lim).map((i) => this.itemJson(i)) };
+      }
+      case 'shop_product': {
+        const v = this.items.find((i) => i.sku_code === a.p_sku); if (!v) return null;
+        return { ...this.itemJson(v), siblings: v.family ? this.items.filter((i) => i.family === v.family && i !== v).map((i) => this.itemJson(i)) : [], related: this.items.filter((i) => i.category === v.category && i !== v).slice(0, 6).map((i) => this.itemJson(i)) };
+      }
+      case 'shop_home': {
+        const sold = new Map<string, number>(); for (const o of this.orders) if (o.status !== 'cancelled') for (const l of o.items) sold.set(l.sku_code, (sold.get(l.sku_code) ?? 0) + l.qty);
+        return { featured: this.items.filter((i) => i.featured).slice(0, 8).map((i) => this.itemJson(i)), newest: [...this.items].sort((x, y) => y.sku_seq - x.sku_seq).slice(0, 8).map((i) => this.itemJson(i)),
+          popular: [...sold].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([s]) => this.itemJson(this.item(s))) };
+      }
+      case 'shop_quote': return this.quote(a.p_items, String(a.p_fulfilment));
+      case 'shop_place_order': return this.place(a);
+      case 'shop_my_orders': {
+        const f = String(a.p_filter ?? 'all');
+        const mine = this.orders.filter((o) => { const p = this.payOf(o); return f === 'unpaid' ? o.status !== 'cancelled' && [0, 1, 3, 4, 7, 9].includes(p) : f === 'to_ship' ? ['new', 'confirmed', 'preparing', 'packed'].includes(o.status) && [5, 6].includes(p) : f === 'to_receive' ? ['shipped', 'ready'].includes(o.status) : f === 'done' ? o.status === 'completed' : f === 'cancelled' ? ['cancelled', 'returned'].includes(o.status) : true; })
+          .sort((x, y) => y.created_at.localeCompare(x.created_at));
+        const off = Number(a.p_offset ?? 0), lim = Number(a.p_limit ?? 20);
+        return { total: mine.length, orders: mine.slice(off, off + lim).map((o) => this.orderJson(o)) };
+      }
+      case 'shop_my_order': { const o = this.orders.find((x) => x.id === a.p_id); if (!o) this.err('Order not found'); return { ...this.orderJson(o), events: [] }; }
+      case 'shop_cancel_my_order': {
+        const o = this.orders.find((x) => x.id === a.p_id); if (!o) this.err('Order not found');
+        if (o.status !== 'new') this.err('ORDER_IN_PROGRESS'); if (o.invoice.paid > 0) this.err('PAYMENT_RECORDED'); if (o.invoice.evidence.some((e) => e.status === 'submitted')) this.err('SLIP_PENDING');
+        o.status = 'cancelled'; o.invoice.cancelled = true; o.cancel_reason = String(a.p_reason ?? 'Cancelled by customer'); return this.orderJson(o);
+      }
+      case 'finance_my_invoices': return this.orders.map((o) => this.invoiceRow(o.invoice));
+      case 'finance_request_payment': {
+        const o = this.orders.find((x) => x.invoice.id === a.p_invoice); if (!o) this.err('Invoice not found');
+        const amt = o.invoice.amount - o.invoice.paid;
+        o.invoice.req = { ref: 'PR' + (1000 + ++this.seq), amount: amt, qr_payload: promptPayPayload('0812345678', amt), expires_at: new Date(Date.now() + 24 * 3600e3).toISOString() };
+        return { ...o.invoice.req, account_label: 'Test shop', merchant_name: 'TEST SHOP' };
+      }
+      case 'finance_submit_evidence': {
+        const o = this.orders.find((x) => x.invoice.id === a.p_invoice); if (!o) this.err('Invoice not found');
+        const id = 'ev-' + ++this.seq; o.invoice.evidence.unshift({ id, status: 'submitted', claimed_amount: Number(a.p_claimed_amount), created_at: new Date().toISOString() }); this.w.noteSlip(id, (a.p_bank_account as string | null) ?? null); return id;
+      }
+      case 'finance_role': return this.w.role;
+      case 'finance_staff': return null;
+      default: { const r = this.w.rpc(fn, a); return r === NOT_HANDLED ? this.admin(fn, a) : r; }
+    }
+  }
+
+  // ------------------------------------------------------------ staff functions (same rules as public.shop_admin_*)
+  hidden = new Set<string>();
+  categories = new Map<string, { name_th: string | null; name_en: string | null; sort_order: number; visible: boolean }>();
+  paymentAccountReady = false;
+  private staff() { if (!['ADMIN', 'SUPER_ADMIN'].includes(this.profile.role)) this.err('You are not allowed to see online orders'); }
+  private adminOrder(o: FOrder) {
+    return { ...this.orderJson(o), customer: { code: 'LINE-TEST', name: this.profile.display_name, phone: this.profile.phone, line_user_id: null },
+      events: [{ at: o.created_at, actor_email: this.profile.email, action: 'order.place', detail: {} }, ...(this.statusLog.get(o.id) ?? [])] };
+  }
+  statusLog = new Map<string, { at: string; actor_email: string; action: string; detail: Record<string, unknown> }[]>();
+  private admin(fn: string, a: Record<string, unknown>): unknown {
+    switch (fn) {
+      case 'shop_admin_orders': {
+        this.staff();
+        const q = String(a.p_search ?? '').toLowerCase();
+        const xs = this.orders.filter((o) => (!a.p_status || o.status === a.p_status) && (!q || [o.order_no, o.contact_name, o.contact_phone].some((f) => f.toLowerCase().includes(q)))).sort((x, y) => y.created_at.localeCompare(x.created_at));
+        const counts: Record<string, number> = {}; for (const o of this.orders) counts[o.status] = (counts[o.status] ?? 0) + 1;
+        return { total: xs.length, counts, orders: xs.map((o) => this.adminOrder(o)) };
+      }
+      case 'shop_admin_order': { this.staff(); const o = this.orders.find((x) => x.id === a.p_id); if (!o) this.err('Order not found'); return this.adminOrder(o); }
+      case 'shop_admin_set_status': {
+        this.staff();
+        const o = this.orders.find((x) => x.id === a.p_order); if (!o) this.err('Order not found');
+        const to = String(a.p_status); const note = String(a.p_note ?? '').trim() || null; const why = String(a.p_override_reason ?? '').trim() || null;
+        const log = (detail: Record<string, unknown>) => this.statusLog.set(o.id, [...(this.statusLog.get(o.id) ?? []), { at: new Date().toISOString(), actor_email: this.profile.email, action: 'order.status', detail }]);
+        if (to === 'cancelled') { if (!note) this.err('A reason is required'); if (o.invoice.paid > 0) this.err('PAYMENT_RECORDED'); o.status = 'cancelled'; o.invoice.cancelled = true; o.cancel_reason = note; log({ to }); return this.orderJson(o); }
+        const ok: Record<string, string[]> = { new: ['confirmed'], confirmed: ['preparing'], preparing: ['packed'], packed: [o.fulfilment === 'pickup' ? 'ready' : 'shipped'], ready: ['completed'], shipped: ['completed', 'returned'], completed: ['returned'] };
+        if (!(ok[o.status] ?? []).includes(to)) this.err(`An order that is ${o.status} cannot become ${to}`);
+        if (to !== 'confirmed' && to !== 'returned' && ![5, 6].includes(this.payOf(o))) { if (!why) this.err('PAYMENT_REQUIRED'); }
+        o.status = to; if (note) o.status_note = note; log({ to, note, payment_override: !!why && ![5, 6].includes(this.payOf(o)), override_reason: why });
+        return this.orderJson(o);
+      }
+      case 'shop_admin_settings': return this.adminSettings();
+      case 'shop_admin_save_settings': { this.staff(); Object.assign(this.settings, a.p_patch as object); return this.adminSettings(); }
+      case 'shop_admin_categories': {
+        this.staff(); const cats = new Map<string, number>(); for (const i of this.items) cats.set(i.category, (cats.get(i.category) ?? 0) + 1);
+        return [...cats].map(([code, count]) => ({ code, count, name_th: null, name_en: null, image_path: null, image_url: null, sort_order: 100, visible: true, ...(this.categories.get(code) ?? {}) }));
+      }
+      case 'shop_admin_save_category': { this.staff(); this.categories.set(String(a.p_code), { name_th: null, name_en: null, sort_order: 100, visible: true, ...(this.categories.get(String(a.p_code)) ?? {}), ...(a.p_patch as object) }); return null; }
+      case 'shop_admin_products': {
+        this.staff(); const q = String(a.p_search ?? '').toLowerCase();
+        const rows = this.items.filter((i) => !q || [i.sku_code, i.name, i.brand ?? ''].some((f) => f.toLowerCase().includes(q))).map((i) => ({
+          sku_code: i.sku_code, name: i.name, brand: i.brand, status: 'active', category: i.category, price: i.price, description_th: i.description_th, description_en: i.description_en, image_paths: [], image_urls: i.image_urls,
+          specs: i.specs, family: i.family, badge: i.badge, featured: i.featured, visible: !this.hidden.has(i.sku_code), available: i.available, max_qty: i.max_qty, sort_order: 100,
+          on_sale: !this.hidden.has(i.sku_code), why_hidden: this.hidden.has(i.sku_code) ? 'hidden_by_staff' : null }));
+        const f = String(a.p_filter ?? 'all'); const xs = rows.filter((r) => (f === 'visible' ? r.on_sale : f === 'hidden' ? !r.on_sale : f === 'no_image' ? r.on_sale && !r.image_urls.length : true));
+        return { total: xs.length, items: xs.slice(0, Number(a.p_limit ?? 40)) };
+      }
+      case 'shop_admin_save_content': {
+        this.staff(); const it = this.item(String(a.p_sku)); const p = a.p_patch as Record<string, unknown>;
+        if (!it) this.err('Unknown product');
+        for (const k of ['description_th', 'description_en', 'family', 'badge', 'featured', 'available', 'specs'] as const) if (k in p) (it as unknown as Record<string, unknown>)[k] = p[k] === '' ? null : p[k];
+        if ('max_qty' in p) it.max_qty = p.max_qty === '' ? null : Number(p.max_qty);
+        if ('visible' in p) { if (p.visible) this.hidden.delete(it.sku_code); else this.hidden.add(it.sku_code); }
+        return null;
+      }
+      default: this.err(`Unknown function ${fn}`);
+    }
+  }
+  private adminSettings() {
+    this.staff();
+    return { ...this.settings, image_base_url: 'https://x.test/', updated_at: new Date().toISOString(), payment_account_ready: this.paymentAccountReady, visible_products: this.items.length - this.hidden.size, products_with_image: this.items.filter((i) => i.image_urls.length).length };
+  }
+  private place(a: Record<string, unknown>) {
+    const key = String(a.p_key ?? '');
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) this.err('INVALID_KEY');
+    const norm = JSON.stringify({ i: (a.p_items as { sku_code: string; qty: number }[]).map((x) => [x.sku_code, x.qty]).sort(), f: a.p_fulfilment, n: String(a.p_name).trim(), p: String(a.p_phone).replace(/\D/g, ''), a: a.p_address ? String(a.p_address).trim() : null, note: a.p_note });
+    const have = this.orders.find((o) => o.key === key);
+    if (have) { if (have.hash !== norm) this.err('KEY_REUSED'); return { replay: true, order: this.orderJson(have) }; }
+    if (!this.settings.shop_open) this.err('SHOP_CLOSED');
+    const phone = String(a.p_phone).replace(/\D/g, '');
+    if (!String(a.p_name).trim()) this.err('INVALID_NAME'); if (!/^0\d{8,9}$/.test(phone)) this.err('INVALID_PHONE');
+    if (a.p_fulfilment === 'delivery' && String(a.p_address ?? '').trim().length < 10) this.err('INVALID_ADDRESS');
+    const q = this.quote(a.p_items, String(a.p_fulfilment)) as unknown as { ok: boolean; problems: unknown[]; total: number; subtotal: number; shipping_fee: number; lines: { ok: boolean; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[] };
+    if (!q.ok) this.err('CART_INVALID', JSON.stringify(q.problems));
+    if (a.p_expected_total != null && Number(a.p_expected_total) !== q.total) this.err('PRICE_CHANGED', String(q.total));
+    const n = this.orders.length + 1; const no = `SO-202611-${String(n).padStart(5, '0')}`; const now = new Date(Date.now() + n * 1000).toISOString();
+    const inv: FInvoice = { id: `inv-${n}`, invoice_no: `INV-202611-${String(n).padStart(5, '0')}`, amount: q.total, paid: 0, cancelled: false, evidence: [], req: null, source_ref: no, created_at: now };
+    const o: FOrder = { id: `ord-${n}`, order_no: no, status: 'new', fulfilment: String(a.p_fulfilment), contact_name: String(a.p_name).trim(), contact_phone: phone, delivery_address: a.p_fulfilment === 'delivery' ? String(a.p_address).trim() : null,
+      note: (a.p_note as string | null) ?? null, items: q.lines.map((l, i) => ({ line_no: i + 1, sku_code: l.sku_code, name: l.name, unit: l.unit, unit_price: l.unit_price, qty: l.qty, line_total: l.line_total, image_url: l.image_url })),
+      subtotal: q.subtotal, discount: 0, shipping_fee: q.shipping_fee, total: q.total, created_at: now, key, hash: norm, invoice: inv, status_note: null, cancel_reason: null };
+    this.orders.push(o);
+    return { replay: false, order: this.orderJson(o) };
+  }
+  // test controls: what staff do in the back office
+  verifyPayment(orderNo: string) { const o = this.orders.find((x) => x.order_no === orderNo)!; o.invoice.paid = o.invoice.amount; o.invoice.evidence.forEach((e) => { e.status = 'verified'; }); }
+  rejectSlip(orderNo: string, reason: string) { const o = this.orders.find((x) => x.order_no === orderNo)!; o.invoice.evidence.forEach((e) => { e.status = 'rejected'; e.reject_reason = reason; e.reviewed_at = new Date().toISOString(); }); o.invoice.req = null; }
+  setStatus(orderNo: string, status: string, note?: string) { const o = this.orders.find((x) => x.order_no === orderNo)!; o.status = status; if (note) o.status_note = note; }
+
+  // ------------------------------------------------------------ wiring
+  async install(page: Page) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
+    const json = (route: Route, body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: cors, body: JSON.stringify(body) });
+    await page.route(`${IMG}/**`, (route) => route.fulfill({ status: 200, contentType: 'image/svg+xml', headers: cors, body: '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="#cfd8e3"/><circle cx="200" cy="200" r="90" fill="#7a8da6"/></svg>' }));
+    await page.route(`https://${HOST}/**`, async (route) => {
+      const req = route.request(); const url = new URL(req.url()); const p = url.pathname;
+      if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+      if (p === '/auth/v1/user') return json(route, { id: USER_ID, aud: 'authenticated', role: 'authenticated', email: this.profile.email, user_metadata: {}, app_metadata: {} });
+      if (p.startsWith('/auth/v1/')) return json(route, {});
+      if (p === '/rest/v1/profiles') return json(route, this.profile);
+      if (p.startsWith('/rest/v1/rpc/')) {
+        const fn = p.slice('/rest/v1/rpc/'.length);
+        let args: Record<string, unknown> = {};
+        try { args = JSON.parse(req.postData() || '{}') as Record<string, unknown>; } catch { /* no body */ }
+        this.calls.push({ fn, args });
+        const left = this.fail.get(fn) ?? 0;
+        if (left > 0) { this.fail.set(fn, left - 1); return json(route, { code: 'P0001', message: 'boom', details: null, hint: null }, 500); }
+        try {
+          const out = this.rpc(fn, args);
+          if (this.drop.delete(fn)) return route.abort('connectionreset');   // handled by the server, never answered
+          return json(route, out);
+        } catch (e) { const er = e as Error & { details?: string }; return json(route, { code: 'P0001', message: er.message, details: er.details ?? null, hint: null }, 400); }
+      }
+      if (p === '/rest/v1/finance_payment_evidence') {
+        const id = url.searchParams.get('invoice_id')?.replace('eq.', '');
+        const inv = this.orders.find((o) => o.invoice.id === id)?.invoice;
+        return json(route, (inv?.evidence ?? []).map((e) => ({ ...e, invoice_id: id, customer_id: 'c', file_path: 'x', file_type: 'image/jpeg', claimed_transfer_at: null, claimed_bank: null, claimed_ref: null, verified_via: null, verified_amount: null, bank_trans_ref: null, reject_reason: e.reject_reason ?? null, reviewed_at: e.reviewed_at ?? null })));
+      }
+      if (p.startsWith('/storage/v1/object/sign/') && req.method() === 'POST') return json(route, { signedURL: `/object/sign/${p.slice('/storage/v1/object/sign/'.length)}?token=t` });   // staff open a slip
+      if (p.startsWith('/storage/v1/object/sign/')) return route.fulfill({ status: 200, contentType: 'image/png', headers: cors, body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') });
+      if (p.startsWith('/storage/v1/')) return json(route, { Key: 'payment-evidence/x', Id: 'x' });
+      if (p.startsWith('/rest/v1/')) return json(route, this.w.rest(p.slice('/rest/v1/'.length)) ?? []);
+      return json(route, {}, 404);
+    });
+    // a signed-in customer (the real app signs in with LINE; the shop only needs a Supabase session)
+    await page.addInitScript(([uid, email, ref]) => {
+      const exp = Math.floor(Date.now() / 1000) + 3600 * 24;
+      try { localStorage.setItem(`sb-${ref}-auth-token`, JSON.stringify({ access_token: 'a.b.c', refresh_token: 'r', token_type: 'bearer', expires_in: 86400, expires_at: exp, user: { id: uid, aud: 'authenticated', role: 'authenticated', email, user_metadata: {}, app_metadata: {}, created_at: '2026-01-01T00:00:00Z' } })); } catch { /* ignore */ }
+    }, [USER_ID, this.profile.email, HOST.split('.')[0]]);
+  }
+}

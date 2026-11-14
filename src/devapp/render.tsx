@@ -2,7 +2,8 @@
 // designer preview, so the preview is the same code the customer runs. Text is always rendered as text (React
 // escapes it); images must be https; only components from SECTION_DEFS exist.
 import { CSSProperties, ReactNode, useEffect, useState } from 'react';
-import { Heart, Search, ShoppingBag, X } from 'lucide-react';
+import { Heart, Search, ShoppingBag, UserRound, X } from 'lucide-react';
+import { useCartCount } from '../shop/cart';
 import { useDB } from '../domain/store';
 import { customerLifetimeSpend, expiringSoon, pointsBalance, tierFor } from '../domain/loyalty';
 import { customerOutstanding } from '../domain/payments';
@@ -204,6 +205,8 @@ export function SectionView({ s, customerId, go }: { s: Section; customerId: ID;
 /** Header bar of the customer app for a configured layout (logo + title + tagline). */
 export function BrandHeader({ config, go }: { config: LayoutConfig; go?: (t: TabKey) => void }) {
   const b = config.brand;
+  const cartN = useCartCount();
+  const rewardsOn = config.nav.some((n) => n.key === 'rewards' && n.visible);
   const logo = b.logoUrl && isSafeImageUrl(b.logoUrl);
   if (b.headerStyle === 'centered') {
     const icon = (node: ReactNode, label: string, tab?: TabKey) => <button type="button" className="ca-hicon" aria-label={label} onClick={() => tab && go?.(tab)}>{node}</button>;
@@ -211,7 +214,7 @@ export function BrandHeader({ config, go }: { config: LayoutConfig; go?: (t: Tab
       <div className="phone-top ca-top-centered">
         <span className="row gap-6">{b.showIcons && icon(<Search size={18} />, 'Search', 'shop')}</span>
         <b className="row gap-6" style={{ justifyContent: 'center', minWidth: 0 }}>{logo ? <img src={b.logoUrl} alt={b.title} style={{ height: 30, width: 'auto' }} /> : <span style={{ fontSize: 18 }}>{b.title}</span>}{b.tagline && <span className="ca-pill">{b.tagline}</span>}</b>
-        <span className="row gap-6" style={{ justifyContent: 'flex-end' }}>{b.showIcons && <>{icon(<Heart size={18} />, 'Favourites', 'rewards')}{icon(<ShoppingBag size={18} />, 'Basket', 'shop')}</>}</span>
+        <span className="row gap-6" style={{ justifyContent: 'flex-end' }}>{b.showIcons && <>{rewardsOn ? icon(<Heart size={18} />, 'Rewards', 'rewards') : icon(<UserRound size={18} />, 'Account', 'profile')}<span className="sp-cartbtn">{icon(<ShoppingBag size={18} />, 'Basket', 'cart')}{cartN > 0 && <i aria-hidden>{cartN}</i>}</span></>}</span>
       </div>
     );
   }
