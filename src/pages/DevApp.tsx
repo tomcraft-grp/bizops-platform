@@ -1,18 +1,29 @@
 // DEV APP Customer — self-service designer for customer-facing app layouts.
 // Draft → Preview → Apply → Approve → Deploy → Published, with version history and rollback.
 // Permissions are enforced by the database (RLS + workflow functions); the UI only mirrors them.
-import { DragEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Copy, Eye, GripVertical, Monitor, Redo2, Rocket, Save, Smartphone, Tablet, Trash2, Undo2, Upload, CheckCircle2, XCircle, History, ExternalLink, Plus, RotateCcw } from 'lucide-react';
+import { createContext, DragEvent, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, Copy, Eye, GripVertical, Monitor, Redo2, Rocket, Save, Smartphone, Tablet, Trash2, Undo2, Upload, CheckCircle2, XCircle, History, ExternalLink, Plus, RotateCcw, Lock, FileText, Database, Table2 } from 'lucide-react';
 import { useDB, toast, useLang } from '../domain/store';
 import { t as tl } from '../lib/i18n';
 import { Badge, Banner, Button, Card, Empty, Field, Input, Modal, PageHead, Select, Tabs, Textarea, Tx, useConfirm } from '../ui/kit';
-import { AppRole, canDo, CustomerApp, Deployment, devapp, LayoutVersion, StaffRow, Template, VersionStatus } from '../devapp/api';
+import { AppRole, AvailableView, canDo, CustomerApp, dataSources, Deployment, devapp, LayoutVersion, StaffRow, Template, VersionStatus } from '../devapp/api';
 import { PhonePreview } from '../devapp/Preview';
 import {
   defaultLayout, Device, DEVICES, diffLayouts, FieldDef, FONTS, LayoutConfig, newSection, normalizeLayout, Section, SECTION_DEFS, sectionDef,
-  ALWAYS_VISIBLE, PropItem, SectionType, TAB_KEYS, Theme, THEME_PRESETS, validateLayout,
+  ALWAYS_VISIBLE, PropItem, SectionType, Theme, THEME_PRESETS, validateLayout,
+  AggFn, AGG_FNS, Binding, CORE_OF, ColType, CUSTOMER_GROUPS, CustomerGroup, emptyBinding, FIELD_FORMATS, FILTER_OPS, Issue, isCoreType, MAX_CUSTOM_PAGES, MAX_LIMIT,
+  PageRef, pageList, pageSections, pageSectionsMut, PageTab, slugify, customId,
 } from '../devapp/schema';
+import { checkBinding, ColumnDef, CONNECTIONS, LOCAL_SOURCES, SourceDef } from '../devapp/datasources';
+import { formatValue, useData } from '../devapp/dataViews';
 import { cx, dateTimeFmt } from '../lib/util';
+
+/** Data sources the editor can bind to (app data + registered database views). */
+const SourcesCtx = createContext<SourceDef[]>(LOCAL_SOURCES);
+/** Link targets for 'Opens page' fields: the tabs and the custom pages of the layout being edited. */
+const LinksCtx = createContext<{ v: string; label: string }[]>([]);
+/** The member the designer previews with (member-only data sources show that member's records). */
+const MemberCtx = createContext<string>('');
 
 const STATUS_TONE: Record<VersionStatus, 'good' | 'warn' | 'bad' | 'info' | ''> = { draft: '', applied: 'info', approved: 'warn', published: 'good', superseded: '', rejected: 'bad' };
 // Layout statuses get their own Thai words: the generic dictionary already uses 'applied' for promotions (= used).
@@ -64,19 +75,41 @@ export default function DevApp() {
   const cfg = h.cur;
   const [selected, setSelected] = useState<string | null>(null);
   const [device, setDevice] = useState<Device>('mobile');
-  const [panel, setPanel] = useState<'versions' | 'deployments' | 'templates' | 'issues' | 'access'>('versions');
+  const [panel, setPanel] = useState<'versions' | 'deployments' | 'templates' | 'issues' | 'access' | 'data'>('versions');
   const [busy, setBusy] = useState('');
   const [compare, setCompare] = useState<{ a: LayoutConfig; aLabel: string; b: LayoutConfig; bLabel: string } | null>(null);
   const [deployOpen, setDeployOpen] = useState(false);
   const [intro, setIntro] = useState(false);
   const [memberId, setMemberId] = useState<string>(() => [...db.customers].sort((a, b) => (b.lineUserId ? 1 : 0) - (a.lineUserId ? 1 : 0))[0]?.id ?? '');
+  const [page, setPageRaw] = useState<PageRef>('home');
+  const setPage = (p: PageRef) => { setPageRaw(p); setSelected(null); };
+  const [dbSources, setDbSources] = useState<SourceDef[]>([]);
+  const [dbSourcesErr, setDbSourcesErr] = useState<string | null>(null);
+  const sources = useMemo(() => [...LOCAL_SOURCES, ...dbSources], [dbSources]);
+  const loadSources = useCallback(() => dataSources.list().then((s) => { setDbSources(s); setDbSourcesErr(null); }).catch((e: Error) => setDbSourcesErr(e.message)), []);
 
   const app = apps.find((a) => a.id === appId);
   const live = versions.find((v) => v.id === app?.published_version_id) ?? null;
   const editable = !open || open.status === 'draft';
   const canEdit = canDo(role ?? null, 'edit') && editable;
   const dirty = JSON.stringify(cfg) !== saved;
-  const issues = useMemo(() => validateLayout(cfg), [cfg]);
+  const pages = useMemo(() => pageList(cfg), [cfg]);
+  // a page removed by undo / by loading another version falls back to Home
+  useEffect(() => { if (!pages.some((p) => p.ref === page)) setPage('home'); }, [pages.map((p) => p.ref).join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const links = useMemo(() => pages.filter((p) => p.ref !== 'profile').map((p) => ({ v: p.ref as string, label: p.kind === 'custom' ? `${tl(lang, 'Page')}: ${p.label}` : p.label })), [pages, lang]);
+  const issues = useMemo(() => {
+    const out: Issue[] = validateLayout(cfg);
+    // data bindings checked against the sources this editor knows (the server re-checks every query)
+    for (const pg of pages) pageSections(cfg, pg.ref).forEach((s) => {
+      const def = sectionDef(s.type);
+      for (const f of def?.fields ?? []) {
+        if (f.kind !== 'binding' || !s.props[f.key] || typeof s.props[f.key] !== 'object') continue;
+        const roles = def!.fields.filter((x) => x.kind === 'column' && x.of === f.key).map((x) => ({ key: x.key, label: x.label, value: String(s.props[x.key] ?? ''), types: x.colTypes }));
+        for (const m of checkBinding(s.props[f.key] as Binding, sources, roles)) out.push({ path: `${pg.label} › ${def!.label}`, message: m });
+      }
+    });
+    return out;
+  }, [cfg, pages, sources]);
 
   // --------------------------------------------------------------------------------------- loading
   const loadApp = useCallback(async (id: string, keepOpen?: string) => {
@@ -100,6 +133,7 @@ export default function DevApp() {
         if (!r) return;
         const [as, ts] = await Promise.all([devapp.apps(), devapp.templates()]);
         setApps(as); setTemplates(ts);
+        void loadSources();
         if (as[0]) { setAppId(as[0].id); await loadApp(as[0].id); }
       } catch (e) { const m = (e as Error).message;
         // The database part (supabase/migrations/*_customer_app_designer.sql) has not been applied to this project yet
@@ -160,24 +194,47 @@ export default function DevApp() {
     setOpen(null); setName(label); h.reset(normalizeLayout(clone(c))); setSaved(''); setSelected(null);
   };
 
-  // --------------------------------------------------------------------------------------- section editing
-  const sel = cfg.home.find((s) => s.id === selected) ?? null;
+  // --------------------------------------------------------------------------------------- section editing (on the selected page)
+  const secs = pageSections(cfg, page);
+  const L = (c: LayoutConfig) => pageSectionsMut(c, page);
+  const sel = secs.find((s) => s.id === selected) ?? null;
   const addSection = (type: SectionType, before?: string) => {
-    if (!canEdit) return;
+    if (!canEdit || isCoreType(type)) return;
+    if (secs.length >= 60) return toast('error', tl(lang, 'A page can have at most 60 components'));
     const s = newSection(type);
-    h.change((c) => { const i = before ? c.home.findIndex((x) => x.id === before) : -1; if (i >= 0) c.home.splice(i, 0, s); else c.home.push(s); });
+    h.change((c) => { const l = L(c); const i = before ? l.findIndex((x) => x.id === before) : -1; if (i >= 0) l.splice(i, 0, s); else l.push(s); });
     setSelected(s.id);
   };
   const moveSection = (id: string, before: string | null) => h.change((c) => {
-    const i = c.home.findIndex((x) => x.id === id); if (i < 0 || id === before) return;
-    const [s] = c.home.splice(i, 1);
-    const j = before ? c.home.findIndex((x) => x.id === before) : -1;
-    if (j >= 0) c.home.splice(j, 0, s); else c.home.push(s);
+    const l = L(c);
+    const i = l.findIndex((x) => x.id === id); if (i < 0 || id === before) return;
+    const [s] = l.splice(i, 1);
+    const j = before ? l.findIndex((x) => x.id === before) : -1;
+    if (j >= 0) l.splice(j, 0, s); else l.push(s);
   });
-  const nudge = (id: string, d: -1 | 1) => h.change((c) => { const i = c.home.findIndex((x) => x.id === id); const j = i + d; if (i < 0 || j < 0 || j >= c.home.length) return; [c.home[i], c.home[j]] = [c.home[j], c.home[i]]; });
-  const dupSection = (id: string) => { const src = cfg.home.find((x) => x.id === id); if (!src) return; const s = { ...clone(src), id: newSection(src.type).id }; h.change((c) => { c.home.splice(c.home.findIndex((x) => x.id === id) + 1, 0, s); }); setSelected(s.id); };
-  const delSection = (id: string) => { h.change((c) => { c.home = c.home.filter((x) => x.id !== id); }); setSelected(null); };
-  const editSection = (fn: (s: Section) => void, key: string) => h.change((c) => { const s = c.home.find((x) => x.id === selected); if (s) fn(s); }, key);
+  const nudge = (id: string, d: -1 | 1) => h.change((c) => { const l = L(c); const i = l.findIndex((x) => x.id === id); const j = i + d; if (i < 0 || j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; });
+  // The core block of a tab holds its built-in features (cart, redeem, payments…): it can be moved but never copied or removed.
+  const coreGuard = (id: string) => { const s = secs.find((x) => x.id === id); if (s && isCoreType(s.type)) { toast('info', tl(lang, 'This block holds the page’s built-in features. You can move it, but not copy or remove it.')); return true; } return false; };
+  const dupSection = (id: string) => { if (coreGuard(id)) return; const src = secs.find((x) => x.id === id); if (!src) return; const s = { ...clone(src), id: newSection(src.type).id }; h.change((c) => { const l = L(c); l.splice(l.findIndex((x) => x.id === id) + 1, 0, s); }); setSelected(s.id); };
+  const delSection = (id: string) => { if (coreGuard(id)) return; h.change((c) => { const l = L(c); const i = l.findIndex((x) => x.id === id); if (i >= 0) l.splice(i, 1); }); setSelected(null); };
+  const editSection = (fn: (s: Section) => void, key: string) => h.change((c) => { const s = L(c).find((x) => x.id === selected); if (s) fn(s); }, key);
+  const addPage = (title: string) => {
+    if (!canEdit) return;
+    if (cfg.customPages.length >= MAX_CUSTOM_PAGES) return toast('error', tl(lang, 'Max {n} custom pages', { n: MAX_CUSTOM_PAGES }));
+    const t = title.trim().slice(0, 40); if (!t) return;
+    const taken = new Set(cfg.customPages.map((p) => p.id));
+    let base = slugify(t); if (base.length < 2) base = 'page';
+    let id = base; for (let n = 2; taken.has(id); n++) id = `${base.slice(0, 27)}-${n}`;
+    h.change((c) => { c.customPages.push({ id, title: t, sections: [{ ...newSection('heading'), props: { text: t, size: 22 } }] }); });
+    setPage(`page:${id}`);
+  };
+  const removePage = async (id: string) => {
+    const p = cfg.customPages.find((x) => x.id === id); if (!p) return;
+    const r = await ask({ title: tl(lang, 'Delete the page “{t}”?', { t: p.title }), body: 'Buttons and links that open this page will need a new target (they are listed under Validation). You can undo this until you save.', confirmLabel: 'Delete page', danger: true });
+    if (!r.ok) return;
+    h.change((c) => { c.customPages = c.customPages.filter((x) => x.id !== id); });
+    setPage('home');
+  };
 
   // keyboard: Ctrl+Z / Ctrl+Y / Delete
   useEffect(() => {
@@ -221,13 +278,15 @@ export default function DevApp() {
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(s.id); } }}
         >
           <div className="dev-sec-bar">
-            <span className="dev-sec-name"><Tx>{sectionDef(s.type)?.label ?? s.type}</Tx>{hiddenHere && <> · <Tx>hidden on this device</Tx></>}</span>
+            <span className="dev-sec-name">{isCoreType(s.type) && <Lock size={11} style={{ verticalAlign: -1, marginRight: 4 }} aria-label={tl(lang, 'Built-in')} />}<Tx>{sectionDef(s.type)?.label ?? s.type}</Tx>{hiddenHere && <> · <Tx>hidden here</Tx></>}</span>
             {canEdit && <span className="row gap-4" onClick={(e) => e.stopPropagation()}>
               <span draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', 'move:' + s.id); e.dataTransfer.effectAllowed = 'move'; }} onDragEnd={() => setDropBefore(undefined)} className="dev-ic" title={tl(lang, 'Drag to move')} aria-hidden><GripVertical size={14} /></span>
               <button type="button" className="dev-ic" onClick={() => nudge(s.id, -1)} aria-label={tl(lang, 'Move up')}><ArrowUp size={13} /></button>
               <button type="button" className="dev-ic" onClick={() => nudge(s.id, 1)} aria-label={tl(lang, 'Move down')}><ArrowDown size={13} /></button>
-              <button type="button" className="dev-ic" onClick={() => dupSection(s.id)} aria-label={tl(lang, 'Duplicate')}><Copy size={13} /></button>
-              <button type="button" className="dev-ic" onClick={() => delSection(s.id)} aria-label={tl(lang, 'Delete')}><Trash2 size={13} /></button>
+              {!isCoreType(s.type) && <>
+                <button type="button" className="dev-ic" onClick={() => dupSection(s.id)} aria-label={tl(lang, 'Duplicate')}><Copy size={13} /></button>
+                <button type="button" className="dev-ic" onClick={() => delSection(s.id)} aria-label={tl(lang, 'Delete')}><Trash2 size={13} /></button>
+              </>}
             </span>}
           </div>
           {/* sections that render nothing for this member (e.g. no outstanding balance) stay selectable via the placeholder */}
@@ -273,7 +332,7 @@ export default function DevApp() {
           {canDo(role, 'edit') && (editable
             ? <Button size="sm" onClick={saveDraft} loading={busy === 'save'} disabled={!!busy || (!dirty && !!open)}><Save size={15} /> <Tx>Save draft</Tx></Button>
             : <Button size="sm" onClick={() => duplicate(open)} disabled={!!busy}><Copy size={15} /> <Tx>Edit as new draft</Tx></Button>)}
-          <Button size="sm" onClick={() => setCompare({ a: live ? normalizeLayout(live.config) : defaultLayout(db.org.name.split(' ')[0]), aLabel: live ? tl(lang, 'Live now (v{n})', { n: live.version_no }) : tl(lang, 'Live now (built-in layout)'), b: cfg, bLabel: tl(lang, 'This layout ({v})', { v: versionLabel }) })}><Eye size={15} /> <Tx>Preview</Tx></Button>
+          <Button size="sm" onClick={() => setCompare({ a: live ? normalizeLayout(live.config) : defaultLayout(db.org.name.split(' ')[0]), aLabel: live ? tl(lang, 'Live now (v{n})', { n: live.version_no }) : tl(lang, 'Live now (built-in layout)'), b: cfg, bLabel: tl(lang, 'This layout ({v})', { v: versionLabel }) })}><Eye size={15} /> <Tx>Preview & compare</Tx></Button>
           {canDo(role, 'deploy') && st === 'draft' && <Button size="sm" variant="primary" onClick={apply} disabled={!open || dirty || !!busy} title={!open || dirty ? tl(lang, 'Save the draft first') : undefined}><CheckCircle2 size={15} /> <Tx>Apply</Tx></Button>}
           {canDo(role, 'approve') && st === 'applied' && <><Button size="sm" variant="primary" onClick={() => review(true)} disabled={!!busy}><CheckCircle2 size={15} /> <Tx>Approve</Tx></Button><Button size="sm" variant="danger" onClick={() => review(false)} disabled={!!busy}><XCircle size={15} /> <Tx>Reject</Tx></Button></>}
           {canDo(role, 'deploy') && st === 'approved' && <Button size="sm" variant="primary" onClick={() => setDeployOpen(true)} disabled={!!busy}><Rocket size={15} /> <Tx>Deploy</Tx></Button>}
@@ -290,11 +349,14 @@ export default function DevApp() {
       </div>
 
       {/* ---------------------------------------------------------------- workspace */}
+      <SourcesCtx.Provider value={sources}><LinksCtx.Provider value={links}><MemberCtx.Provider value={memberId}>
       <div className="dev-work">
-        <aside className="dev-side card" aria-label={tl(lang, 'Components')}>
-          <div className="dev-side-h"><Tx>Components</Tx></div>
+        <aside className="dev-side card" aria-label={tl(lang, 'Pages and components')}>
+          <div className="dev-side-h"><Tx>Pages</Tx></div>
+          <PageListPanel pages={pages} page={page} onPage={setPage} canEdit={canEdit} onAdd={addPage} max={cfg.customPages.length >= MAX_CUSTOM_PAGES} />
+          <div className="dev-side-h" style={{ borderTop: '1px solid var(--hairline, var(--border))', paddingTop: 10 }}><Tx>Components</Tx></div>
           {!canEdit && <div className="muted" style={{ fontSize: 12, padding: '0 12px 8px' }}><Tx>{editable ? 'Your role can view layouts only.' : 'This version is locked. Use “Edit as new draft” to change it.'}</Tx></div>}
-          {(['Member data', 'Content', 'Layout'] as const).map((g) => (
+          {(['Data', 'Member data', 'Content', 'Layout'] as const).map((g) => (
             <div key={g}>
               <div className="dev-group"><Tx>{g}</Tx></div>
               {SECTION_DEFS.filter((d) => d.group === g).map((d) => (
@@ -306,6 +368,20 @@ export default function DevApp() {
               ))}
             </div>
           ))}
+          <div className="dev-side-h" style={{ borderTop: '1px solid var(--hairline, var(--border))', paddingTop: 10, marginTop: 6 }}><Tx>Data sources</Tx></div>
+          {CONNECTIONS.map((cn) => (
+            <div key={cn.v}>
+              <div className="dev-group" title={tl(lang, cn.desc)}><Tx>{cn.label}</Tx></div>
+              {sources.filter((s) => s.connection === cn.v).map((s) => (
+                <div key={s.id} className="dev-src" title={tl(lang, s.description)}>
+                  {cn.v === 'db' ? <Database size={13} /> : <Table2 size={13} />}
+                  <span><b>{s.label}</b><small className="mono">{s.schema}.{s.table}{s.scope === 'member' ? ' · ' + tl(lang, 'own records') : ''}{s.enabled === false ? ' · ' + tl(lang, 'off') : ''}</small></span>
+                </div>
+              ))}
+              {cn.v === 'db' && !dbSources.length && <div className="muted" style={{ fontSize: 11.5, padding: '2px 12px 6px' }}>{dbSourcesErr ? <Tx>Database sources are not available (the DEV APP data migration may not be applied yet).</Tx> : <Tx>None registered yet.</Tx>}</div>}
+            </div>
+          ))}
+          <div style={{ padding: '4px 12px 8px' }}><Button size="sm" variant="ghost" onClick={() => setPanel('data')}><Database size={13} /> <Tx>Manage data sources</Tx></Button></div>
         </aside>
 
         <section className="dev-canvas card" ref={canvasRef}>
@@ -320,23 +396,29 @@ export default function DevApp() {
           </div>
           <div className="dev-stage" onClick={() => setSelected(null)}
             onDragOver={(e) => { if (canEdit) { e.preventDefault(); setDropBefore(null); } }} onDragLeave={(e) => { if (e.currentTarget === e.target) setDropBefore(undefined); }} onDrop={(e) => onDrop(e, null)}>
-            <PhonePreview config={cfg} device={device} customerId={memberId || null} editor={editor} fit={canvasW} height={device === 'mobile' ? 760 : 820} intro={intro} onIntroClose={() => setIntro(false)} />
+            <PhonePreview config={cfg} device={device} customerId={memberId || null} editor={editor} fit={canvasW} height={device === 'mobile' ? 760 : 820} intro={intro} onIntroClose={() => setIntro(false)}
+              page={page} onPage={setPage} />
             {dropBefore === null && <div className="dev-drop-end"><Tx>Drop here to add at the end</Tx></div>}
           </div>
-          {!cfg.home.length && <div className="muted center" style={{ marginTop: 10 }}><Tx>Drag components from the left onto the phone, or click one to add it.</Tx></div>}
+          {!secs.length && <div className="muted center" style={{ marginTop: 10 }}><Tx>Drag components from the left onto the phone, or click one to add it.</Tx></div>}
         </section>
 
         <aside className="dev-props card" aria-label={tl(lang, 'Properties')}>
           {sel ? <SectionProps s={sel} disabled={!canEdit} edit={editSection} onClose={() => setSelected(null)} />
-            : <GlobalProps cfg={cfg} disabled={!canEdit} change={h.change} />}
+            : <>
+              <PageProps cfg={cfg} page={page} disabled={!canEdit} change={h.change} onRemove={removePage} />
+              <GlobalProps cfg={cfg} disabled={!canEdit} change={h.change} />
+            </>}
         </aside>
       </div>
+      </MemberCtx.Provider></LinksCtx.Provider></SourcesCtx.Provider>
 
       {/* ---------------------------------------------------------------- history / deployments / templates */}
       <Card flush className="mt16">
         <Tabs value={panel} onChange={setPanel} tabs={[
           { v: 'versions', label: 'Versions', count: versions.length }, { v: 'deployments', label: 'Deployments', count: deploys.length },
           { v: 'templates', label: 'Templates', count: templates.length }, { v: 'issues', label: 'Validation', count: issues.length || '' },
+          { v: 'data', label: 'Data sources', count: sources.length },
           ...(canDo(role, 'admin') ? [{ v: 'access' as const, label: 'Access' }] : []),
         ]} />
         <div style={{ padding: 14 }}>
@@ -352,10 +434,11 @@ export default function DevApp() {
             ? <div className="col gap-6">{issues.map((i, k) => <div key={k} className="row gap-6"><Badge tone="bad">{i.path || 'layout'}</Badge><span><Tx>{i.message}</Tx></span></div>)}</div>
             : <Banner tone="good"><Tx>The layout is valid and can be applied.</Tx></Banner>)}
           {panel === 'access' && canDo(role, 'admin') && <AccessPanel />}
+          {panel === 'data' && <DataSourcesPanel sources={sources} error={dbSourcesErr} isAdmin={canDo(role, 'admin')} onSaved={loadSources} />}
         </div>
       </Card>
 
-      {compare && <CompareModal {...compare} device={device} memberId={memberId} onClose={() => setCompare(null)} />}
+      {compare && <CompareModal {...compare} device={device} memberId={memberId} page={page} onClose={() => setCompare(null)} />}
       {deployOpen && open && <DeployModal version={open} live={live} cfg={cfg} busy={busy === 'deploy'} onClose={() => setDeployOpen(false)} onDeploy={deploy} />}
     </div>
   );
@@ -400,7 +483,7 @@ function PropField({ f, value, onChange, disabled }: { f: FieldDef; value: unkno
     case 'textarea': return <Field label={f.label}><Textarea rows={4} maxLength={f.max_len} value={String(value ?? '')} disabled={disabled} onChange={(e) => onChange(e.target.value)} /></Field>;
     case 'image': return <Field label={f.label}><ImageInput value={String(value ?? '')} disabled={disabled} onChange={onChange} /></Field>;
     case 'select': return <Field label={f.label}><Select sm value={String(value ?? '')} disabled={disabled} onChange={(e) => onChange(e.target.value)}>{f.options!.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}</Select></Field>;
-    case 'tab': return <Field label={f.label}><Select sm value={String(value ?? '')} disabled={disabled} onChange={(e) => onChange(e.target.value)}><option value="">{tl(lang, '— none —')}</option>{TAB_KEYS.filter((k) => k !== 'profile').map((k) => <option key={k} value={k}>{k}</option>)}</Select></Field>;
+    case 'tab': return <LinkSelect f={f} value={String(value ?? '')} disabled={disabled} onChange={onChange} />;
     case 'items': return <ItemsEditor f={f} items={(Array.isArray(value) ? value : []) as PropItem[]} disabled={disabled} onChange={(v) => onChange(v as unknown as string)} />;
     default: return <Field label={f.label}><Input sm maxLength={f.max_len} value={String(value ?? '')} disabled={disabled} onChange={(e) => onChange(e.target.value)} /></Field>;
   }
@@ -426,12 +509,79 @@ function ItemsEditor({ f, items, disabled, onChange }: { f: FieldDef; items: Pro
     </div>
   );
 }
+function LinkSelect({ f, value, disabled, onChange }: { f: FieldDef; value: string; disabled: boolean; onChange: (v: string) => void }) {
+  const lang = useLang();
+  const links = useContext(LinksCtx);
+  const known = value === '' || links.some((l) => l.v === value);
+  return (
+    <Field label={f.label}>
+      <Select sm value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{tl(lang, '— none —')}</option>
+        {links.map((l) => <option key={l.v} value={l.v}>{l.label}</option>)}
+        {!known && <option value={value}>{tl(lang, '(missing page)')} {value}</option>}
+      </Select>
+    </Field>
+  );
+}
+
+/** Best column for a role field (image, name, price…) after the data source changes. */
+function guessColumn(f: FieldDef, cols: ColumnDef[]): string {
+  if (f.colTypes) return cols.find((c) => f.colTypes!.includes(c.type))?.key ?? '';
+  if (['titleField', 'primaryField', 'captionField'].includes(f.key)) return cols.find((c) => c.type === 'text')?.key ?? '';
+  return '';
+}
+
+function ColumnSelect({ f, value, source, disabled, onChange }: { f: FieldDef; value: string; source: string; disabled: boolean; onChange: (v: string) => void }) {
+  const lang = useLang();
+  const src = useContext(SourcesCtx).find((s) => s.id === source);
+  const cols = (src?.columns ?? []).filter((c) => !f.colTypes || f.colTypes.includes(c.type));
+  return (
+    <Field label={f.label}>
+      <Select sm value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{tl(lang, '— none —')}</option>
+        {cols.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.key})</option>)}
+        {value && !cols.some((c) => c.key === value) && <option value={value}>{tl(lang, '(unknown)')} {value}</option>}
+      </Select>
+    </Field>
+  );
+}
+
 function SectionProps({ s, disabled, edit, onClose }: { s: Section; disabled: boolean; edit: (fn: (s: Section) => void, key: string) => void; onClose: () => void }) {
   const def = sectionDef(s.type)!;
+  const sources = useContext(SourcesCtx);
+  const core = isCoreType(s.type);
+  const setBinding = (key: string, b: Binding) => edit((x) => {
+    const prev = x.props[key] as Binding | undefined;
+    x.props[key] = b;
+    if (prev?.source !== b.source) {
+      // new source: point the role fields (image, name, price…) at matching columns of the new source
+      const cols = sources.find((z) => z.id === b.source)?.columns ?? [];
+      for (const rf of def.fields) if (rf.kind === 'column' && rf.of === key) x.props[rf.key] = guessColumn(rf, cols);
+    }
+  }, s.id + key);
   return (
     <div className="col gap-12">
-      <div className="row between"><div><b><Tx>{def.label}</Tx></b><div className="muted" style={{ fontSize: 12 }}><Tx>{def.desc}</Tx></div></div><Button size="sm" variant="ghost" onClick={onClose}><Tx>Done</Tx></Button></div>
-      {def.fields.map((f) => <PropField key={f.key} f={f} value={s.props[f.key]} disabled={disabled} onChange={(v) => edit((x) => { x.props[f.key] = v; }, s.id + f.key)} />)}
+      <div className="row between"><div><b>{core && <Lock size={13} style={{ verticalAlign: -2, marginRight: 4 }} />}<Tx>{def.label}</Tx></b><div className="muted" style={{ fontSize: 12 }}><Tx>{def.desc}</Tx></div></div><Button size="sm" variant="ghost" onClick={onClose}><Tx>Done</Tx></Button></div>
+      {core && <Banner tone="info"><Tx>Built-in features of this tab. Move it with the arrows or by dragging, and add components above or below it. It cannot be removed, so ordering, payments and redemptions keep working.</Tx></Banner>}
+      {def.fields.map((f) => {
+        if (f.kind === 'binding') {
+          const b = (s.props[f.key] && typeof s.props[f.key] === 'object' ? s.props[f.key] : emptyBinding()) as Binding;
+          const need = def.fields.filter((x) => x.kind === 'column' && x.of === f.key).map((x) => String(s.props[x.key] ?? '')).filter(Boolean);
+          const hasRoles = def.fields.some((x) => x.kind === 'column' && x.of === f.key);
+          return <BindingEditor key={f.key} f={f} b={b} need={need} autoFields={!hasRoles} disabled={disabled} onChange={(nb) => setBinding(f.key, nb)} />;
+        }
+        if (f.kind === 'column') {
+          const b = s.props[f.of ?? 'data'] as Binding | undefined;
+          return <ColumnSelect key={f.key} f={f} value={String(s.props[f.key] ?? '')} source={b?.source ?? ''} disabled={disabled} onChange={(v) => edit((x) => { x.props[f.key] = v; }, s.id + f.key)} />;
+        }
+        return <PropField key={f.key} f={f} value={s.props[f.key]} disabled={disabled} onChange={(v) => edit((x) => { x.props[f.key] = v; }, s.id + f.key)} />;
+      })}
+      <div className="dev-sub"><Tx>Visibility</Tx></div>
+      <div className="muted" style={{ fontSize: 12 }}><Tx>Show only to these customer groups (none ticked = everyone):</Tx></div>
+      <div className="row gap-12 wrap">{CUSTOMER_GROUPS.map((g) => (
+        <label key={g} className="check"><input type="checkbox" checked={s.visibility.groups.includes(g)} disabled={disabled}
+          onChange={(e) => edit((x) => { const set = new Set<CustomerGroup>(x.visibility.groups); if (e.target.checked) set.add(g); else set.delete(g); x.visibility = { groups: CUSTOMER_GROUPS.filter((k) => set.has(k)) }; }, '')} /><Tx>{g}</Tx></label>
+      ))}</div>
       <div className="dev-sub"><Tx>Width (of 12 columns)</Tx></div>
       <div className="row gap-6">{DEVICES.map((d) => (
         <Field key={d.v} label={d.label}><Select sm value={s.span[d.v]} disabled={disabled} onChange={(e) => edit((x) => { x.span[d.v] = Number(e.target.value); }, '')}>{[12, 9, 8, 6, 4, 3].map((n) => <option key={n} value={n}>{n === 12 ? '12 (full)' : n}</option>)}</Select></Field>
@@ -502,6 +652,249 @@ function GlobalProps({ cfg, disabled, change }: { cfg: LayoutConfig; disabled: b
         ))}
         <span className="hint"><Tx>Home and profile always stay visible. “profile” appears only for members signed in with LINE.</Tx></span>
       </div>}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------------------------------- pages
+function PageListPanel({ pages, page, onPage, canEdit, onAdd, max }: { pages: ReturnType<typeof pageList>; page: PageRef; onPage: (p: PageRef) => void; canEdit: boolean; onAdd: (title: string) => void; max: boolean }) {
+  const lang = useLang();
+  const [title, setTitle] = useState('');
+  const [adding, setAdding] = useState(false);
+  return (
+    <div className="dev-pages" role="listbox" aria-label={tl(lang, 'Pages')}>
+      {pages.map((p) => (
+        <button key={p.ref} type="button" role="option" aria-selected={page === p.ref} className={cx('dev-page', page === p.ref && 'on')} onClick={() => onPage(p.ref)}>
+          <FileText size={13} /><span className="grow">{p.label}</span>
+          {p.kind === 'custom' ? <small><Tx>page</Tx></small> : !p.inNav ? <small><Tx>hidden</Tx></small> : null}
+        </button>
+      ))}
+      {canEdit && (adding
+        ? <form className="row gap-4" style={{ padding: '4px 12px' }} onSubmit={(e) => { e.preventDefault(); onAdd(title); setTitle(''); setAdding(false); }}>
+            <Input sm autoFocus value={title} maxLength={40} placeholder={tl(lang, 'Page title, e.g. Product details')} onChange={(e) => setTitle(e.target.value)} aria-label={tl(lang, 'New page title')} />
+            <Button size="sm" type="submit" variant="primary" disabled={!title.trim()}><Tx>Add</Tx></Button>
+          </form>
+        : <div style={{ padding: '2px 12px 6px' }}><Button size="sm" variant="ghost" disabled={max} onClick={() => setAdding(true)}><Plus size={13} /> <Tx>New page</Tx></Button></div>)}
+    </div>
+  );
+}
+
+function PageProps({ cfg, page, disabled, change, onRemove }: { cfg: LayoutConfig; page: PageRef; disabled: boolean; change: (fn: (c: LayoutConfig) => void, key?: string) => void; onRemove: (id: string) => void }) {
+  const info = pageList(cfg).find((p) => p.ref === page);
+  const id = customId(page);
+  const cp = id ? cfg.customPages.find((p) => p.id === id) : undefined;
+  if (!info) return null;
+  return (
+    <div className="col gap-8 dev-pageprops">
+      <div className="dev-sub" style={{ borderTop: 0, paddingTop: 0 }}><Tx>This page</Tx></div>
+      {cp ? <>
+        <Field label="Page title"><Input sm maxLength={40} value={cp.title} disabled={disabled} onChange={(e) => change((c) => { const x = c.customPages.find((p) => p.id === cp.id); if (x) x.title = e.target.value; }, 'cp-title' + cp.id)} /></Field>
+        <div className="muted" style={{ fontSize: 12 }}><Tx>Address</Tx>: <span className="mono">page:{cp.id}</span></div>
+        <div className="muted" style={{ fontSize: 12 }}><Tx>Customers open this page from a Button, Banner, Card carousel, Section header, or by tapping a record in a data component (choose it under “Opens page”). Data components here can filter by the tapped record with {'{selected.field}'}, e.g. sku = {'{selected.sku}'}.</Tx></div>
+        {!disabled && <div><Button size="sm" variant="danger" onClick={() => onRemove(cp.id)}><Trash2 size={13} /> <Tx>Delete page</Tx></Button></div>}
+      </> : <>
+        <div><b>{info.label}</b> <span className="muted mono" style={{ fontSize: 11 }}>{page}</span>{!info.inNav && <> <Badge tone="warn"><Tx>hidden from menu</Tx></Badge></>}</div>
+        <div className="muted" style={{ fontSize: 12 }}>{page === 'home'
+          ? <Tx>The first page members see. Rename tabs or hide them under Navigation.</Tx>
+          : <Tx vars={{ core: sectionDef(CORE_OF[page as PageTab])?.label ?? '' }}>{'The locked block “{core}” keeps this tab working. Add components above or below it and rearrange freely. Rename the tab under Navigation.'}</Tx>}</div>
+      </>}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------------------------------- data binding
+/**
+ * Data source → schema → table/view → fields, then filters, sorting, number of records and a live preview of the real data.
+ * Only registered sources and their allow-listed columns can be chosen; nothing here is SQL.
+ */
+function BindingEditor({ f, b, need, autoFields, disabled, onChange }: { f: FieldDef; b: Binding; need: string[]; autoFields: boolean; disabled: boolean; onChange: (b: Binding) => void }) {
+  const lang = useLang();
+  const sources = useContext(SourcesCtx);
+  const [preview, setPreview] = useState(false);
+  const src = sources.find((s) => s.id === b.source);
+  const conn = src?.connection ?? (b.source.startsWith('db:') ? 'db' : 'local');
+  const inConn = sources.filter((s) => s.connection === conn && s.enabled !== false);
+  const schemas = [...new Set(inConn.map((s) => s.schema))];
+  const schema = src?.schema ?? schemas[0] ?? '';
+  const cols = src?.columns ?? [];
+  const colLabel = (k: string) => cols.find((c) => c.key === k)?.label ?? k;
+  const typeOf = (k: string): ColType | undefined => cols.find((c) => c.key === k)?.type;
+  const set = (patch: Partial<Binding>) => onChange({ ...b, ...patch });
+  const pickSource = (id: string) => {
+    const s = sources.find((x) => x.id === id); if (!s) return;
+    const text = s.columns.find((c) => c.type === 'text')?.key ?? s.columns[0]?.key ?? '';
+    const max = f.maxFields ?? 0;
+    onChange({
+      ...emptyBinding(id), limit: b.limit,
+      // components with role fields (image, name, price…) get those re-pointed instead; extra fields start empty
+      fields: f.mode === 'field' ? [text] : f.mode === 'records' && max > 0 && autoFields ? s.columns.slice(0, Math.min(3, max)).map((c) => c.key) : [],
+      agg: f.mode === 'aggregate' ? { fn: 'count', field: '', groupBy: f.groupBy ? text : '' } : null,
+    });
+  };
+  const firstIn = (pred: (s: SourceDef) => boolean) => sources.find((s) => s.enabled !== false && pred(s))?.id;
+  const numCols = cols.filter((c) => c.type === 'number' || c.type === 'money');
+  const records = f.mode === 'records';
+  const showFields = records && (f.maxFields ?? 0) > 0;
+  return (
+    <div className="dev-binding col gap-8">
+      <div className="dev-sub"><Database size={12} style={{ verticalAlign: -1 }} /> <Tx>{f.label}</Tx></div>
+      <div className="dev-grid2">
+        <Field label="Data source"><Select sm value={conn} disabled={disabled} onChange={(e) => { const id = firstIn((s) => s.connection === e.target.value); if (id) pickSource(id); else toast('info', tl(lang, 'No sources registered for this connection yet.')); }}>
+          {CONNECTIONS.map((c) => <option key={c.v} value={c.v}>{tl(lang, c.label)}</option>)}</Select></Field>
+        <Field label="Schema"><Select sm value={schema} disabled={disabled} onChange={(e) => { const id = firstIn((s) => s.connection === conn && s.schema === e.target.value); if (id) pickSource(id); }}>
+          {schemas.map((s) => <option key={s} value={s}>{s}</option>)}</Select></Field>
+      </div>
+      <Field label="Table / view"><Select sm value={b.source} disabled={disabled} onChange={(e) => pickSource(e.target.value)}>
+        {inConn.filter((s) => s.schema === schema).map((s) => <option key={s.id} value={s.id}>{s.label} ({s.table})</option>)}
+        {!src && <option value={b.source}>{tl(lang, '(not available)')} {b.source}</option>}
+      </Select></Field>
+      {src && <div className="muted" style={{ fontSize: 11.5 }}>{tl(lang, src.description)}{src.scope === 'member' && <> · <b><Tx>Each member sees only their own records.</Tx></b></>}{src.scope === 'authenticated' && <> · <Tx>Signed-in members only.</Tx></>}</div>}
+
+      {f.mode === 'field' && <Field label="Field"><Select sm value={b.fields[0] ?? ''} disabled={disabled} onChange={(e) => set({ fields: [e.target.value] })}>{cols.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</Select></Field>}
+
+      {showFields && <div className="col gap-4">
+        <div className="muted" style={{ fontSize: 12 }}><Tx>{f.maxFields === 6 ? 'Extra details shown on each card' : 'Fields to display (in this order)'}</Tx></div>
+        {b.fields.map((k, i) => (
+          <div key={k} className="row gap-4 dev-fieldrow">
+            <span className="grow" style={{ minWidth: 0 }}>{colLabel(k)} <span className="muted mono" style={{ fontSize: 10.5 }}>{typeOf(k) ?? '?'}</span></span>
+            <Select sm style={{ width: 92 }} value={b.formats[k] ?? 'auto'} disabled={disabled} aria-label={tl(lang, 'Display format')} onChange={(e) => set({ formats: { ...b.formats, [k]: e.target.value as Binding['formats'][string] } })}>
+              {FIELD_FORMATS.map((x) => <option key={x.v} value={x.v}>{tl(lang, x.label)}</option>)}</Select>
+            <Button size="sm" variant="ghost" icon disabled={disabled || i === 0} onClick={() => { const n = [...b.fields]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; set({ fields: n }); }} aria-label="Move up"><ArrowUp size={12} /></Button>
+            <Button size="sm" variant="ghost" icon disabled={disabled} onClick={() => { const fm = { ...b.formats }; delete fm[k]; set({ fields: b.fields.filter((x) => x !== k), formats: fm }); }} aria-label="Remove"><Trash2 size={12} /></Button>
+          </div>
+        ))}
+        {!disabled && b.fields.length < (f.maxFields ?? 0) && <Select sm value="" onChange={(e) => e.target.value && set({ fields: [...b.fields, e.target.value] })} aria-label={tl(lang, 'Add field')}>
+          <option value="">{tl(lang, '+ Add field…')}</option>{cols.filter((c) => !b.fields.includes(c.key)).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</Select>}
+      </div>}
+
+      {f.mode === 'aggregate' && b.agg && <div className="dev-grid2">
+        <Field label="Calculate"><Select sm value={b.agg.fn} disabled={disabled} onChange={(e) => set({ agg: { ...b.agg!, fn: e.target.value as AggFn, field: e.target.value === 'count' ? '' : b.agg!.field || numCols[0]?.key || '' } })}>
+          {AGG_FNS.map((a) => <option key={a.v} value={a.v}>{tl(lang, a.label)}</option>)}</Select></Field>
+        {b.agg.fn !== 'count' && <Field label="Of field"><Select sm value={b.agg.field} disabled={disabled} onChange={(e) => set({ agg: { ...b.agg!, field: e.target.value } })}>
+          {numCols.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</Select></Field>}
+        {f.groupBy && <Field label="Group by"><Select sm value={b.agg.groupBy} disabled={disabled} onChange={(e) => set({ agg: { ...b.agg!, groupBy: e.target.value } })}>
+          {cols.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</Select></Field>}
+      </div>}
+
+      <div className="col gap-4">
+        <div className="muted" style={{ fontSize: 12 }}><Tx>Filters (all must match)</Tx></div>
+        {b.filters.map((x, i) => {
+          const op = FILTER_OPS.find((o) => o.v === x.op);
+          const t = typeOf(x.field);
+          const upd = (p: Partial<typeof x>) => set({ filters: b.filters.map((y, j) => (j === i ? { ...y, ...p } : y)) });
+          return (
+            <div key={i} className="row gap-4 dev-fieldrow">
+              <Select sm value={x.field} disabled={disabled} onChange={(e) => upd({ field: e.target.value })} aria-label={tl(lang, 'Field')}>{cols.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</Select>
+              <Select sm style={{ width: 96 }} value={x.op} disabled={disabled} onChange={(e) => upd({ op: e.target.value as typeof x.op })} aria-label={tl(lang, 'Condition')}>
+                {FILTER_OPS.filter((o) => !o.types || (t && o.types.includes(t))).map((o) => <option key={o.v} value={o.v}>{tl(lang, o.label)}</option>)}</Select>
+              {op?.needsValue && <Input sm style={{ width: 90 }} maxLength={200} value={x.value} disabled={disabled} placeholder={t === 'boolean' ? 'true / false' : t === 'date' ? 'YYYY-MM-DD' : ''} onChange={(e) => upd({ value: e.target.value })} aria-label={tl(lang, 'Value')} />}
+              <Button size="sm" variant="ghost" icon disabled={disabled} onClick={() => set({ filters: b.filters.filter((_, j) => j !== i) })} aria-label="Remove filter"><Trash2 size={12} /></Button>
+            </div>
+          );
+        })}
+        {!disabled && b.filters.length < 8 && cols.length > 0 && <div><Button size="sm" variant="ghost" onClick={() => set({ filters: [...b.filters, { field: cols[0].key, op: 'eq', value: '' }] })}><Plus size={13} /> <Tx>Add filter</Tx></Button></div>}
+      </div>
+
+      {records && <div className="dev-grid2">
+        <Field label="Sort by"><Select sm value={b.sort?.field ?? ''} disabled={disabled} onChange={(e) => set({ sort: e.target.value ? { field: e.target.value, dir: b.sort?.dir ?? 'asc' } : null })}>
+          <option value="">{tl(lang, '— none —')}</option>{cols.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</Select></Field>
+        <Field label="Direction"><Select sm value={b.sort?.dir ?? 'asc'} disabled={disabled || !b.sort} onChange={(e) => b.sort && set({ sort: { ...b.sort, dir: e.target.value as 'asc' | 'desc' } })}>
+          <option value="asc">{tl(lang, 'A → Z / low → high')}</option><option value="desc">{tl(lang, 'Z → A / high → low')}</option></Select></Field>
+      </div>}
+      {(records || f.groupBy || f.mode === 'field') && <Field label={records ? 'Number of records' : 'Max groups'}><Input sm type="number" min={1} max={MAX_LIMIT} value={b.limit} disabled={disabled} onChange={(e) => set({ limit: Math.max(1, Math.min(MAX_LIMIT, Math.round(Number(e.target.value)) || 1)) })} /></Field>}
+
+      <div><Button size="sm" onClick={() => setPreview(!preview)}><Eye size={13} /> <Tx>{preview ? 'Hide data preview' : 'Preview data'}</Tx></Button></div>
+      {preview && <DataPreview b={b} need={need} />}
+    </div>
+  );
+}
+
+/** The real rows this binding returns (for the member chosen in “Preview as member”). */
+function DataPreview({ b, need }: { b: Binding; need: string[] }) {
+  const memberId = useContext(MemberCtx);
+  const st = useData(b, need, memberId || null);
+  if (st.error) return <Banner tone="bad">{st.error}</Banner>;
+  if (st.loading) return <div className="spinner" />;
+  if (!st.rows.length) return <div className="muted" style={{ fontSize: 12 }}><Tx>No records match.</Tx></div>;
+  return (
+    <div className="dev-preview-data">
+      <div className="muted" style={{ fontSize: 11.5 }}><Tx vars={{ n: st.rows.length }}>{'{n} record(s)'}</Tx></div>
+      <div className="table-wrap"><table className="t compact">
+        <thead><tr>{st.columns.map((c) => <th key={c.key}>{c.label}</th>)}</tr></thead>
+        <tbody>{st.rows.slice(0, 10).map((r, i) => <tr key={i}>{st.columns.map((c) => <td key={c.key}>{formatValue(r[c.key], c.type, b.formats[c.key])}</td>)}</tr>)}</tbody>
+      </table></div>
+    </div>
+  );
+}
+
+/** Registered data sources. Administrators register approved database views; columns are read from the database. */
+function DataSourcesPanel({ sources, error, isAdmin, onSaved }: { sources: SourceDef[]; error: string | null; isAdmin: boolean; onSaved: () => void }) {
+  const lang = useLang();
+  const [views, setViews] = useState<AvailableView[] | null>(null);
+  const [form, setForm] = useState<{ id: string; label: string; description: string; view: string; columns: (ColumnDef & { on: boolean })[]; audience: 'authenticated' | 'staff'; enabled: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const loadViews = () => dataSources.availableViews().then(setViews).catch((e: Error) => { toast('error', e.message); setViews([]); });
+  const startFor = (v: AvailableView, existing?: SourceDef) => setForm({
+    id: existing?.id ?? `db:${v.view_name}`.slice(0, 43), label: existing?.label ?? v.view_name.replace(/_/g, ' '), description: existing?.description ?? '', view: v.view_name,
+    columns: v.columns.map((c) => { const e = existing?.columns.find((x) => x.key === c.key); return { ...c, label: e?.label ?? c.label, type: e?.type ?? c.type, on: existing ? !!e : true }; }),
+    audience: existing?.scope === 'staff' ? 'staff' : 'authenticated', enabled: existing?.enabled !== false,
+  });
+  const save = async () => {
+    if (!form) return;
+    setBusy(true);
+    try {
+      await dataSources.save({ ...form, columns: form.columns.filter((c) => c.on).map(({ key, label, type }) => ({ key, label, type })) });
+      toast('success', tl(lang, 'Data source saved')); setForm(null); onSaved();
+    } catch (e) { toast('error', (e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="col gap-12">
+      <div className="muted" style={{ fontSize: 12.5 }}><Tx>Components can show data only from these sources. App data comes from this app; database sources are approved views that administrators register here. Customers can never run their own queries, and member data is always limited to the member’s own records.</Tx></div>
+      {error && <Banner tone="warn"><Tx>Database sources could not be loaded</Tx>: {error}</Banner>}
+      <div className="table-wrap"><table className="t compact">
+        <thead><tr><th><Tx>Source</Tx></th><th><Tx>Connection</Tx></th><th><Tx>Schema / table</Tx></th><th><Tx>Fields</Tx></th><th><Tx>Who can see it</Tx></th><th /></tr></thead>
+        <tbody>{sources.map((s) => (
+          <tr key={s.id}>
+            <td><b>{s.label}</b><div className="sub">{tl(lang, s.description)}</div></td>
+            <td>{s.connection === 'db' ? <Badge tone="info"><Tx>Central database</Tx></Badge> : <Badge><Tx>App data</Tx></Badge>}{s.enabled === false && <> <Badge tone="warn"><Tx>off</Tx></Badge></>}</td>
+            <td className="mono">{s.schema}.{s.table}</td>
+            <td style={{ fontSize: 12 }}>{s.columns.map((c) => c.label).join(', ')}</td>
+            <td className="muted"><Tx>{s.scope === 'member' ? 'Each member: own records only' : s.scope === 'staff' ? 'Staff only' : s.scope === 'authenticated' ? 'Signed-in members' : 'Everyone using the app'}</Tx></td>
+            <td>{isAdmin && s.connection === 'db' && <Button size="sm" variant="ghost" onClick={async () => { const vs = views ?? (await dataSources.availableViews().catch(() => [] as AvailableView[])); setViews(vs); const v = vs.find((x) => x.view_name === s.table); if (v) startFor(v, s); else toast('error', tl(lang, 'The view {v} no longer exists', { v: s.table })); }}><Tx>Edit</Tx></Button>}</td>
+          </tr>))}</tbody>
+      </table></div>
+      {isAdmin && !form && <div><Button size="sm" onClick={loadViews}><Database size={13} /> <Tx>Register a database view…</Tx></Button></div>}
+      {isAdmin && !form && views && (views.length
+        ? <div className="col gap-6"><div className="muted" style={{ fontSize: 12 }}><Tx>Approved views (schema customer_app_views). Choose one; its columns are read automatically.</Tx></div>
+            <div className="row gap-6 wrap">{views.map((v) => <Button key={v.view_name} size="sm" onClick={() => startFor(v, sources.find((s) => s.connection === 'db' && s.table === v.view_name))}><Table2 size={13} /> {v.schema_name}.{v.view_name}</Button>)}</div></div>
+        : <Empty title="No approved views" hint="A developer adds a view to the customer_app_views schema (with only customer-safe columns) in a database migration. It then appears here." />)}
+      {isAdmin && form && (
+        <div className="card" style={{ padding: 12 }}>
+          <div className="col gap-8">
+            <b><Tx>Data source</Tx>: <span className="mono">customer_app_views.{form.view}</span></b>
+            <div className="dev-grid2">
+              <Field label="Label"><Input sm maxLength={80} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></Field>
+              <Field label="Id"><Input sm value={form.id} disabled={sources.some((s) => s.id === form.id)} onChange={(e) => setForm({ ...form, id: e.target.value.toLowerCase() })} /></Field>
+            </div>
+            <Field label="Description"><Input sm maxLength={300} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
+            <div className="dev-grid2">
+              <Field label="Who can see it"><Select sm value={form.audience} onChange={(e) => setForm({ ...form, audience: e.target.value as 'authenticated' | 'staff' })}><option value="authenticated">{tl(lang, 'Signed-in members (customer app)')}</option><option value="staff">{tl(lang, 'Staff only (preview)')}</option></Select></Field>
+              <label className="check" style={{ alignSelf: 'end' }}><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} /><Tx>Enabled</Tx></label>
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}><Tx>Columns components may use (untick anything customers should not see):</Tx></div>
+            {form.columns.map((c, i) => (
+              <div key={c.key} className="row gap-6 dev-fieldrow">
+                <input type="checkbox" checked={c.on} aria-label={c.key} onChange={(e) => setForm({ ...form, columns: form.columns.map((x, j) => (j === i ? { ...x, on: e.target.checked } : x)) })} />
+                <span className="mono" style={{ width: 130, fontSize: 12 }}>{c.key}</span>
+                <Input sm maxLength={60} value={c.label} onChange={(e) => setForm({ ...form, columns: form.columns.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })} aria-label={tl(lang, 'Label')} />
+                <Select sm style={{ width: 110 }} value={c.type} onChange={(e) => setForm({ ...form, columns: form.columns.map((x, j) => (j === i ? { ...x, type: e.target.value as ColType } : x)) })} aria-label={tl(lang, 'Type')}>
+                  {(['text', 'number', 'money', 'boolean', 'date', 'image', 'emoji'] as ColType[]).map((t) => <option key={t} value={t}>{t}</option>)}</Select>
+              </div>
+            ))}
+            <div className="row gap-6"><Button size="sm" variant="primary" loading={busy} disabled={busy || !form.label.trim() || !form.columns.some((c) => c.on)} onClick={save}><Save size={13} /> <Tx>Save data source</Tx></Button><Button size="sm" onClick={() => setForm(null)}><Tx>Cancel</Tx></Button></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -587,16 +980,22 @@ function AccessPanel() {
 }
 
 // ------------------------------------------------------------------------------------------- modals
-function CompareModal({ a, aLabel, b, bLabel, device: d0, memberId, onClose }: { a: LayoutConfig; aLabel: string; b: LayoutConfig; bLabel: string; device: Device; memberId: string; onClose: () => void }) {
+function CompareModal({ a, aLabel, b, bLabel, device: d0, memberId, page: p0, onClose }: { a: LayoutConfig; aLabel: string; b: LayoutConfig; bLabel: string; device: Device; memberId: string; page: PageRef; onClose: () => void }) {
+  const lang = useLang();
   const [device, setDevice] = useState<Device>(d0);
+  const [page, setPage] = useState<PageRef>(p0);
   const changes = useMemo(() => diffLayouts(a, b), [a, b]);
   const fit = device === 'mobile' ? 390 : 520;
+  const pages = useMemo(() => { const m = new Map<string, string>(); for (const p of [...pageList(b), ...pageList(a)]) if (!m.has(p.ref)) m.set(p.ref, p.label); return [...m]; }, [a, b]);
   return (
-    <Modal size="xl" title="Preview & compare" desc="Left: what customers see now. Right: the layout you are working on." onClose={onClose}>
-      <div className="seg mb8" role="tablist">{DEVICES.map((x) => <button key={x.v} type="button" role="tab" aria-selected={device === x.v} className={cx(device === x.v && 'on')} onClick={() => setDevice(x.v)}>{DEVICE_ICON[x.v]} <Tx>{x.label}</Tx></button>)}</div>
+    <Modal size="xl" title="Preview & compare" desc="Left: what customers see now. Right: the layout you are working on. Choose any page, or tap the menu inside the phones." onClose={onClose}>
+      <div className="row gap-8 wrap mb8">
+        <div className="seg" role="tablist">{DEVICES.map((x) => <button key={x.v} type="button" role="tab" aria-selected={device === x.v} className={cx(device === x.v && 'on')} onClick={() => setDevice(x.v)}>{DEVICE_ICON[x.v]} <Tx>{x.label}</Tx></button>)}</div>
+        <Select sm style={{ width: 'auto' }} value={page} onChange={(e) => setPage(e.target.value as PageRef)} aria-label={tl(lang, 'Page')}>{pages.map(([ref, label]) => <option key={ref} value={ref}>{label}</option>)}</Select>
+      </div>
       <div className="row gap-16 wrap" style={{ alignItems: 'flex-start' }}>
-        <PhonePreview config={a} device={device} customerId={memberId || null} fit={fit} height={720} label={aLabel} />
-        <PhonePreview config={b} device={device} customerId={memberId || null} fit={fit} height={720} label={bLabel} />
+        <PhonePreview config={a} device={device} customerId={memberId || null} fit={fit} height={720} label={aLabel} page={page} onPage={setPage} />
+        <PhonePreview config={b} device={device} customerId={memberId || null} fit={fit} height={720} label={bLabel} page={page} onPage={setPage} />
         <div className="grow" style={{ minWidth: 220 }}>
           <b><Tx vars={{ n: changes.length }}>{'{n} change(s)'}</Tx></b>
           <div className="col gap-4 mt8" style={{ fontSize: 12.5, maxHeight: 640, overflow: 'auto' }}>{changes.length ? changes.map((c, i) => <div key={i} className="mono" style={{ wordBreak: 'break-word' }}>{c}</div>) : <span className="muted"><Tx>No differences.</Tx></span>}</div>

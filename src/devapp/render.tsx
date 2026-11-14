@@ -11,7 +11,12 @@ import { Banner, Card } from '../ui/kit';
 import { ProductEmoji, QR } from '../ui/shared';
 import { money, money0 } from '../lib/util';
 import type { ID } from '../domain/types';
-import { Device, deviceForWidth, FONTS, isSafeImageUrl, LayoutConfig, PropItem, Section, TabKey } from './schema';
+import { CoreType, Device, deviceForWidth, FONTS, isCoreType, isSafeImageUrl, LayoutConfig, PropItem, Section, sectionDef, TabKey } from './schema';
+import {
+  ChartSection, DataCardSection, DataListSection, DataTableSection, DesignerCtx, FilterSection, Go, KpiSection, PageQueryCtx, ProductCardsSection,
+  ProductImageSection, SearchSection, usePageQueryState,
+} from './dataViews';
+import type { Row } from './datasources';
 
 /** CSS variables for the customer app frame. Kit components inside pick them up (buttons, cards, text). */
 export function themeVars(c: LayoutConfig): CSSProperties {
@@ -118,10 +123,19 @@ export function CouponStripSection({ id, buttonLabel = 'Use', linkTab = 'shop', 
 const str = (v: unknown, d = '') => (typeof v === 'string' ? v : d);
 const num = (v: unknown, d: number) => (typeof v === 'number' && isFinite(v) ? v : d);
 
-export function SectionView({ s, customerId, go }: { s: Section; customerId: ID; go: (t: TabKey) => void }): ReactNode {
+export function SectionView({ s, customerId, go }: { s: Section; customerId: ID; go: Go }): ReactNode {
   const p = s.props;
-  const link = (t: unknown) => (typeof t === 'string' && t ? () => go(t as TabKey) : undefined);
+  const link = (t: unknown) => (typeof t === 'string' && t ? () => go(t) : undefined);
   switch (s.type) {
+    case 'dataCard': return <DataCardSection p={p} customerId={customerId} go={go} />;
+    case 'productCard': return <ProductCardsSection p={p} customerId={customerId} go={go} />;
+    case 'productImage': return <ProductImageSection p={p} customerId={customerId} />;
+    case 'dataTable': return <DataTableSection p={p} customerId={customerId} go={go} />;
+    case 'dataList': return <DataListSection p={p} customerId={customerId} go={go} />;
+    case 'kpi': return <KpiSection p={p} customerId={customerId} />;
+    case 'chart': return <ChartSection p={p} customerId={customerId} />;
+    case 'search': return <SearchSection p={p} />;
+    case 'filter': return <FilterSection p={p} customerId={customerId} />;
     case 'memberCard': return <MemberCardSection id={customerId} showQr={p.showQr !== false} showProgress={p.showProgress !== false} />;
     case 'outstandingNotice': return <OutstandingSection id={customerId} go={go} />;
     case 'myCoupons': return <CouponsSection id={customerId} title={str(p.title, 'My coupons')} />;
@@ -253,21 +267,50 @@ export interface EditorHooks {
   render: (s: Section, content: ReactNode, hiddenHere: boolean) => ReactNode;
 }
 
-/** The Home page of a configured layout: a 12-column grid; each section's width depends on the device. */
-export function LayoutHome({ config, device, customerId, go, editor }: { config: LayoutConfig; device: Device; customerId: ID; go: (t: TabKey) => void; editor?: EditorHooks }) {
+/** Placeholder for a tab's built-in features where they cannot run (e.g. the profile form outside a LINE sign-in). */
+export function CorePlaceholder({ type }: { type: CoreType }) {
+  const d = sectionDef(type)!;
+  return <div className="ca-core-ph"><b>{d.label}</b><span>{d.desc}</span></div>;
+}
+
+/**
+ * One page of a configured layout (Home, a tab page or a custom page): a 12-column grid; each section's width depends
+ * on the device. Core blocks (the tab's built-in features) are drawn by `core`, supplied by the host app, so their
+ * business logic stays in pages/CustomerApp.tsx. Sections limited to some customer groups are skipped for others.
+ */
+export function LayoutPage({ config, sections, device, customerId, go, editor, core, selected = null }: {
+  config: LayoutConfig; sections: Section[]; device: Device; customerId: ID; go: Go; editor?: EditorHooks;
+  core?: (t: CoreType) => ReactNode; selected?: Row | null;
+}) {
+  void config;
+  const db = useDB();
+  const group = db.customers.find((c) => c.id === customerId)?.group;
+  const pq = usePageQueryState(selected);
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 'var(--ca-gap, 12px)', alignContent: 'start' }}>
-      {config.home.map((s) => {
-        const hiddenHere = !!s.hidden?.[device];
-        if (hiddenHere && !editor) return null;
-        const st = s.style;
-        const box: CSSProperties = {
-          gridColumn: `span ${Math.min(12, Math.max(1, s.span?.[device] ?? 12))}`, padding: st.padding || undefined, marginTop: st.marginTop || undefined,
-          background: st.background || undefined, color: st.textColor || undefined, borderRadius: st.radius || undefined, textAlign: st.align, minWidth: 0,
-        };
-        const content = <SectionView s={s} customerId={customerId} go={go} />;
-        return <div key={s.id} className="ca-sec" style={box} data-section={s.id}>{editor ? editor.render(s, content, hiddenHere) : content}</div>;
-      })}
-    </div>
+    <DesignerCtx.Provider value={!!editor}>
+      <PageQueryCtx.Provider value={pq}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 'var(--ca-gap, 12px)', alignContent: 'start' }}>
+          {sections.map((s) => {
+            const notForMember = !!group && (s.visibility?.groups?.length ?? 0) > 0 && !s.visibility.groups.includes(group);
+            const hiddenHere = !!s.hidden?.[device] || notForMember;
+            if (hiddenHere && !editor) return null;
+            const st = s.style;
+            const box: CSSProperties = {
+              gridColumn: `span ${Math.min(12, Math.max(1, s.span?.[device] ?? 12))}`, padding: st.padding || undefined, marginTop: st.marginTop || undefined,
+              background: st.background || undefined, color: st.textColor || undefined, borderRadius: st.radius || undefined, textAlign: st.align, minWidth: 0,
+            };
+            const content = isCoreType(s.type)
+              ? <div className="ca-core">{core ? core(s.type) : <CorePlaceholder type={s.type} />}</div>
+              : <SectionView s={s} customerId={customerId} go={go} />;
+            return <div key={s.id} className="ca-sec" style={box} data-section={s.id}>{editor ? editor.render(s, content, hiddenHere) : content}</div>;
+          })}
+        </div>
+      </PageQueryCtx.Provider>
+    </DesignerCtx.Provider>
   );
+}
+
+/** The Home page of a configured layout (kept for existing callers). */
+export function LayoutHome(props: { config: LayoutConfig; device: Device; customerId: ID; go: Go; editor?: EditorHooks }) {
+  return <LayoutPage {...props} sections={props.config.home} />;
 }

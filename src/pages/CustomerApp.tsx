@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { BrandHeader, CouponsSection, LayoutHome, MemberCardSection, OffersSection, OnboardingModal, OutstandingSection, themeVars, useDeviceOf, useLayoutFont } from '../devapp/render';
+import { BrandHeader, CouponsSection, LayoutPage, MemberCardSection, OffersSection, OnboardingModal, OutstandingSection, themeVars, useDeviceOf, useLayoutFont } from '../devapp/render';
 import { CUSTOMER_APP_ID, useCustomerLayout } from '../devapp/useCustomerLayout';
+import { CoreType, customId, pageSections } from '../devapp/schema';
+import type { Row } from '../devapp/datasources';
 import { ArrowLeft, Gift, Hash, Home, Minus, Plus, ShoppingBag, UserRound, Wallet, X } from 'lucide-react';
 import { useDB, useStore, toast, act } from '../domain/store';
 import { customerLifetimeSpend, expiringSoon, pointsBalance, redeemReward, tierFor } from '../domain/loyalty';
@@ -21,6 +23,7 @@ import { linkLineMember } from '../domain/master';
 import { useAuth } from '../auth/AuthProvider';
 import { supabase } from '../lib/supabase';
 import FeedbackCenter, { useFeedbackNotifications } from './customer/FeedbackCenter';
+import { CustomerInvoices } from '../finance/CustomerInvoices';
 
 type Tab = 'home' | 'shop' | 'rewards' | 'pay' | 'events' | 'profile';
 
@@ -72,6 +75,25 @@ export default function CustomerApp() {
     setIntroOpen(!!cfg?.onboarding.enabled && cfg.onboarding.slides.length > 0 && !seen);
   }, [introKey, cfg?.onboarding.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
   const goTab = (t: string) => { if (navTabs.some((x) => x[0] === t)) setTab(t as Tab); };
+  // Custom pages made in DEV APP open from links (buttons, banners, product cards…), optionally with the tapped record.
+  const [custom, setCustom] = useState<{ id: string; record: Row | null } | null>(null);
+  const go = (target: string, record?: Row) => {
+    const id = customId(target);
+    if (id) { if (cfg?.customPages.some((p) => p.id === id)) setCustom({ id, record: record ?? null }); return; }
+    setCustom(null); goTab(target);
+  };
+  const openTab = (t: Tab) => { setCustom(null); setTab(t); };
+  const customPage = custom && cfg ? cfg.customPages.find((p) => p.id === custom.id) : undefined;
+  /** The tabs' built-in features, placed by the layout's core blocks. Same components as without a layout. */
+  const core = (id: ID) => (t: CoreType) => {
+    switch (t) {
+      case 'shopCore': return <ShopTab id={id} go={openTab} />;
+      case 'rewardsCore': return <RewardsTab id={id} />;
+      case 'payCore': return <PayTab id={id} />;
+      case 'eventsCore': return <EventsTab id={id} />;
+      case 'profileCore': return lineId ? <><MemberForm mode="edit" /><hr style={{ border: 0, borderTop: '1px solid var(--border)', width: '100%' }} /><FeedbackCenter fromArea={lastArea} notes={fbNotes} /></> : null;
+    }
+  };
 
   return (
     <div className="standalone">
@@ -84,21 +106,29 @@ export default function CustomerApp() {
           {me && !lineId && <Button onClick={() => login(null)}>Sign out / switch customer</Button>}
         </div>
         <div className="phone" style={cfg ? themeVars(cfg) : undefined}>
-          {cfg ? <BrandHeader config={cfg} go={goTab} /> : <div className="phone-top"><b>{db.org.name.split(' ')[0]} ☕</b><span style={{ fontSize: 12, opacity: 0.9 }}>LINE</span></div>}
+          {cfg ? <BrandHeader config={cfg} go={go} /> : <div className="phone-top"><b>{db.org.name.split(' ')[0]} ☕</b><span style={{ fontSize: 12, opacity: 0.9 }}>LINE</span></div>}
           {layout?.preview && <div style={{ background: 'var(--warn-soft)', color: 'var(--warn-text)', fontSize: 12, padding: '6px 12px' }}>Preview of layout v{layout.versionNo} ({layout.status}) — customers do not see this yet.</div>}
+          {customPage && me && !needsSignup && <div className="ca-backbar"><button type="button" className="ca-hicon" onClick={() => setCustom(null)} aria-label="Back"><ArrowLeft size={16} /></button><b>{customPage.title}</b></div>}
           {needsSignup ? <div className="phone-body"><MemberForm mode="signup" /></div> : !me ? (lineId ? <div className="phone-body center"><div className="spinner" /></div> : <Login onPick={login} />) : (
             <>
               <div className="phone-body" role="region" aria-label="Customer app content" tabIndex={0} ref={setBodyEl}>
-                {tab === 'home' && (cfg ? <LayoutHome config={cfg} device={device} customerId={me.id} go={setTab} /> : <HomeTab id={me.id} go={setTab} />)}
-                {tab === 'shop' && <ShopTab id={me.id} go={setTab} />}
-                {tab === 'rewards' && <RewardsTab id={me.id} />}
-                {tab === 'pay' && <PayTab id={me.id} />}
-                {tab === 'events' && <EventsTab id={me.id} />}
-                {tab === 'profile' && lineId && <><MemberForm mode="edit" /><hr style={{ border: 0, borderTop: '1px solid var(--border)', width: '100%' }} /><FeedbackCenter fromArea={lastArea} notes={fbNotes} /></>}
+                {cfg ? (
+                  customPage
+                    ? <LayoutPage key={'page:' + customPage.id + JSON.stringify(custom?.record ?? null)} config={cfg} sections={customPage.sections} device={device} customerId={me.id} go={go} core={core(me.id)} selected={custom?.record ?? null} />
+                    : (tab !== 'profile' || lineId) && <LayoutPage key={tab} config={cfg} sections={pageSections(cfg, tab)} device={device} customerId={me.id} go={go} core={core(me.id)} />
+                ) : <>
+                  {/* no published layout: the built-in tabs, unchanged */}
+                  {tab === 'home' && <HomeTab id={me.id} go={setTab} />}
+                  {tab === 'shop' && <ShopTab id={me.id} go={setTab} />}
+                  {tab === 'rewards' && <RewardsTab id={me.id} />}
+                  {tab === 'pay' && <PayTab id={me.id} />}
+                  {tab === 'events' && <EventsTab id={me.id} />}
+                  {tab === 'profile' && lineId && core(me.id)('profileCore')}
+                </>}
               </div>
               <nav className={cx('phone-nav', cfg?.theme.navStyle === 'floating' && 'floating')} style={{ gridTemplateColumns: `repeat(${navTabs.length}, 1fr)` }}>
                 {navTabs.map(([k, i, l]) => (
-                  <button key={k} className={cx(tab === k && 'on')} onClick={() => setTab(k)} style={{ position: 'relative' }}>
+                  <button key={k} className={cx(tab === k && !customPage && 'on')} onClick={() => openTab(k)} style={{ position: 'relative' }}>
                     {i}{l}
                     {k === 'profile' && fbNotes.unread > 0 && <span aria-label={`${fbNotes.unread} new feedback updates`} style={{ position: 'absolute', top: 4, right: '50%', marginRight: -16, minWidth: 16, height: 16, borderRadius: 8, background: 'var(--crit, #d92d20)', color: '#fff', fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{fbNotes.unread}</span>}
                   </button>
@@ -279,6 +309,7 @@ export function PayTab({ id }: { id: ID }) {
   };
   return (
     <>
+      <CustomerInvoices />
       <h2>Pay & statement</h2>
       <div className="grid g2" style={{ gap: 10 }}>
         <div className="card card-b"><div className="muted" style={{ fontSize: 12 }}>You owe</div><b style={{ fontSize: 22 }} className={owing > 0 ? 'bad' : 'good'}>{money(owing)}</b></div>

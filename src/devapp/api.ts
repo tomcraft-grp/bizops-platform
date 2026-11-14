@@ -1,7 +1,8 @@
 // DEV APP Customer data access. Everything goes through the signed-in user's Supabase session, so RLS and the
 // SECURITY DEFINER workflow functions (supabase/migrations/*_customer_app_designer.sql) decide what is allowed.
 import { supabase } from '../lib/supabase';
-import type { LayoutConfig } from './schema';
+import type { Binding, BindingFilter, LayoutConfig } from './schema';
+import type { ColumnDef, QueryResult, SourceDef } from './datasources';
 
 export type AppRole = 'viewer' | 'designer' | 'approver' | 'publisher' | 'admin';
 export type VersionStatus = 'draft' | 'applied' | 'approved' | 'published' | 'superseded' | 'rejected';
@@ -72,6 +73,47 @@ export const devapp = {
     return supabase.storage.from('customer-app-assets').getPublicUrl(path).data.publicUrl;
   },
 };
+
+// ---------------------------------------------------------------- database data sources (allow-listed views)
+interface SourceRow { id: string; label: string; description: string | null; schema_name: string; view_name: string; columns: ColumnDef[]; audience: 'authenticated' | 'staff'; max_rows: number; enabled: boolean }
+const toSource = (r: SourceRow): SourceDef => ({ id: r.id, label: r.label, description: r.description ?? '', connection: 'db', schema: r.schema_name, table: r.view_name, columns: r.columns, scope: r.audience, enabled: r.enabled });
+export interface AvailableView { schema_name: string; view_name: string; columns: ColumnDef[] }
+
+export const dataSources = {
+  /** Registered database sources (DEV APP staff; RLS). */
+  async list(): Promise<SourceDef[]> {
+    const r = await supabase.from('customer_app_data_sources').select('*').order('label');
+    return (must(r, 'Load data sources') as SourceRow[]).map(toSource);
+  },
+  /** Views an administrator may register, with their columns read from the database catalogue (admins only). */
+  async availableViews(): Promise<AvailableView[]> { return must(await supabase.rpc('customer_app_available_views'), 'Load database views'); },
+  async save(s: { id: string; label: string; description: string; view: string; columns: ColumnDef[]; audience: 'authenticated' | 'staff'; enabled: boolean }) {
+    must(await supabase.rpc('customer_app_save_source', { p_id: s.id, p_label: s.label, p_description: s.description || null, p_view: s.view, p_columns: s.columns, p_audience: s.audience, p_enabled: s.enabled }), 'Save data source');
+    queryCache.clear();
+  },
+};
+
+// Short-lived cache + in-flight de-duplication: many components on one page often ask for the same data.
+const CACHE_MS = 60_000;
+const queryCache = new Map<string, { at: number; p: Promise<QueryResult> }>();
+/** Query an allow-listed database view through the customer_app_query RPC (server validates source, columns, operators). */
+export function queryDb(q: { source: string; fields: string[]; filters: BindingFilter[]; sort: Binding['sort']; limit: number; search: string; agg: Binding['agg'] }): Promise<QueryResult> {
+  const key = JSON.stringify(q);
+  const hit = queryCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.p;
+  const p = (async () => {
+    const r = await supabase.rpc('customer_app_query', {
+      p_source: q.source, p_fields: q.fields, p_filters: q.filters, p_sort: q.sort, p_limit: q.limit, p_search: q.search || null, p_agg: q.agg,
+    });
+    if (r.error) throw new Error(r.error.message);
+    const d = r.data as { columns: ColumnDef[] | null; rows: Record<string, unknown>[] | null };
+    return { columns: d.columns ?? [], rows: d.rows ?? [] };
+  })();
+  queryCache.set(key, { at: Date.now(), p });
+  p.catch(() => queryCache.delete(key)); // never cache failures
+  if (queryCache.size > 200) queryCache.delete(queryCache.keys().next().value as string);
+  return p;
+}
 
 /** What the customer app loads at start-up: the live layout of an app, or null (then the built-in layout is used). */
 export async function fetchPublishedLayout(appId: string): Promise<{ versionId: string; versionNo: number; config: LayoutConfig } | null> {
