@@ -69,9 +69,9 @@ describe('checkout idempotency key', () => {
     expect(attemptKey(s, 'u1', 'P', gen)).not.toBe(a);
   });
   it('a damaged stored value is replaced by a valid key', () => {
-    const s = kv(); s.setItem('bizops.shop.attempt:u1', '{"key":"x","payload":"P"}');   // too short for the server's rule
+    const s = kv(); s.setItem('tc.shop.attempt:u1', '{"key":"x","payload":"P"}');   // too short for the server's rule
     expect(attemptKey(s, 'u1', 'P')).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
-    s.setItem('bizops.shop.attempt:u1', 'garbage');
+    s.setItem('tc.shop.attempt:u1', 'garbage');
     expect(attemptKey(s, 'u1', 'P')).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
   });
   it('still works when storage is unavailable', () => {

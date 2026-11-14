@@ -56,7 +56,7 @@ export function parseStored(raw: string | null): CartLine[] {
   } catch { return []; }
 }
 
-const keyOf = (uid: string) => `bizops.cart.v1:${uid}`;
+const keyOf = (uid: string) => `tc.cart.v1:${uid}`;
 const read = (uid: string): CartLine[] => { try { return parseStored(localStorage.getItem(keyOf(uid))); } catch { return []; } };
 const write = (uid: string | null, lines: CartLine[]) => { if (!uid) return; try { if (lines.length) localStorage.setItem(keyOf(uid), JSON.stringify(lines)); else localStorage.removeItem(keyOf(uid)); } catch { /* storage unavailable: the cart still works for this visit */ } };
 
@@ -91,7 +91,7 @@ export const newKey = (): string => {
   return 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
 };
 type KV = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
-const attemptStoreKey = (uid: string, ns: string) => `bizops.${ns}.attempt:${uid}`;
+const attemptStoreKey = (uid: string, ns: string) => `tc.${ns}.attempt:${uid}`;
 /**
  * The idempotency key for submitting `payload` (cart + contact details). The SAME payload keeps the SAME key, also across a
  * page reload, so a retry after a dropped connection (or a double tap) returns the order that was already created. A different

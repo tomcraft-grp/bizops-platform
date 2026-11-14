@@ -4,7 +4,7 @@ import { useCallback } from 'react';
 import { create } from 'zustand';
 
 export type ShopLang = 'th' | 'en';
-const KEY = 'bizops.shop.lang';
+const KEY = 'tc.shop.lang';
 const initial = (): ShopLang => { try { return localStorage.getItem(KEY) === 'en' ? 'en' : 'th'; } catch { return 'th'; } };
 export const useShopLangStore = create<{ lang: ShopLang; set: (l: ShopLang) => void }>((set) => ({
   lang: initial(),

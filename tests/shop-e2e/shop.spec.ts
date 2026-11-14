@@ -182,7 +182,7 @@ test.describe('cart', () => {
   });
   test('an item that became unavailable blocks checkout until it is removed', async ({ page }) => {
     const fake = new FakeShop(); fake.decorate(); await fake.install(page);
-    await page.addInitScript(() => localStorage.setItem('bizops.cart.v1:11111111-1111-4111-8111-111111111111', JSON.stringify([{ sku: 'FG-000004', qty: 1, name: 'x', price: 1, image: null, max: null }, { sku: 'FG-000001', qty: 1, name: 'y', price: 1, image: null, max: null }])));
+    await page.addInitScript(() => localStorage.setItem('tc.cart.v1:11111111-1111-4111-8111-111111111111', JSON.stringify([{ sku: 'FG-000004', qty: 1, name: 'x', price: 1, image: null, max: null }, { sku: 'FG-000001', qty: 1, name: 'y', price: 1, image: null, max: null }])));
     await page.goto('/#/app'); await tab(page, t('nav.cart')).click();
     await expect(page.getByText(t('cart.line.sold_out'))).toBeVisible();
     await expect(page.getByRole('button', { name: t('cart.checkout') })).toBeDisabled();
@@ -330,7 +330,7 @@ test.describe('checkout and payment', () => {
   });
   test('shop closed from the start: checkout is not offered', async ({ page }) => {
     const fake = new FakeShop(); fake.settings.shop_open = false; await fake.install(page);
-    await page.addInitScript(() => localStorage.setItem('bizops.cart.v1:11111111-1111-4111-8111-111111111111', JSON.stringify([{ sku: 'FG-000001', qty: 1, name: 'x', price: 1, image: null, max: null }])));
+    await page.addInitScript(() => localStorage.setItem('tc.cart.v1:11111111-1111-4111-8111-111111111111', JSON.stringify([{ sku: 'FG-000001', qty: 1, name: 'x', price: 1, image: null, max: null }])));
     await page.goto('/#/app'); await tab(page, t('nav.cart')).click();
     await expect(page.getByText(t('shop.closed'))).toBeVisible();
     await expect(page.getByRole('button', { name: t('cart.checkout') })).toBeDisabled();

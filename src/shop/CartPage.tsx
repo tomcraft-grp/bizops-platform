@@ -84,7 +84,7 @@ export function CartCore() {
   );
 }
 
-const CONTACT_KEY = (uid: string) => `bizops.shop.contact:${uid}`;
+const CONTACT_KEY = (uid: string) => `tc.shop.contact:${uid}`;
 interface Contact { name: string; phone: string; address: string }
 function loadContact(uid: string | undefined): Partial<Contact> {
   if (!uid) return {};
