@@ -129,7 +129,7 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
       )}
 
       <section className="sp-sec"><h3>{t('od.payment')}</h3>
-        <InvoiceCard inv={o.invoice} lang={lang} defaultOpen={[0, 1, 7, 9].includes(code) && o.status !== 'cancelled'} onChanged={() => void load()} />
+        <InvoiceCard inv={o.invoice} lang={lang} preferred={o.payment_pref} defaultOpen={[0, 1, 7, 9].includes(code) && o.status !== 'cancelled'} onChanged={() => void load()} />
       </section>
 
       <section className="sp-sec"><h3>{t('od.items')}</h3>

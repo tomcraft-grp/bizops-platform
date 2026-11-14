@@ -17,8 +17,8 @@ export interface FItem {
   barcode: string | null; description_th: string | null; description_en: string | null; specs: { label: string; value: string }[]; family: string | null; badge: string | null;
   featured: boolean; available: boolean; max_qty: number | null; image_urls: string[]; sku_seq: number;
 }
-interface FInvoice { id: string; invoice_no: string; amount: number; paid: number; cancelled: boolean; evidence: { id: string; status: string; claimed_amount: number; created_at: string; reject_reason?: string | null; reviewed_at?: string }[]; req: null | { ref: string; amount: number; qr_payload: string; expires_at: string }; source_ref: string; created_at: string }
-interface FOrder { id: string; order_no: string; status: string; fulfilment: string; contact_name: string; contact_phone: string; delivery_address: string | null; note: string | null; items: { line_no: number; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[]; subtotal: number; discount: number; shipping_fee: number; total: number; created_at: string; key: string; hash: string; invoice: FInvoice; status_note: string | null; cancel_reason: string | null }
+interface FInvoice { id: string; invoice_no: string; amount: number; paid: number; cancelled: boolean; evidence: { id: string; status: string; claimed_amount: number; created_at: string; reject_reason?: string | null; reviewed_at?: string }[]; req: null | { ref: string; amount: number; qr_payload: string; expires_at: string }; source_ref: string; created_at: string; refunded?: number }
+interface FOrder { id: string; order_no: string; status: string; fulfilment: string; contact_name: string; contact_phone: string; delivery_address: string | null; note: string | null; items: { line_no: number; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[]; subtotal: number; discount: number; shipping_fee: number; total: number; created_at: string; key: string; hash: string; invoice: FInvoice; status_note: string | null; cancel_reason: string | null; payment_pref: string | null }
 
 export const settingsDefault = { shop_open: true, closed_message: null as string | null, delivery_enabled: true, pickup_enabled: true, pickup_note: 'รับที่ร้าน 99 ถนนทดสอบ', shipping_fee: 50, free_shipping_min: 1000 as number | null };
 
@@ -61,7 +61,7 @@ export class FakeShop {
     const reqLive = inv.req && new Date(inv.req.expires_at).getTime() > Date.now();
     const code = inv.cancelled ? 8 : inv.paid >= inv.amount ? 5 : pending > 0 ? 3 : inv.paid > 0 ? 4 : last?.status === 'rejected' && !reqLive ? 7 : reqLive ? 1 : inv.req ? 9 : 0;
     const names = ['unpaid', 'awaiting_payment', 'payment_submitted', 'pending_verification', 'partially_paid', 'fully_paid', 'overpaid', 'rejected', 'cancelled', 'expired'];
-    return { invoice_id: inv.id, amount: inv.amount, paid: inv.paid, outstanding: Math.max(inv.amount - inv.paid, 0), unapplied: 0, status_code: code, status: names[code], pending_evidence: pending,
+    return { invoice_id: inv.id, amount: inv.amount, paid: inv.paid, outstanding: Math.max(inv.amount - inv.paid, 0), unapplied: 0, refunded: inv.refunded ?? 0, status_code: code, status: names[code], pending_evidence: pending,
       request: inv.req && !inv.cancelled ? { ...inv.req, expired: !reqLive } : null };
   }
   private invoiceRow(inv: FInvoice) { return { id: inv.id, invoice_no: inv.invoice_no, issue_date: inv.created_at.slice(0, 10), due_date: inv.created_at.slice(0, 10), description: `Online order ${inv.source_ref}`, customer_name: this.profile.display_name, source_ref: inv.source_ref, ...this.state(inv) }; }
@@ -217,10 +217,12 @@ export class FakeShop {
   private place(a: Record<string, unknown>) {
     const key = String(a.p_key ?? '');
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) this.err('INVALID_KEY');
-    const norm = JSON.stringify({ i: (a.p_items as { sku_code: string; qty: number }[]).map((x) => [x.sku_code, x.qty]).sort(), f: a.p_fulfilment, n: String(a.p_name).trim(), p: String(a.p_phone).replace(/\D/g, ''), a: a.p_address ? String(a.p_address).trim() : null, note: a.p_note });
+    const norm = JSON.stringify({ i: (a.p_items as { sku_code: string; qty: number }[]).map((x) => [x.sku_code, x.qty]).sort(), f: a.p_fulfilment, n: String(a.p_name).trim(), p: String(a.p_phone).replace(/\D/g, ''), a: a.p_address ? String(a.p_address).trim() : null, note: a.p_note, ...(a.p_payment_method ? { pm: a.p_payment_method } : {}) });
     const have = this.orders.find((o) => o.key === key);
     if (have) { if (have.hash !== norm) this.err('KEY_REUSED'); return { replay: true, order: this.orderJson(have) }; }
     if (!this.settings.shop_open) this.err('SHOP_CLOSED');
+    const pm = a.p_payment_method ? String(a.p_payment_method) : null;     // 'wallet' | 'qr' | 'bank:<CODE>': validated like the database does
+    if (pm && !(pm === 'wallet' || (pm === 'qr' && this.w.promptpay) || (pm.startsWith('bank:') && this.w.banks.some((b) => b.active && b.code === pm.slice(5))))) this.err('INVALID_PAYMENT_METHOD');
     const phone = String(a.p_phone).replace(/\D/g, '');
     if (!String(a.p_name).trim()) this.err('INVALID_NAME'); if (!/^0\d{8,9}$/.test(phone)) this.err('INVALID_PHONE');
     if (a.p_fulfilment === 'delivery' && String(a.p_address ?? '').trim().length < 10) this.err('INVALID_ADDRESS');
@@ -231,12 +233,14 @@ export class FakeShop {
     const inv: FInvoice = { id: `inv-${n}`, invoice_no: `INV-202611-${String(n).padStart(5, '0')}`, amount: q.total, paid: 0, cancelled: false, evidence: [], req: null, source_ref: no, created_at: now };
     const o: FOrder = { id: `ord-${n}`, order_no: no, status: 'new', fulfilment: String(a.p_fulfilment), contact_name: String(a.p_name).trim(), contact_phone: phone, delivery_address: a.p_fulfilment === 'delivery' ? String(a.p_address).trim() : null,
       note: (a.p_note as string | null) ?? null, items: q.lines.map((l, i) => ({ line_no: i + 1, sku_code: l.sku_code, name: l.name, unit: l.unit, unit_price: l.unit_price, qty: l.qty, line_total: l.line_total, image_url: l.image_url })),
-      subtotal: q.subtotal, discount: 0, shipping_fee: q.shipping_fee, total: q.total, created_at: now, key, hash: norm, invoice: inv, status_note: null, cancel_reason: null };
+      subtotal: q.subtotal, discount: 0, shipping_fee: q.shipping_fee, total: q.total, created_at: now, key, hash: norm, invoice: inv, status_note: null, cancel_reason: null, payment_pref: pm };
     this.orders.push(o);
     return { replay: false, order: this.orderJson(o) };
   }
   // test controls: what staff do in the back office
   verifyPayment(orderNo: string) { const o = this.orders.find((x) => x.order_no === orderNo)!; o.invoice.paid = o.invoice.amount; o.invoice.evidence.forEach((e) => { e.status = 'verified'; }); }
+  /** staff reversed a payment and refunded it into the customer's wallet */
+  refund(orderNo: string, amount: number) { const o = this.orders.find((x) => x.order_no === orderNo)!; o.invoice.refunded = (o.invoice.refunded ?? 0) + amount; }
   rejectSlip(orderNo: string, reason: string) { const o = this.orders.find((x) => x.order_no === orderNo)!; o.invoice.evidence.forEach((e) => { e.status = 'rejected'; e.reject_reason = reason; e.reviewed_at = new Date().toISOString(); }); o.invoice.req = null; }
   setStatus(orderNo: string, status: string, note?: string) { const o = this.orders.find((x) => x.order_no === orderNo)!; o.status = status; if (note) o.status_note = note; }
 

@@ -123,4 +123,8 @@ export const TH_SHOP: Record<string, string> = {
   'In the ledger': 'ในสมุดบัญชี', 'Waiting for the ledger': 'รอเข้าสมุดบัญชี',
   'Bank account': 'บัญชีธนาคาร',
   'No.': 'เลขที่',
+
+  // online ordering: staff
+  'Customer plans to pay by': 'ลูกค้าตั้งใจชำระโดย', 'Wallet': 'กระเป๋าเงิน',
+  'If this is more than the invoice owes, the extra is credited to the customer\'s wallet.': 'หากยอดนี้มากกว่ายอดที่ใบแจ้งหนี้ต้องชำระ ส่วนเกินจะเข้ากระเป๋าเงินของลูกค้า', 'Recorded: invoice fully paid. {n} above the invoice was credited to the customer\'s wallet': 'บันทึกแล้ว: ชำระใบแจ้งหนี้ครบ ส่วนที่เกิน {n} เข้ากระเป๋าเงินของลูกค้าแล้ว',
 };

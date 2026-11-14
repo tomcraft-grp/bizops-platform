@@ -100,7 +100,7 @@ function VerifyModal({ ev, onClose, onDone }: { ev: Evidence & { invoice_no?: st
     setBusy('v');
     try {
       const res = await finance.verify({ evidenceId: ev.id, amount, bankTransRef: f.ref.trim(), transferAt: new Date(f.when).toISOString(), note: f.note });
-      toast(res.result === 'overpaid_review' ? 'info' : 'success', res.result === 'fully_paid' ? tl(lang, 'Recorded: invoice fully paid') : res.result === 'partially_paid' ? tl(lang, 'Recorded: partially paid, {n} left', { n: money(res.state.outstanding) }) : tl(lang, 'Recorded as an overpayment: decide it under Overpayments'));
+      toast(res.result === 'overpaid_review' ? 'info' : 'success', res.result === 'fully_paid' ? tl(lang, 'Recorded: invoice fully paid') : res.result === 'partially_paid' ? tl(lang, 'Recorded: partially paid, {n} left', { n: money(res.state.outstanding) }) : res.result === 'overpaid_credited' ? tl(lang, 'Recorded: invoice fully paid. {n} above the invoice was credited to the customer\'s wallet', { n: money(res.credited_to_wallet ?? 0) }) : tl(lang, 'Recorded as an overpayment: decide it under Overpayments'));
       onDone();
     } catch (e) { toast('error', (e as Error).message); } finally { setBusy(''); }
   };
@@ -122,7 +122,7 @@ function VerifyModal({ ev, onClose, onDone }: { ev: Evidence & { invoice_no?: st
         </div>
         <div className="col gap-8" style={{ flex: '1 1 260px' }}>
           <Banner tone="warn"><Tx>Fill these in from your bank statement or banking app, not from the slip picture alone. A slip can be faked.</Tx></Banner>
-          <Field label="Amount received (฿)"><Input type="number" inputMode="decimal" min={0} step="0.01" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
+          <Field label="Amount received (฿)" hint="If this is more than the invoice owes, the extra is credited to the customer's wallet."><Input type="number" inputMode="decimal" min={0} step="0.01" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
           <Field label="Bank transaction reference"><Input maxLength={80} value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} /></Field>
           <Field label="Transfer date and time"><Input type="datetime-local" value={f.when} onChange={(e) => setF({ ...f, when: e.target.value })} /></Field>
           <Field label="Note (optional)"><Input maxLength={300} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>

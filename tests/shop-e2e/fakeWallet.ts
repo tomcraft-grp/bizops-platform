@@ -24,6 +24,7 @@ export class FakeWallet {
   deposits: FDeposit[] = [];
   role: FRole = null;                 // the signed-in user's finance role (staff tests set it)
   enabled = true;                     // false = the wallet migration is not installed (old database)
+  promptpay = true;                   // false = no PromptPay account is set up (the QR is not offered), like production today
   settings = { min_deposit: 100, max_deposit: 100000, max_open_deposits: 3, adjustment_limit: 5000, adjustment_role: 'settlement_variance', invoice_vat_mode: 'unset' as 'unset' | 'none' | 'inclusive', vat_rate: 7, updated_at: new Date().toISOString() };
   queue: { id: string; seq: number; event_type: string; ref_no: string; amount: number; plan: unknown[]; status: 'pending' | 'posted' | 'void'; journal_no: string | null; event_date: string }[] = [];
   invoiceBank = new Map<string, string>();       // invoice slip -> bank id (what the customer chose)
@@ -77,7 +78,7 @@ export class FakeWallet {
       // ---------------------------------------------------------------- customer
       case 'finance_payment_methods':
         if (!this.enabled) this.err('Could not find the function public.finance_payment_methods');
-        return { banks: this.banks.filter((b) => b.active).sort((x, y) => x.sort_order - y.sort_order).map((b) => this.pubBank(b)), promptpay: true, wallet: { balance: this.balance, min_deposit: this.settings.min_deposit, max_deposit: this.settings.max_deposit } };
+        return { banks: this.banks.filter((b) => b.active).sort((x, y) => x.sort_order - y.sort_order).map((b) => this.pubBank(b)), promptpay: this.promptpay, wallet: { balance: this.balance, min_deposit: this.settings.min_deposit, max_deposit: this.settings.max_deposit } };
       case 'finance_my_wallet': {
         if (!this.enabled) this.err('Could not find the function public.finance_my_wallet');
         const dep = this.txns.filter((x) => x.txn_type === 'DEPOSIT').reduce((s, x) => s + (x.direction === 'credit' ? x.amount : -x.amount), 0);

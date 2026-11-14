@@ -220,7 +220,7 @@ test.describe('checkout and payment', () => {
     await expect(page.locator('.sp-order-detail')).toContainText(/SO-\d{6}-\d{5}/);
     expect(fake.orders).toHaveLength(1);
     const call = fake.calls.find((c) => c.fn === 'shop_place_order')!;
-    expect(Object.keys(call.args).sort()).toEqual(['p_address', 'p_expected_total', 'p_fulfilment', 'p_items', 'p_key', 'p_name', 'p_note', 'p_phone']);
+    expect(Object.keys(call.args).sort()).toEqual(['p_address', 'p_expected_total', 'p_fulfilment', 'p_items', 'p_key', 'p_name', 'p_note', 'p_payment_method', 'p_phone']);   // the payment choice is the only addition: still no price, amount or balance
     expect(call.args.p_items).toEqual([{ sku_code: 'FG-000001', qty: 1 }]);                 // no price anywhere
     await expect(page.locator('.phone-nav .sp-nav-badge')).toHaveCount(0);                   // the cart was emptied
     await expect(page.locator('.sp-order-detail')).toContainText(t('pay.unpaid'));

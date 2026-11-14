@@ -27,7 +27,7 @@ export const STATUS: Record<StatusCode, { en: string; th: string; tone: 'good' |
 
 export interface PaymentRequestView { ref: string; amount: number; qr_payload: string; expires_at: string; expired: boolean }
 export interface InvoiceState {
-  invoice_id: string; amount: number; paid: number; outstanding: number; unapplied: number; status_code: StatusCode; status: string;
+  invoice_id: string; amount: number; paid: number; outstanding: number; unapplied: number; refunded?: number; status_code: StatusCode; status: string;
   pending_evidence: number; request: PaymentRequestView | null;
 }
 export interface InvoiceRow extends InvoiceState {
@@ -43,7 +43,7 @@ export interface Evidence {
   bank_trans_ref: string | null; reject_reason: string | null; reviewed_at: string | null; created_at: string;
 }
 export interface Receipt { id: string; receipt_no: string; invoice_id: string; amount: number; bank_trans_ref: string | null; received_at: string; needs_review: boolean; status: 'posted' | 'reversed'; created_at: string }
-export interface VerifyResult { result: 'fully_paid' | 'partially_paid' | 'overpaid_review'; receipt_no: string; state: InvoiceState }
+export interface VerifyResult { result: 'fully_paid' | 'partially_paid' | 'overpaid_credited' | 'overpaid_review'; receipt_no: string; credited_to_wallet?: number; state: InvoiceState }
 
 function must<T>(r: { data: T | null; error: { message: string } | null }, what: string): T {
   if (r.error) throw new Error(`${what}: ${r.error.message}`);

@@ -137,6 +137,22 @@ describe('finance queue -> general ledger (existing posting engine)', () => {
     });
   });
 
+  it('an overpaid bank transfer: Dr bank (all) / Cr receivable (owed) / Cr customer wallet liability (excess); the wallet liability equals the credit', () => {
+    tx((d) => {
+      const owed = 320, paid = 400;
+      postFinanceRow(d, ctx, row('inv1', 'INVOICE_ISSUE', 'INV-1', owed, [{ side: 'dr', role: 'ar', amount: owed }, { side: 'cr', role: 'sales', amount: owed, vat: 'split' }]), NONE);
+      const a0 = bal(d, '1130');
+      const r = postFinanceRow(d, ctx, row('rc1', 'BANK_RECEIPT', 'RC-1', paid, [{ side: 'dr', role: 'bank', amount: paid, bank_account_id: SCB }, { side: 'cr', role: 'ar', amount: owed }, { side: 'cr', role: 'customer_credit', amount: paid - owed, wallet: true }], { [SCB]: { code: 'SCB', gl_account_code: null } }), NONE);
+      expect(d.journals.find((x) => x.id === r.journalId)!.lines).toEqual([{ account: '1110', debit: 400, credit: 0 }, { account: '1130', debit: 0, credit: 320 }, { account: '2300', debit: 0, credit: 80 }]);
+      expect(bal(d, '1130') - a0).toBe(-320);                                       // the receivable is cleared by exactly what was owed
+      expect(financeNetCredit(d, '2300')).toBe(80);                                  // the excess is the wallet liability (= the wallet credit)
+      const rev = postFinanceRow(d, ctx, row('rv1', 'RECEIPT_REVERSAL', 'RC-1', paid, [{ side: 'cr', role: 'bank', amount: paid, bank_account_id: SCB }, { side: 'dr', role: 'ar', amount: owed }, { side: 'dr', role: 'customer_credit', amount: paid - owed, wallet: true }], { [SCB]: { code: 'SCB', gl_account_code: null } }), NONE);
+      expect(d.journals.find((x) => x.id === rev.journalId)!.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['1110', 0, 400], ['1130', 320, 0], ['2300', 80, 0]]);
+      expect(financeNetCredit(d, '2300')).toBe(0);                                   // reversing the receipt takes the credit back
+      expect(Math.abs(trial(d))).toBeLessThan(0.005);
+    });
+  });
+
   it('every queue event type has a readable label', () => {
     for (const t of ['INVOICE_ISSUE', 'INVOICE_CANCEL', 'BANK_RECEIPT', 'RECEIPT_REAPPLY', 'RECEIPT_REVERSAL', 'WALLET_DEPOSIT', 'WALLET_PAYMENT', 'WALLET_REFUND', 'WALLET_ADJUSTMENT', 'WALLET_REVERSAL']) expect(eventLabel(t)).not.toBe(t);
   });

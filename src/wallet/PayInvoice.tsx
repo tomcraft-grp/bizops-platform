@@ -10,7 +10,7 @@ import { useT } from '../shop/i18n';
 import { useShopHost, useShopNav } from '../shop/nav';
 import { ConfirmSheet } from '../shop/ui';
 import { newKey, wallet } from './api';
-import { clearMethodsCache, walletErrText } from './ui';
+import { clearMethodsCache, CopyButton, walletErrText } from './ui';
 
 export function WalletPayPanel({ inv, balance, onPaid }: { inv: InvoiceRow; balance: number; onPaid: () => void }) {
   const t = useT();
@@ -57,7 +57,12 @@ export function WalletPayPanel({ inv, balance, onPaid }: { inv: InvoiceRow; bala
 }
 
 /** Above the slip form for a bank transfer: exactly how much to send (from the database), nothing to type. */
-export function TransferAmount({ amount }: { amount: number }) {
+export function TransferAmount({ amount, reference }: { amount: number; reference?: string }) {
   const t = useT();
-  return <div className="wl-amount"><span className="wl-k">{t('bank.amount')}</span><b data-testid="transfer-amount">{baht(amount)}</b></div>;
+  return (
+    <>
+      <div className="wl-amount"><span className="wl-k">{t('bank.amount')}</span><b data-testid="transfer-amount">{baht(amount)}</b></div>
+      {reference && <div className="wl-refbox"><span className="wl-k">{t('bank.ref')}</span><b className="mono" data-testid="payment-ref">{reference}</b><CopyButton text={reference} label={t('bank.copyRef')} doneKey="bank.refCopied" /><small>{t('bank.refHint')}</small></div>}
+    </>
+  );
 }

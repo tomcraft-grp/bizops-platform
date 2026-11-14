@@ -117,7 +117,7 @@ function OrderDrawer({ id, T, onClose, onChanged }: { id: string; T: TFn; onClos
       {error && <Banner tone="bad">{error}</Banner>}
       {!o ? <Skeleton h={200} /> : (
         <div className="col gap-12">
-          <div className="row wrap gap-6"><Badge tone={TONE[o.status]}>{T(STATUS_LABEL[o.status])}</Badge><PayBadge code={o.invoice.status_code} T={T} /><Badge>{o.fulfilment === 'pickup' ? T('Pick-up') : T('Delivery')}</Badge></div>
+          <div className="row wrap gap-6"><Badge tone={TONE[o.status]}>{T(STATUS_LABEL[o.status])}</Badge><PayBadge code={o.invoice.status_code} T={T} /><Badge>{o.fulfilment === 'pickup' ? T('Pick-up') : T('Delivery')}</Badge>{o.payment_pref && <Badge>{T('Customer plans to pay by')}: {o.payment_pref === 'wallet' ? T('Wallet') : o.payment_pref === 'qr' ? 'PromptPay QR' : `${T('Bank transfer')} · ${o.payment_pref.slice(5)}`}</Badge>}</div>
           {!paid && o.status !== 'cancelled' && <Banner tone="warn">{T('Not paid yet. Verify the customer\'s slip on the Payment review page: a slip alone never marks an order paid.')} <Link to="/payment-review">{T('Open Payment review')}</Link> · <span className="mono">{o.invoice.invoice_no}</span></Banner>}
           <div className="card card-b col gap-4">
             <b>{o.contact_name}</b><span>{o.contact_phone}</span>

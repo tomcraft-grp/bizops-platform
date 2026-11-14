@@ -90,3 +90,28 @@ describe('back-office text', () => {
     for (const m of src.matchAll(/^\s+[A-Z_]+:\s*'((?:[^'\\]|\\.)*)'/gm)) if (/^[A-Z][a-z]/.test(m[1])) expect(m[1] in TH, m[1]).toBe(true);
   });
 });
+
+describe('online ordering text and contract', () => {
+  it('the checkout payment texts exist in Thai and English', () => {
+    for (const l of ['th', 'en'] as const) for (const k of ['co.paymentHint', 'co.paymentLater', 'co.confirmBody']) expect(tr(l, k as never), k).not.toBe(k);
+    expect(tr('th', 'co.paymentLater' as never)).toMatch(/[฀-๿]/);
+  });
+  it('the staff strings added for the payment choice and overpayments have Thai', () => {
+    for (const k of ['Customer plans to pay by', 'Wallet', "If this is more than the invoice owes, the extra is credited to the customer's wallet.", "Recorded: invoice fully paid. {n} above the invoice was credited to the customer's wallet"]) expect(k in TH, k).toBe(true);
+  });
+  it('the migration keeps the promises the screens make (receivable follows confirmation, overpayment to the wallet, refunded, optional payment choice)', () => {
+    const sql = read('supabase/migrations/20261115300000_online_ordering.sql');
+    expect(sql).toContain("set_config('finance.defer_gl', 'on', true)");                   // an order is not an accounting event
+    expect(sql).toContain('finance_gl_ensure_invoice_issue(o.invoice_id)');                // ... until staff confirm it
+    expect(sql).toContain("'overpaid_credited'");                                           // the excess goes to the wallet
+    expect(sql).toContain("'refunded', refunded");                                          // the customer sees a refunded status
+    expect(sql).toMatch(/p_expected_total numeric default null, p_payment_method text default null/);   // optional last parameter: older builds keep working
+    expect(sql).not.toMatch(/p_price|p_unit_price|p_total/);                              // the app can never send a price
+  });
+  it('the app sends the payment choice only when there is one, and never a price or a balance', () => {
+    const src = read('src/shop/api.ts');
+    expect(src).toContain("...(i.paymentMethod ? { p_payment_method: i.paymentMethod } : {})");
+    const place = src.slice(src.indexOf('async placeOrder'), src.indexOf('async placeOrder') + 700);
+    expect(place).not.toMatch(/p_price|p_amount|p_balance|p_status/);
+  });
+});

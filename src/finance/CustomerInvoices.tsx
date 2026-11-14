@@ -14,13 +14,13 @@ import { Evidence, finance, InvoiceRow, QrRequest, Receipt, STATUS, StatusCode }
 import { downloadBlob, renderQrCard } from './qrImage';
 
 const MSG: Record<StatusCode, { th: string; en: string; tone: 'info' | 'warn' | 'bad' | 'good' }> = {
-  0: { th: 'ยังไม่ได้ชำระ กด “สร้าง QR ชำระเงิน” เพื่อเริ่ม', en: 'Not paid yet. Tap “Create payment QR” to start.', tone: 'info' },
+  0: { th: 'ยังไม่ได้ชำระ เลือกช่องทางชำระเงินด้านล่าง', en: 'Not paid yet. Choose how to pay below.', tone: 'info' },
   1: { th: 'รอชำระเงิน สแกน QR ด้วยแอปธนาคารใดก็ได้ แล้วอัปโหลดสลิป', en: 'Waiting for payment. Scan the QR with any banking app, then upload your slip.', tone: 'info' },
   3: { th: 'ได้รับสลิปแล้ว กำลังรอทางร้านตรวจสอบ ยอดจะอัปเดตหลังตรวจสอบเสร็จ', en: 'Slip received. The shop is checking it; your balance updates once it is verified.', tone: 'warn' },
-  4: { th: 'ชำระบางส่วนแล้ว ยังมียอดค้าง กด “สร้าง QR ชำระเงิน” เพื่อจ่ายส่วนที่เหลือ', en: 'Partly paid. Create a new QR to pay the remaining balance.', tone: 'warn' },
+  4: { th: 'ชำระบางส่วนแล้ว ยังมียอดค้าง เลือกช่องทางเพื่อจ่ายส่วนที่เหลือ', en: 'Partly paid. Choose how to pay the remaining balance.', tone: 'warn' },
   5: { th: 'ชำระครบแล้ว ขอบคุณค่ะ', en: 'Fully paid. Thank you!', tone: 'good' },
   6: { th: 'ยอดที่ชำระมากกว่ายอดค้าง ทางร้านกำลังตรวจสอบและจะติดต่อกลับ', en: 'You paid more than the balance. The shop is reviewing it and will contact you.', tone: 'warn' },
-  7: { th: 'หลักฐานการชำระถูกปฏิเสธ ดูเหตุผลด้านล่าง แล้วสร้าง QR หรือส่งสลิปใหม่', en: 'Your payment evidence was rejected (see the reason below). Create a new QR or send a new slip.', tone: 'bad' },
+  7: { th: 'หลักฐานการชำระถูกปฏิเสธ ดูเหตุผลด้านล่าง แล้วส่งสลิปใหม่หรือเลือกช่องทางอื่น', en: 'Your payment evidence was rejected (see the reason below). Send a new slip or choose another way to pay.', tone: 'bad' },
   8: { th: 'ใบแจ้งหนี้นี้ถูกยกเลิก', en: 'This invoice was cancelled.', tone: 'warn' },
   9: { th: 'QR หมดอายุ กรุณาสร้างใหม่ หากโอนไปแล้วให้อัปโหลดสลิป', en: 'The QR expired. Create a new one. If you already paid, upload your slip.', tone: 'warn' },
 };
@@ -44,7 +44,7 @@ export function CustomerInvoices({ lang: langProp, hide }: { lang?: Lang; hide?:
   );
 }
 
-export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen }: { inv: InvoiceRow; onChanged: () => void; lang?: Lang; defaultOpen?: boolean }) {
+export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, preferred }: { inv: InvoiceRow; onChanged: () => void; lang?: Lang; defaultOpen?: boolean; preferred?: string | null }) {
   const storeLang = useLang();
   const lang = langProp ?? storeLang;
   const [open, setOpen] = useState(defaultOpen ?? (inv.status_code === 1 || inv.status_code === 9));
@@ -62,7 +62,10 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen }: { i
   const { methods, reload: reloadMethods } = useMethods();
   const [picked0, setChoice] = useState<Choice>(null);
   const hasMethods = !!methods && (methods.banks.length > 0 || methods.wallet.balance > 0);
-  const choice: Choice = picked0 ?? (hasMethods ? (methods!.banks.length ? { kind: 'bank', id: methods!.banks[0].id } : methods!.wallet.balance > 0 ? { kind: 'wallet' } : methods!.promptpay ? { kind: 'qr' } : null) : null);
+  // the customer's choice at checkout (when it is still available) comes first, then the first bank
+  const prefChoice: Choice = !methods || !preferred ? null : preferred === 'wallet' ? (methods.wallet.balance > 0 ? { kind: 'wallet' } : null) : preferred === 'qr' ? (methods.promptpay ? { kind: 'qr' } : null)
+    : preferred.startsWith('bank:') ? (() => { const b = methods.banks.find((x) => x.code === preferred.slice(5)); return b ? { kind: 'bank' as const, id: b.id } : null; })() : null;
+  const choice: Choice = picked0 ?? prefChoice ?? (hasMethods ? (methods!.banks.length ? { kind: 'bank', id: methods!.banks[0].id } : methods!.wallet.balance > 0 ? { kind: 'wallet' } : methods!.promptpay ? { kind: 'qr' } : null) : null);
   const bankChoice = choice?.kind === 'bank' ? methods?.banks.find((b) => b.id === choice.id) : undefined;
   const showQr = !hasMethods || choice?.kind === 'qr';
   const [busy, setBusy] = useState('');
@@ -125,6 +128,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen }: { i
         <div className="row between"><b>{tl(lang, 'Remaining')}</b><b style={{ fontSize: 18 }}>{money(inv.outstanding)}</b></div>
       </div>
       <div style={{ marginTop: 8 }}><Banner tone={msg.tone}>{lang === 'th' ? msg.th : msg.en}</Banner></div>
+      {(inv.refunded ?? 0) > 0 && <div style={{ marginTop: 6 }}><Badge tone="info" dot>{lang === 'th' ? `คืนเงินแล้ว ${money(inv.refunded ?? 0)} เข้ากระเป๋าเงิน` : `Refunded ${money(inv.refunded ?? 0)} to your wallet`}</Badge></div>}
       {rejected && inv.status_code === 7 && <div className="bad" style={{ fontSize: 12.5, marginTop: 6 }}>{tl(lang, 'Reason')}: {rejected.reject_reason}</div>}
 
       {payable && !open && <Button variant="primary" className="block mt8" onClick={() => setOpen(true)}>{tl(lang, 'Pay this invoice')}</Button>}
@@ -135,7 +139,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen }: { i
             <MethodCards methods={methods!} value={choice} onChange={setChoice} qr />
           </>}
           {choice?.kind === 'wallet' && methods && <WalletPayPanel inv={inv} balance={methods.wallet.balance} onPaid={() => { reloadMethods(); onChanged(); void loadHistory(); }} />}
-          {bankChoice && <TransferAmount amount={inv.outstanding} />}
+          {bankChoice && <TransferAmount amount={inv.outstanding} reference={inv.invoice_no} />}
           {showQr && (!live
             ? <Button variant="primary" className="block" loading={busy === 'qr'} disabled={!!busy} onClick={makeQr}>{tl(lang, 'Create payment QR')} · {money(inv.outstanding)}</Button>
             : <>

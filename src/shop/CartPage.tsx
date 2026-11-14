@@ -2,7 +2,7 @@
 // (shop_quote); placing the order sends only SKU + quantity + contact details and the total the customer saw, and the
 // database prices the order again. A retry of the same checkout returns the same order (see attemptKey).
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Banknote, ShoppingCart, Store, Trash2, Truck } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Store, Trash2, Truck } from 'lucide-react';
 import { Banner, Empty } from '../ui/kit';
 import { cx } from '../lib/util';
 import { useAuth } from '../auth/AuthProvider';
@@ -14,6 +14,7 @@ import { useSettings, useQuote } from './hooks';
 import { K, useT } from './i18n';
 import { useShopHost, useShopNav } from './nav';
 import { ConfirmSheet, ErrorBox, errText, ProductImage, Stepper } from './ui';
+import { Choice, MethodCards, useMethods } from '../wallet/ui';
 
 export function CartCore() {
   const t = useT();
@@ -110,6 +111,11 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   const [touched, setTouched] = useState(false);
   const inflight = useRef(false);
   const lines = useCart((s) => s.lines);
+  // how the customer intends to pay: any active bank account, the wallet (only when it holds money) or the PromptPay QR. Chosen again, and changeable, on the payment screen.
+  const { methods } = useMethods();
+  const [pickedMethod, setPickedMethod] = useState<Choice>(null);
+  const method: Choice = pickedMethod ?? (methods ? (methods.banks.length ? { kind: 'bank', id: methods.banks[0].id } : methods.promptpay ? { kind: 'qr' } : null) : null);
+  const methodPref = method?.kind === 'bank' ? (methods?.banks.find((b) => b.id === method.id)?.code ? `bank:${methods.banks.find((b) => b.id === method.id)!.code}` : null) : method?.kind ?? null;
 
   const nameOk = name.trim().length > 0 && name.trim().length <= 100;
   const phoneOk = validPhone(phone);
@@ -124,9 +130,9 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
     inflight.current = true; setBusy(true); setErr(null);
     try {
       const items = toQuoteItems(lines);
-      const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? address.trim() : '', note: note.trim() });
+      const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? address.trim() : '', note: note.trim(), pm: methodPref });
       const key = attemptKey(sessionStorage, uid, payload);
-      const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: address.trim(), note: note.trim(), expectedTotal: quote.total });
+      const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: address.trim(), note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total });
       try { localStorage.setItem(CONTACT_KEY(uid), JSON.stringify({ name: name.trim(), phone: digits(phone), address: address.trim() } satisfies Contact)); } catch { /* ignore */ }
       forgetAttempt(sessionStorage, uid);
       useCart.getState().clear();
@@ -178,7 +184,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       </section>
 
       <section className="sp-sec"><h3>{t('co.payment')}</h3>
-        <div className="sp-pay"><Banknote size={20} /><div><b>{t('co.promptpay')}</b><div className="sp-note">{t('co.promptpayHint')}</div></div></div>
+        {methods ? <><MethodCards methods={methods} value={method} onChange={setPickedMethod} wallet={methods.wallet.balance > 0} qr /><div className="sp-note">{t('co.paymentHint')}</div></> : <div className="sp-note">{t('co.paymentLater')}</div>}
       </section>
 
       <div className="sp-summary" aria-busy={loading}>

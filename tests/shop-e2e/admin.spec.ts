@@ -146,3 +146,24 @@ test.describe('access', () => {
     await expect(page.locator('.phone-nav')).toBeVisible();                                   // sent to the customer app
   });
 });
+
+test.describe('payment choice', () => {
+  test('staff see how the customer plans to pay and how much is still owed', async ({ page }) => {
+    const fake = new FakeShop();
+    const r = fake.rpc('shop_place_order', { p_key: 'admin-order-pm1', p_items: [{ sku_code: 'FG-000001', qty: 2 }], p_fulfilment: 'pickup', p_name: 'Somchai', p_phone: '0812345678', p_address: null, p_note: null, p_payment_method: 'bank:BBL' }) as { order: { order_no: string } };
+    await openAdmin(page, fake);
+    await page.getByRole('row', { name: new RegExp(r.order.order_no) }).click();
+    const drawer = page.locator('aside.drawer');
+    await expect(drawer).toContainText('Customer plans to pay by');
+    await expect(drawer).toContainText('Bank transfer · BBL');
+    await expect(drawer).toContainText('Not paid yet');                                    // choosing a method is not paying
+  });
+  test('the payment choice is shown in Thai too', async ({ page }) => {
+    const fake = new FakeShop();
+    const r = fake.rpc('shop_place_order', { p_key: 'admin-order-pm2', p_items: [{ sku_code: 'FG-000001', qty: 1 }], p_fulfilment: 'pickup', p_name: 'Somchai', p_phone: '0812345678', p_address: null, p_note: null, p_payment_method: 'wallet' }) as { order: { order_no: string } };
+    await openAdmin(page, fake, 'th');
+    await page.getByRole('row', { name: new RegExp(r.order.order_no) }).click();
+    await expect(page.locator('aside.drawer')).toContainText('ลูกค้าตั้งใจชำระโดย');
+    await expect(page.locator('aside.drawer')).toContainText('กระเป๋าเงิน');
+  });
+});

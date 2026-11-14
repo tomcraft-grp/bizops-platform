@@ -39,12 +39,12 @@ export interface OrderItem { line_no: number; sku_code: string; name: string; un
 export interface ShopOrder {
   id: string; order_no: string; status: OrderStatus; fulfilment: Fulfilment; channel: string; contact_name: string; contact_phone: string; delivery_address: string | null; note: string | null;
   subtotal: number; discount: number; shipping_fee: number; total: number; created_at: string; updated_at: string; status_note: string | null; cancel_reason: string | null;
-  cancelled_at: string | null; items: OrderItem[]; invoice: InvoiceRow;
+  cancelled_at: string | null; payment_pref?: string | null; items: OrderItem[]; invoice: InvoiceRow;
   events?: { at: string; action: string; to?: string | null }[];
 }
 export type OrderFilter = 'all' | 'unpaid' | 'to_ship' | 'to_receive' | 'done' | 'cancelled';
 export interface OrdersPage { total: number; orders: ShopOrder[] }
-export interface PlaceOrderInput { key: string; items: { sku_code: string; qty: number }[]; fulfilment: Fulfilment; name: string; phone: string; address: string; note: string; expectedTotal: number | null }
+export interface PlaceOrderInput { key: string; items: { sku_code: string; qty: number }[]; fulfilment: Fulfilment; name: string; phone: string; address: string; note: string; paymentMethod?: string | null; expectedTotal: number | null }
 
 // staff
 export interface AdminOrder extends ShopOrder {
@@ -113,7 +113,7 @@ export const shop = {
   async placeOrder(i: PlaceOrderInput): Promise<{ replay: boolean; order: ShopOrder }> {
     const r = await rpc<{ replay: boolean; order: ShopOrder }>('shop_place_order', {
       p_key: i.key, p_items: i.items, p_fulfilment: i.fulfilment, p_name: i.name, p_phone: i.phone, p_address: i.fulfilment === 'delivery' ? i.address : null,
-      p_note: i.note || null, p_expected_total: i.expectedTotal,
+      p_note: i.note || null, p_expected_total: i.expectedTotal, ...(i.paymentMethod ? { p_payment_method: i.paymentMethod } : {}),
     });
     clearShopCache();
     return r;
