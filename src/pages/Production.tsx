@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Factory, Lock, Plus, Trash2 } from 'lucide-react';
 import { useDB } from '../domain/store';
+import { isUsable } from '../domain/master';
 import { activateVersion, bomForProduct, cancelProduction, completeProduction, createBom, createProductionOrder, discardDraft, newDraftVersion, prodTotals, recordProduction, rollup, updateDraft, versionAt } from '../domain/bom';
 import { bkey, onHand } from '../domain/inventory';
 import { Badge, Banner, Button, Card, DataTable, Drawer, Empty, Field, Input, Kpi, Modal, NumInput, PageHead, Select, Tabs, Textarea, useConfirm, useHas, useRun, Tx } from '../ui/kit';
@@ -109,7 +110,7 @@ function BomDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
         <Card title="Components" flush>
           <table className="t compact"><thead><tr><th><Tx>Component</Tx></th><th><Tx>Role</Tx></th><th className="num"><Tx>Qty / batch</Tx></th>{canCost && <th className="num"><Tx>Unit cost</Tx></th>}{canCost && <th className="num"><Tx>Cost</Tx></th>}{editable && <th />}</tr></thead>
             <tbody>{cur.components.map((c, i) => { const cp = db.products.find((x) => x.id === c.productId)!; const line = r.lines[i]; return (
-              <tr key={i}><td>{editable ? <Select sm value={c.productId} onChange={(e) => setC(cur.components.map((x, k) => (k === i ? { ...x, productId: e.target.value } : x)))}>{db.products.filter((x) => x.kind !== 'menu' && x.id !== b.productId).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select> : cp.name}</td>
+              <tr key={i}><td>{editable ? <Select sm value={c.productId} onChange={(e) => setC(cur.components.map((x, k) => (k === i ? { ...x, productId: e.target.value } : x)))}>{db.products.filter((x) => x.kind !== 'menu' && x.id !== b.productId && isUsable(x, c.productId)).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select> : cp.name}</td>
                 <td>{editable ? <Select sm value={c.role} onChange={(e) => setC(cur.components.map((x, k) => (k === i ? { ...x, role: e.target.value as BomComponent['role'] } : x)))}><option value="material">material</option><option value="packaging">packaging</option><option value="consumable">consumable</option></Select> : <Badge>{c.role}</Badge>}</td>
                 <td className="num">{editable ? <NumInput style={{ width: 90 }} value={c.qty} onChange={(n) => setC(cur.components.map((x, k) => (k === i ? { ...x, qty: n || 0 } : x)))} /> : `${qtyFmt(c.qty)} ${cp.unit}`}</td>
                 {canCost && <td className="num">{money(line?.unitCost ?? 0)}</td>}{canCost && <td className="num">{money(line?.cost ?? 0)}</td>}{editable && <td><Button size="sm" variant="ghost" icon onClick={() => setC(cur.components.filter((_, k) => k !== i))}><Trash2 size={13} /></Button></td>}</tr>); })}</tbody></table>
@@ -127,9 +128,9 @@ function BomDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
 function NewBom({ onClose }: { onClose: () => void }) {
   const db = useDB();
   const run = useRun();
-  const free = db.products.filter((p) => ['finished', 'menu'].includes(p.kind) && !bomForProduct(db, p.id));
+  const free = db.products.filter((p) => p.active && ['finished', 'menu', 'wip'].includes(p.kind) && !bomForProduct(db, p.id));
   const [f, setF] = useState({ productId: free[0]?.id ?? '', name: '', type: 'manufacturing' as keyof typeof TYPE_LABEL, yieldQty: 1, laborCost: 0, overheadCost: 0 });
-  const [comps, setComps] = useState<BomComponent[]>([{ productId: db.products.find((p) => p.kind === 'material')!.id, qty: 1, role: 'material' }]);
+  const [comps, setComps] = useState<BomComponent[]>([{ productId: (db.products.find((p) => p.kind === 'material' && p.active) ?? db.products.find((p) => p.kind === 'material')!).id, qty: 1, role: 'material' }]);
   return (
     <Modal title="New bill of materials" size="lg" onClose={onClose} footer={<><Button onClick={onClose}><Tx>Cancel</Tx></Button><Button variant="primary" disabled={!f.productId || !f.name} onClick={() => run((d, c) => createBom(d, c, { ...f, components: comps }), { ok: 'BOM created (v1 active)', perm: 'production:create', onOk: onClose })}><Tx>Create</Tx></Button></>}>
       {!free.length ? <Empty title="Every finished/menu product already has a BOM" hint="Create the product first (Products → New product, type “Finished good” or “Menu item”)." /> : (

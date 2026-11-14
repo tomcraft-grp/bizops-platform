@@ -51,7 +51,7 @@ export default function POS() {
   const cats = useMemo(() => ['All', ...Array.from(new Set(sellables.map((p) => p.category)))], [sellables]);
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return sellables.filter((p) => (cat === 'All' || p.category === cat) && (!s || (p.name + p.sku + (p.barcode ?? '')).toLowerCase().includes(s)));
+    return sellables.filter((p) => (cat === 'All' || p.category === cat) && (!s || (p.name + p.sku + (p.legacySku ?? '') + (p.barcode ?? '')).toLowerCase().includes(s)));
   }, [sellables, cat, q]);
   const stockOf = (p: Product) => (p.kind === 'menu' ? servingsPossible(db, wh, p.id, now) : onHand(db, wh, p.id));
 

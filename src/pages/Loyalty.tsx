@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Gift, Plus, Sparkles } from 'lucide-react';
 import { useDB } from '../domain/store';
+import { isUsable } from '../domain/master';
 import { adjustPoints, cancelRedemption, expirePoints, fulfillRedemption, lifetimeSpendMap, pointsMap, tierFor } from '../domain/loyalty';
 import { Badge, Banner, Button, Card, DataTable, Empty, Field, Input, Kpi, Modal, NumInput, PageHead, Select, Tabs, Textarea, useConfirm, useHas, useRun, Tx } from '../ui/kit';
 import { Donut, HBars } from '../ui/charts';
@@ -145,7 +146,7 @@ function RewardModal({ r, onClose }: { r: Reward | null; onClose: () => void }) 
         {f.kind === 'coupon' ? <>
           <Field label="Coupon kind"><Select value={f.couponKind} onChange={(e) => setF({ ...f, couponKind: e.target.value as 'percent' | 'fixed' })}><option value="fixed">฿ amount</option><option value="percent">% off</option></Select></Field>
           <Field label="Value"><NumInput value={f.couponValue ?? 0} onChange={(n) => setF({ ...f, couponValue: n })} /></Field>
-        </> : <Field label="Free product"><Select value={f.productId ?? ''} onChange={(e) => setF({ ...f, productId: e.target.value })}><option value="">Select…</option>{db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>}
+        </> : <Field label="Free product"><Select value={f.productId ?? ''} onChange={(e) => setF({ ...f, productId: e.target.value })}><option value="">Select…</option>{db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind) && isUsable(p, f.productId)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>}
       </div>
     </Modal>
   );

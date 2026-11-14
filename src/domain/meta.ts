@@ -31,7 +31,7 @@ export const PAY_METHODS = [
 export const payLabel = (k: string) => PAY_METHODS.find((m) => m.key === k)?.label ?? k;
 
 export const PRODUCT_KIND_LABEL: Record<string, string> = {
-  resale: 'Resale', finished: 'Finished good', menu: 'Menu item (recipe)', material: 'Raw material', packaging: 'Packaging',
+  resale: 'Resale', finished: 'Finished good', menu: 'Menu item (recipe)', material: 'Raw material', packaging: 'Packaging', wip: 'Work in process',
 };
 // Static route metadata (mirrors the routes in App.tsx) so feedback captured on any page can be
 // traced to a page name / module / feature without guessing — this is the "existing route metadata"

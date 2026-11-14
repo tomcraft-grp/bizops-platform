@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Pause, Play, Plus, Trash2 } from 'lucide-react';
 import { useDB, useLang } from '../domain/store';
+import { isUsable } from '../domain/master';
 import { effectiveStatus, promoUsage } from '../domain/promotions';
 import { quoteOrder } from '../domain/orders';
 import { CHANNEL_LIST } from '../domain/meta';
@@ -133,8 +134,8 @@ function PromoModal({ p, onClose }: { p: Promotion | null; onClose: () => void }
         <Field label="Action"><Select value={a.type} onChange={(e) => set({ action: { type: e.target.value as PromoActionType, value: a.value } })}>{ACTIONS.map((x) => <option key={x.v} value={x.v}>{x.label}</option>)}</Select></Field>
         <Field label="Value" hint={ACTIONS.find((x) => x.v === a.type)?.hint}><NumInput value={a.value ?? ''} onChange={(n) => set({ action: { ...a, value: isNaN(n) ? undefined : n } })} /></Field>
         {a.type === 'bonus_points' && <Field label="Mode"><Select value={a.bonusMode ?? 'fixed'} onChange={(e) => set({ action: { ...a, bonusMode: e.target.value as 'fixed' | 'multiplier' } })}><option value="fixed">Fixed points</option><option value="multiplier">Extra multiplier</option></Select></Field>}
-        {a.type === 'free_item' && <Field label="Free product"><Select value={a.productId ?? ''} onChange={(e) => set({ action: { ...a, productId: e.target.value } })}><option value="">Select…</option>{db.products.filter((x) => ['resale', 'finished', 'menu'].includes(x.kind)).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>}
-        {a.type === 'bundle_price' && <Field label="Bundle products" full><div className="row wrap">{db.products.filter((x) => ['resale', 'finished', 'menu'].includes(x.kind)).map((x) => <Check key={x.id} checked={!!a.bundleProductIds?.includes(x.id)} onChange={() => set({ action: { ...a, bundleProductIds: toggle(a.bundleProductIds ?? [], x.id) } })}>{x.name}</Check>)}</div></Field>}
+        {a.type === 'free_item' && <Field label="Free product"><Select value={a.productId ?? ''} onChange={(e) => set({ action: { ...a, productId: e.target.value } })}><option value="">Select…</option>{db.products.filter((x) => ['resale', 'finished', 'menu'].includes(x.kind) && isUsable(x, a.productId)).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>}
+        {a.type === 'bundle_price' && <Field label="Bundle products" full><div className="row wrap">{db.products.filter((x) => ['resale', 'finished', 'menu'].includes(x.kind) && (x.active || !!a.bundleProductIds?.includes(x.id))).map((x) => <Check key={x.id} checked={!!a.bundleProductIds?.includes(x.id)} onChange={() => set({ action: { ...a, bundleProductIds: toggle(a.bundleProductIds ?? [], x.id) } })}>{x.name}</Check>)}</div></Field>}
         {a.type === 'event_entitlement' && <>
           <Field label="Event"><Select value={a.eventId ?? ''} onChange={(e) => set({ action: { ...a, eventId: e.target.value } })}><option value="">Select…</option>{db.events.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
           <Field label="One pick per (฿)"><NumInput value={a.perAmount ?? ''} onChange={(n) => set({ action: { ...a, perAmount: n } })} /></Field>

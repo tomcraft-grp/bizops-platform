@@ -5,7 +5,7 @@
 export type ID = string;
 export type ChannelCode = 'POS' | 'LINE' | 'SHOPEE' | 'LAZADA' | 'TIKTOK' | 'LINEMAN';
 export type Station = 'kitchen' | 'beverage';
-export type ProductKind = 'resale' | 'finished' | 'menu' | 'material' | 'packaging';
+export type ProductKind = 'resale' | 'finished' | 'menu' | 'material' | 'packaging' | 'wip';
 export type PayMethod = 'cash' | 'transfer' | 'qr' | 'card' | 'other';
 export type OrderStatus =
   | 'new' | 'confirmed' | 'preparing' | 'packed' | 'ready' | 'shipped' | 'completed' | 'cancelled' | 'returned';
@@ -45,6 +45,8 @@ export interface Product {
   levels: Record<ID, { min: number; max: number }>; // per-warehouse reorder levels
   station?: Station | null; supplierId?: ID; bomId?: ID; modifiers?: ModifierGroup[];
   trackLot?: boolean; mediaIds: ID[]; description?: string; listingMap?: Partial<Record<ChannelCode, string>>;
+  legacySku?: string; // the code this product had before the automatic SKU system (kept for history, search and audit)
+  brand?: string; createdAt?: string; // optional so products saved before these fields existed stay valid; createdAt is set when a product is created or first pulled
 }
 
 // ---------- inventory

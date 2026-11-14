@@ -77,7 +77,7 @@ function POModal({ onClose }: { onClose: () => void }) {
   const [note, setNote] = useState('');
   const [lines, setLines] = useState<{ productId: ID; qty: number; unitCost: number }[]>([{ productId: '', qty: 0, unitCost: 0 }]);
   const sup = db.suppliers.find((s) => s.id === supplierId)!;
-  const prods = db.products.filter((p) => sup.productIds.includes(p.id));
+  const prods = db.products.filter((p) => sup.productIds.includes(p.id) && (p.active || lines.some((l) => l.productId === p.id)));
   const lastCost = (pid: ID) => { const h = priceHistory(db, pid); return h.length ? h[h.length - 1].unitCost : db.products.find((p) => p.id === pid)?.stdCost ?? 0; };
   const total = lines.reduce((s, l) => s + l.qty * l.unitCost, 0);
   return (
@@ -232,7 +232,7 @@ function ReturnModal({ onClose }: { onClose: () => void }) {
       <div className="col">
         <Field label="Supplier"><Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>{db.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></Field>
         <Field label="From warehouse"><Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>{db.warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</Select></Field>
-        <Field label="Item" hint={productId ? `On hand ${qtyFmt(have)} · avg cost ${money(globalAvgCost(db, productId))}` : undefined}><Select value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">Select…</option>{db.products.filter((p) => sup.productIds.includes(p.id)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
+        <Field label="Item" hint={productId ? `On hand ${qtyFmt(have)} · avg cost ${money(globalAvgCost(db, productId))}` : undefined}><Select value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">Select…</option>{db.products.filter((p) => sup.productIds.includes(p.id) && (p.active || p.id === productId || (db.balances[bkey(warehouseId, p.id)]?.qty ?? 0) > 0)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
         <Field label="Quantity"><NumInput value={qty || ''} onChange={(n) => setQty(Math.min(have, n || 0))} /></Field>
         <Field label="Apply credit to invoice"><Select value={invoiceId} onChange={(e) => setInvoiceId(e.target.value)}><option value="">— none —</option>{db.apInvoices.filter((i) => i.supplierId === supplierId && apOpen(i) > 0.004).map((i) => <option key={i.id} value={i.id}>{i.no} ({money(apOpen(i))})</option>)}</Select></Field>
         <Field label="Reason"><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>

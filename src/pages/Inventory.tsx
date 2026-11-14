@@ -8,6 +8,8 @@ import { HBars } from '../ui/charts';
 import { cx, dateFmt, dateTimeFmt, daysBetween, money, money0, qtyFmt, r3 } from '../lib/util';
 import type { ID, MoveType } from '../domain/types';
 import { lowStock } from '../ui/data';
+import { StockFilterBar } from '../ui/StockFilterBar';
+import { EMPTY_STOCK_FILTERS, activeFilterCount, buildStockRows, filterOptions, matchingProducts, type StockFilters } from '../domain/stockFilters';
 import { t as tl } from '../lib/i18n';
 
 type Tab = 'stock' | 'movements' | 'transfers' | 'counts' | 'lots' | 'valuation';
@@ -19,27 +21,15 @@ export default function Inventory() {
   const tab = (sp.get('tab') as Tab) || 'stock';
   const canCreate = useHas('inventory:create');
   const canCost = useHas('finance:cost');
-  const [wh, setWh] = useState('');
-  const [kind, setKind] = useState('');
-  const [onlyLow, setOnlyLow] = useState(false);
+  const [flt, setFlt] = useState<StockFilters>(EMPTY_STOCK_FILTERS);
   const [adj, setAdj] = useState(false);
   const [tr, setTr] = useState(false);
   const reserved = useMemo(() => reservedMap(db), [db.orders]);
   const low = useMemo(() => lowStock(db), [db]);
-  const rows = useMemo(() => {
-    const out: { p: typeof db.products[number]; w: typeof db.warehouses[number]; qty: number; value: number; res: number; min?: number; max?: number; transit: number }[] = [];
-    for (const p of db.products) {
-      if (p.kind === 'menu' || (kind && p.kind !== kind)) continue;
-      for (const w of db.warehouses) {
-        if (wh && w.id !== wh) continue;
-        const b = db.balances[bkey(w.id, p.id)];
-        const lv = p.levels[w.id];
-        if (!b?.qty && !lv) continue;
-        out.push({ p, w, qty: b?.qty ?? 0, value: b?.value ?? 0, res: reserved[bkey(w.id, p.id)] || 0, min: lv?.min, max: lv?.max, transit: inTransitQty(db, p.id, w.id) });
-      }
-    }
-    return onlyLow ? out.filter((r) => r.min != null && r.qty < r.min) : out;
-  }, [db.balances, db.products, db.transfers, reserved, wh, kind, onlyLow]); // eslint-disable-line
+  const rows = useMemo(() => buildStockRows(db, flt, reserved), [db.balances, db.products, db.warehouses, reserved, flt]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fOptions = useMemo(() => filterOptions(db), [db.products]); // eslint-disable-line react-hooks/exhaustive-deps
+  const stockedProducts = useMemo(() => db.products.filter((p) => p.kind !== 'menu').length, [db.products]);
+  const nProducts = useMemo(() => matchingProducts(rows), [rows]);
   const total = stockValue(db);
   const recon = useMemo(() => reconcileStock(db), [db.movements, db.balances]);
 
@@ -57,18 +47,21 @@ export default function Inventory() {
 
       {tab === 'stock' && (
         <Card flush>
-          <DataTable rows={rows} rowKey={(r) => r.p.id + r.w.id} pageSize={16} search={(r) => `${r.p.name} ${r.p.sku}`}
-            toolbar={<><Select sm style={{ width: 'auto' }} value={wh} onChange={(e) => setWh(e.target.value)}><option value="">All warehouses</option>{db.warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</Select><Select sm style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}><option value="">All types</option><option value="material">Raw materials</option><option value="packaging">Packaging</option><option value="finished">Finished goods</option><option value="resale">Resale</option></Select><label className="check"><input type="checkbox" checked={onlyLow} onChange={(e) => setOnlyLow(e.target.checked)} />{' '}<Tx>Low only</Tx></label></>}
+          <StockFilterBar f={flt} onChange={(patch) => setFlt((cur) => ({ ...cur, ...patch }))} onClear={() => setFlt(EMPTY_STOCK_FILTERS)} warehouses={db.warehouses} options={fOptions} products={nProducts} totalProducts={stockedProducts} rows={rows.length} />
+          <DataTable rows={rows} rowKey={(r) => r.p.id + (r.w?.id ?? '-')} pageSize={16}
+            empty={<Empty title="No items match these filters" hint="Try removing a filter or searching with fewer words." action={activeFilterCount(flt) > 0 ? <Button onClick={() => setFlt(EMPTY_STOCK_FILTERS)}><Tx>Clear filters</Tx></Button> : undefined} />}
             cols={[
-              { key: 'p', header: 'Item', sort: (r) => r.p.name, render: (r) => <><b>{r.p.name}</b><div className="sub">{r.p.sku}</div></> },
-              { key: 'w', header: 'Warehouse', hideSm: true, sort: (r) => r.w.name, render: (r) => r.w.name },
+              { key: 'p', header: 'Item', sort: (r) => r.p.name, render: (r) => <><b>{r.p.name}</b><div className="sub">{r.p.sku}{r.p.brand ? ` · ${r.p.brand}` : ''}</div></> },
+              { key: 'st', header: 'Status', sort: (r) => (r.p.active ? 1 : 0), render: (r) => <Badge tone={r.p.active ? 'good' : 'warn'} dot>{r.p.active ? 'Active' : 'Inactive'}</Badge> },
+              { key: 'w', header: 'Warehouse', hideSm: true, sort: (r) => r.w?.name ?? '', render: (r) => r.w?.name ?? '–' },
               { key: 'q', header: 'On hand', num: true, sort: (r) => r.qty, render: (r) => <span className={cx(r.min != null && r.qty < r.min && 'bad')}>{qtyFmt(r.qty)} {r.p.unit}</span> },
               { key: 'r', header: 'Reserved', num: true, hideSm: true, render: (r) => (r.res ? qtyFmt(r.res) : '–') },
               { key: 'a', header: 'Available', num: true, render: (r) => qtyFmt(r3(r.qty - r.res)) },
-              { key: 't', header: 'In transit', num: true, hideSm: true, render: (r) => (r.transit ? qtyFmt(r.transit) : '–') },
+              { key: 't', header: 'In transit', num: true, hideSm: true, render: (r) => { const q = r.w ? inTransitQty(db, r.p.id, r.w.id) : 0; return q ? qtyFmt(q) : '–'; } },
               { key: 'lv', header: 'Min / Max', num: true, hideSm: true, render: (r) => (r.min != null ? `${qtyFmt(r.min)} / ${qtyFmt(r.max ?? 0)}` : '–') },
+              { key: 'cr', header: 'Created', hideSm: true, sort: (r) => r.p.createdAt ?? '', render: (r) => (r.p.createdAt ? dateFmt(r.p.createdAt) : '–') },
               ...(canCost ? [{ key: 'v', header: 'Value', num: true, sort: (r: { value: number }) => r.value, render: (r: { value: number }) => money(r.value) }] : []),
-              { key: 's', header: '', render: (r) => (r.min != null && r.qty < r.min ? <Badge tone="bad"><AlertTriangle size={11} />{' '}<Tx>reorder</Tx></Badge> : <Badge tone="good"><Tx>ok</Tx></Badge>) },
+              { key: 's', header: 'Stock level', render: (r) => (r.qty <= 0 ? <Badge tone="bad"><Tx>out of stock</Tx></Badge> : r.min != null && r.qty < r.min ? <Badge tone="bad"><AlertTriangle size={11} />{' '}<Tx>reorder</Tx></Badge> : <Badge tone="good"><Tx>ok</Tx></Badge>) },
             ]} />
         </Card>
       )}
@@ -208,7 +201,7 @@ function AdjustModal({ onClose }: { onClose: () => void }) {
       <div className="col">
         <Seg value={f.kind} onChange={(v) => setF({ ...f, kind: v })} options={[{ v: 'waste', label: 'Waste / spoilage' }, { v: 'adjust', label: 'Correction (+/−)' }]} />
         <Field label="Warehouse"><Select value={f.warehouseId} onChange={(e) => setF({ ...f, warehouseId: e.target.value })}>{db.warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</Select></Field>
-        <Field label="Item"><Select value={f.productId} onChange={(e) => setF({ ...f, productId: e.target.value })}><option value="">Select…</option>{db.products.filter((x) => x.kind !== 'menu').map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
+        <Field label="Item"><Select value={f.productId} onChange={(e) => setF({ ...f, productId: e.target.value })}><option value="">Select…</option>{db.products.filter((x) => x.kind !== 'menu' && (x.active || x.id === f.productId || (db.balances[bkey(f.warehouseId, x.id)]?.qty ?? 0) > 0)).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
         <Field label={f.kind === 'waste' ? `Quantity wasted${p ? ` (${p.unit})` : ''}` : 'Quantity (+ add / − remove)'} hint={p ? `On hand: ${qtyFmt(bal)} ${p.unit}` : undefined}><NumInput value={f.qty || ''} onChange={(n) => setF({ ...f, qty: isNaN(n) ? 0 : n })} /></Field>
         <Field label="Reason (required)"><Textarea value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} /></Field>
       </div>

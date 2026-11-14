@@ -185,6 +185,12 @@ export const Check = ({ checked, onChange, children }: { checked: boolean; onCha
   return <label className="check"><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />{tr(lang, children)}</label>;
 };
 
+/** On/off switch (role="switch"). Stops the click from reaching a clickable table row. */
+export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  const lang = useLang();
+  return <button type="button" role="switch" aria-checked={checked} aria-label={t(lang, label)} title={t(lang, label)} className={cx('switch', checked && 'on')} onClick={(e) => { e.stopPropagation(); onChange(!checked); }}><i /></button>;
+}
+
 // ---------- overlays
 function useEsc(fn: () => void) {
   useEffect(() => { const h = (e: KeyboardEvent) => e.key === 'Escape' && fn(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, [fn]);

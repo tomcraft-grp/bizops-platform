@@ -849,9 +849,37 @@ export const TH_BACKOFFICE: Record<string, string> = {
   // Products: pull the central SKU master
   'Pull SKUs from central database': 'ดึง SKU จากฐานข้อมูลกลาง', 'Pull SKUs': 'ดึง SKU',
   'Pull {n} SKUs into this device?': 'ดึง SKU {n} รายการเข้าเครื่องนี้?',
-  'Products are created or updated by SKU code on this device (existing products with other codes are kept). {r} SKUs are marked "needs review"; SKUs without a price are imported as inactive.':
-    'ระบบจะสร้างหรืออัปเดตสินค้าในเครื่องนี้ตามรหัส SKU (สินค้าเดิมที่รหัสไม่ตรงจะยังอยู่) มี {r} รายการที่ติดป้าย "ต้องตรวจสอบ" และรายการที่ไม่มีราคาจะถูกนำเข้าแบบปิดการขาย',
-  '{c} created, {u} updated, {i} inactive, {f} failed': 'สร้างใหม่ {c} · อัปเดต {u} · ปิดการขาย {i} · ไม่สำเร็จ {f}',
+  'Products are created or updated by SKU code on this device (a product pulled earlier under its old code is found by that legacy code and re-coded, not duplicated; products with other codes are kept). {r} SKUs are marked "needs review"; SKUs without a price are imported as inactive.':
+    'ระบบจะสร้างหรืออัปเดตสินค้าในเครื่องนี้ตามรหัส SKU (สินค้าที่เคยดึงมาด้วยรหัสเดิมจะถูกจับคู่ด้วยรหัสเดิมแล้วเปลี่ยนเป็นรหัสใหม่ ไม่สร้างซ้ำ ส่วนสินค้าที่รหัสไม่ตรงจะยังอยู่) มี {r} รายการที่ติดป้าย "ต้องตรวจสอบ" และรายการที่ไม่มีราคาจะถูกนำเข้าแบบปิดการขาย',
+  '{c} created, {u} updated ({r} re-coded), {i} inactive, {f} failed': 'สร้างใหม่ {c} · อัปเดต {u} (เปลี่ยนรหัสใหม่ {r}) · ปิดการขาย {i} · ไม่สำเร็จ {f}',
   'No SKUs found in the central database (are you signed in as staff?)': 'ไม่พบ SKU ในฐานข้อมูลกลาง (ล็อกอินด้วยบัญชีพนักงานหรือยัง?)',
   'Kratom drink': 'น้ำกระท่อม', 'bottle': 'ขวด',
+  // product status (Active / Inactive)
+  'Deactivate {name}?': 'ปิดการใช้งาน {name}?',
+  'Hidden from POS, the LINE app and new orders and purchases. Past orders, stock movements and reports keep it, and you can reactivate it at any time.':
+    'จะถูกซ่อนจาก POS แอป LINE และการสั่งซื้อ/จัดซื้อใหม่ ส่วนออเดอร์ รายการเคลื่อนไหวสต็อก และรายงานในอดีตยังคงข้อมูลสินค้านี้ไว้ และเปิดใช้งานอีกครั้งได้ทุกเมื่อ',
+  'Product activated': 'เปิดใช้งานสินค้าแล้ว', 'Product deactivated': 'ปิดใช้งานสินค้าแล้ว',
+  'Deactivate product': 'ปิดใช้งานสินค้า', 'Activate product': 'เปิดใช้งานสินค้า',
+  // automatic SKU codes
+  'SKU type': 'ประเภท SKU', 'SKU code': 'รหัส SKU', 'All SKU types': 'ทุกประเภท SKU', 'Work in process': 'งานระหว่างผลิต',
+  'FG – Finished goods': 'FG – สินค้าสำเร็จรูป', 'RM – Raw materials': 'RM – วัตถุดิบ', 'WIP – Work in process': 'WIP – งานระหว่างผลิต',
+  'Generated automatically. The final number is reserved when you save.': 'ระบบสร้างให้อัตโนมัติ เลขจริงจะถูกจองเมื่อกดบันทึก',
+  'Product created — SKU code {code} was generated automatically': 'สร้างสินค้าแล้ว ระบบออกรหัส SKU {code} ให้อัตโนมัติ',
+  'You do not have permission to create products': 'คุณไม่มีสิทธิ์สร้างสินค้า', 'Name is required': 'ต้องระบุชื่อ',
+  'Barcode is already used by another product': 'บาร์โค้ดนี้ถูกใช้กับสินค้าอื่นแล้ว', 'Creating…': 'กำลังสร้าง…',
+  'Legacy code: {c}': 'รหัสเดิม: {c}', 'Assigned automatically; it cannot be edited.': 'ระบบกำหนดให้อัตโนมัติ แก้ไขไม่ได้',
+  'Old-style code. Use “Assign standard SKU codes” on the Products page to give it a standard one.': 'เป็นรหัสแบบเก่า กดปุ่ม “Assign standard SKU codes” ที่หน้าสินค้าเพื่อให้รหัสมาตรฐาน',
+  'Assign standard SKU codes to {n} products?': 'ให้รหัส SKU มาตรฐานกับสินค้า {n} รายการ?',
+  'Each product gets an automatic code (FG-, RM- or WIP- plus a number) from the central database. Its old code is kept as the legacy code and stays searchable. Stock, orders and history are not affected. Needs an internet connection.':
+    'สินค้าแต่ละรายการจะได้รหัสอัตโนมัติ (FG-, RM- หรือ WIP- ตามด้วยตัวเลข) จากฐานข้อมูลกลาง รหัสเดิมจะถูกเก็บไว้เป็นรหัสเดิมและยังค้นหาได้ สต็อก ออเดอร์ และประวัติไม่เปลี่ยน ต้องเชื่อมต่ออินเทอร์เน็ต',
+  'Assign codes': 'ให้รหัส', 'Assigning…': 'กำลังให้รหัส…', 'Assign standard SKU codes ({n})': 'ให้รหัส SKU มาตรฐาน ({n})',
+  '{m} matched to existing codes, {i} new codes issued, {f} failed': 'จับคู่รหัสที่มีอยู่ {m} · ออกรหัสใหม่ {i} · ไม่สำเร็จ {f}',
+  // inventory filters
+  'Filters': 'ตัวกรอง', 'Clear filters': 'ล้างตัวกรอง', 'Stock': 'สต็อก', 'Date created': 'วันที่สร้าง', 'Product type': 'ประเภทสินค้า', 'Product category': 'หมวดหมู่สินค้า',
+  'All kinds': 'ทุกชนิด', 'Brand': 'แบรนด์', 'All brands': 'ทุกแบรนด์', 'All units': 'ทุกหน่วย', 'Availability': 'ความพร้อมของสต็อก',
+  'In stock': 'มีสต็อก', 'Out of stock': 'สต็อกหมด', 'All stock levels': 'ทุกระดับสต็อก', 'out of stock': 'สต็อกหมด', 'Stock level': 'ระดับสต็อก',
+  'Search SKU, name, brand, barcode…': 'ค้นหา SKU ชื่อ แบรนด์ บาร์โค้ด…',
+  'Products saved before creation dates were recorded are left out while a date is set.': 'สินค้าที่บันทึกก่อนมีการเก็บวันที่สร้างจะไม่ถูกแสดงเมื่อกำหนดช่วงวันที่',
+  '{n} of {total} products · {r} stock rows': 'พบ {n} จาก {total} สินค้า · {r} แถวสต็อก',
+  'No items match these filters': 'ไม่พบรายการที่ตรงกับตัวกรอง', 'Try removing a filter or searching with fewer words.': 'ลองลบตัวกรองบางตัว หรือค้นหาด้วยคำที่น้อยลง',
 };

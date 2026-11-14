@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Download, FileUp, RefreshCw, Settings2 } from 'lucide-react';
 import { useDB, useLang } from '../domain/store';
 import { CHANNEL_LIST, CHANNELS } from '../domain/meta';
+import { isUsable } from '../domain/master';
 import { importCSVRows, mapSku, retryExternal, simulateSync } from '../domain/channels';
 import { createSettlement, receiveSettlement, settleable } from '../domain/payments';
 import { Badge, Banner, Button, Card, ChannelChip, DataTable, Empty, Field, Input, Kpi, Modal, NumInput, PageHead, Select, Tabs, Textarea, useHas, useRun, Tx } from '../ui/kit';
@@ -90,7 +91,7 @@ export default function Channels() {
               { key: 'p', header: 'Internal product', render: (m) => (
                 <Select sm value={m.productId ?? ''} disabled={!canEdit} onChange={(e) => run((d, c) => mapSku(d, c, m.id, e.target.value || null), { ok: 'Mapping saved' })} style={{ minWidth: 220, borderColor: m.productId ? undefined : 'var(--warn)' }}>
                   <option value="">— Unmapped —</option>
-                  {db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind) && isUsable(p, m.productId)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </Select>) },
               { key: 'st', header: '', render: (m) => (m.productId ? <Badge tone="good"><Tx>mapped</Tx></Badge> : <Badge tone="warn"><Tx>needs mapping</Tx></Badge>) },
             ]} />

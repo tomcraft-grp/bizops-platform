@@ -1,13 +1,13 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ImagePlus, Plus, Star, Trash2 } from 'lucide-react';
 import { useDB, useLang } from '../domain/store';
-import { saveProduct } from '../domain/master';
+import { saveProduct, setProductActive } from '../domain/master';
 import { PRODUCT_KIND_LABEL, CHANNEL_LIST } from '../domain/meta';
 import { globalAvgCost, lotsFor } from '../domain/inventory';
 import { bomForProduct, rollup, versionAt } from '../domain/bom';
 import { priceHistory } from '../domain/purchasing';
-import { Badge, Button, Card, ChannelChip, Check, DataTable, Drawer, Empty, Field, Input, KV, Kpi, Modal, NumInput, PageHead, Select, Tabs, Textarea, useConfirm, useHas, useRun, Tx } from '../ui/kit';
+import { Badge, Button, Card, ChannelChip, Check, DataTable, Drawer, Empty, Field, Input, KV, Kpi, Modal, NumInput, PageHead, Select, Switch, Tabs, Textarea, useConfirm, useHas, useRun, Tx } from '../ui/kit';
 import { LineChart } from '../ui/charts';
 import { MediaImg, ProductEmoji } from '../ui/shared';
 import { uploadMedia } from '../ui/upload';
@@ -16,6 +16,9 @@ import { dateFmt, money, money0, pct, qtyFmt, shortDay, dayKey } from '../lib/ut
 import type { DB, ID, Product, ProductKind } from '../domain/types';
 import { t as tl } from '../lib/i18n';
 import { PullSkuButton } from '../ui/PullSkuButton';
+import { SkuCodesButton } from '../ui/SkuCodesButton';
+import { KINDS_OF_CATEGORY, SKU_CATEGORIES, SKU_CATEGORY_LABEL, isStandardSku, skuCategoryOf, type SkuCategory } from '../domain/sku';
+import { newClientRef, peekSku, reserveSku, voidSku } from '../lib/skuApi';
 
 export default function Products() {
   const db = useDB();
@@ -24,14 +27,16 @@ export default function Products() {
   const canEdit = useHas('catalog:edit');
   const canCost = useHas('finance:cost');
   const [kind, setKind] = useState<string>('');
+  const [status, setStatus] = useState<'' | 'active' | 'inactive'>('');
+  const [skuType, setSkuType] = useState<'' | SkuCategory>('');
   const [adding, setAdding] = useState(false);
   const openId = sp.get('p');
   const stock = useMemo(() => { const m: Record<ID, number> = {}; for (const k in db.balances) { const pid = k.split('|')[1]; m[pid] = (m[pid] || 0) + db.balances[k].qty; } return m; }, [db.balances]);
-  const rows = db.products.filter((p) => !kind || p.kind === kind);
+  const rows = db.products.filter((p) => (!kind || p.kind === kind) && (!skuType || skuCategoryOf(p.kind) === skuType) && (!status || (status === 'active') === p.active));
   return (
     <>
       <PageHead title="Products" desc="One catalog for resale goods, manufactured goods, menu items (recipes), raw materials and packaging — with channel prices, images and cost history."
-        actions={<>{canEdit && <PullSkuButton />}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>}</>} />
+        actions={<>{canEdit && <SkuCodesButton />}{canEdit && <PullSkuButton />}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>}</>} />
       <div className="grid g4 mb16">
         <Kpi label="Products" value={db.products.length} sub={<Tx vars={{ n: db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).length }}>{'{n} sellable'}</Tx>} />
         <Kpi label="Menu items (recipes)" value={db.products.filter((p) => p.kind === 'menu').length} sub="stock deducted by BOM" />
@@ -39,8 +44,8 @@ export default function Products() {
         <Kpi label="Inactive" value={db.products.filter((p) => !p.active).length} sub="hidden from POS" />
       </div>
       <Card flush>
-        <DataTable rows={rows} rowKey={(p) => p.id} pageSize={14} onRow={(p) => setSp({ p: p.id })} search={(p) => `${p.name} ${p.sku} ${p.barcode ?? ''} ${p.category}`}
-          toolbar={<Select sm style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}><option value="">All types</option>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>}
+        <DataTable rows={rows} rowKey={(p) => p.id} pageSize={14} onRow={(p) => setSp({ p: p.id })} search={(p) => `${p.name} ${p.sku} ${p.legacySku ?? ''} ${p.barcode ?? ''} ${p.brand ?? ''} ${p.category} ${p.description ?? ''}`}
+          toolbar={<><Select sm style={{ width: 'auto' }} value={skuType} onChange={(e) => setSkuType(e.target.value as typeof skuType)}><option value="">All SKU types</option>{SKU_CATEGORIES.map((c) => <option key={c} value={c}>{SKU_CATEGORY_LABEL[c]}</option>)}</Select><Select sm style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}><option value="">All types</option>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select><Select sm style={{ width: 'auto' }} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></Select></>}
           cols={[
             { key: 'n', header: 'Product', sort: (p) => p.name, render: (p) => <div className="row"><ProductEmoji p={p} size={36} /><div><b>{p.name}</b><div className="sub">{p.sku}{p.barcode ? ` · ${p.barcode}` : ''}</div></div></div> },
             { key: 'k', header: 'Type', hideSm: true, render: (p) => <Badge><Tx>{PRODUCT_KIND_LABEL[p.kind]}</Tx></Badge> },
@@ -48,12 +53,36 @@ export default function Products() {
             { key: 'p', header: 'Price', num: true, sort: (p) => p.price, render: (p) => (p.price ? money(p.price) : <span className="muted">–</span>) },
             ...(canCost ? [{ key: 'cost', header: 'Avg cost', num: true, render: (p: Product) => money(p.kind === 'menu' ? (bomForProduct(db, p.id) ? rollupPerUnit(db, p.id) : p.stdCost) : globalAvgCost(db, p.id)) }, { key: 'm', header: 'Margin', num: true, render: (p: Product) => { if (!p.price) return <span className="muted">–</span>; const c = p.kind === 'menu' ? rollupPerUnit(db, p.id) : globalAvgCost(db, p.id); return pct((p.price / 1.07 - c) / (p.price / 1.07), 0); } }] : []),
             { key: 's', header: 'On hand', num: true, sort: (p) => stock[p.id] || 0, render: (p) => (p.kind === 'menu' ? <span className="muted"><Tx>recipe</Tx></span> : `${qtyFmt(stock[p.id] || 0)} ${p.unit}`) },
-            { key: 'a', header: '', render: (p) => (p.active ? null : <Badge tone="warn"><Tx>inactive</Tx></Badge>) },
+            { key: 'a', header: 'Status', sort: (p) => (p.active ? 1 : 0), render: (p) => <ProductStatus p={p} /> },
           ]} />
       </Card>
       {adding && <NewProduct onClose={() => setAdding(false)} onCreated={(id) => { setAdding(false); setSp({ p: id }); }} />}
       {openId && <ProductDrawer id={openId} onClose={() => setSp({})} />}
     </>
+  );
+}
+/** Status badge (always visible) + on/off switch (only for people who can edit the catalogue; others just see the badge). */
+function ProductStatus({ p }: { p: Product }) {
+  const lang = useLang();
+  const run = useRun();
+  const confirm = useConfirm();
+  const canEdit = useHas('catalog:edit');
+  const toggle = async (next: boolean) => {
+    if (!next) {
+      const x = await confirm({
+        title: tl(lang, 'Deactivate {name}?', { name: p.name }),
+        body: 'Hidden from POS, the LINE app and new orders and purchases. Past orders, stock movements and reports keep it, and you can reactivate it at any time.',
+        confirmLabel: 'Deactivate',
+      });
+      if (!x.ok) return;
+    }
+    run((d, c) => setProductActive(d, c, p.id, next), { ok: next ? 'Product activated' : 'Product deactivated', perm: 'catalog:edit' });
+  };
+  return (
+    <div className="row gap-8">
+      <Badge tone={p.active ? 'good' : 'warn'} dot>{p.active ? 'Active' : 'Inactive'}</Badge>
+      {canEdit && <Switch checked={p.active} onChange={toggle} label={p.active ? 'Deactivate product' : 'Activate product'} />}
+    </div>
   );
 }
 function rollupPerUnit(db: DB, pid: ID) {
@@ -62,16 +91,59 @@ function rollupPerUnit(db: DB, pid: ID) {
   return v ? rollup(db, v).perUnit : 0;
 }
 
+/**
+ * New product. Employees only pick FG / RM / WIP: the code is issued by the central database (never typed or built here).
+ * The code shown while filling in is a PREVIEW; the real number is reserved when the product is saved, as the last step
+ * after local validation, with a request id so a retry or double click can never consume a second number.
+ */
 function NewProduct({ onClose, onCreated }: { onClose: () => void; onCreated: (id: ID) => void }) {
+  const lang = useLang();
+  const db = useDB();
   const run = useRun();
-  const [f, setF] = useState({ name: '', sku: '', kind: 'resale' as ProductKind, category: 'General', unit: 'pcs', price: 0, stdCost: 0, barcode: '' });
+  const canSave = useHas('catalog:create') && useHas('catalog:edit');
+  const [f, setF] = useState({ name: '', cat: 'FG' as SkuCategory, kind: 'resale' as ProductKind, category: 'General', brand: '', unit: 'pcs', price: 0, stdCost: 0, barcode: '' });
+  const [preview, setPreview] = useState<string | null>(null);
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(newClientRef());
+  useEffect(() => {
+    let live = true;
+    setPreview(null); setPreviewErr(null);
+    peekSku(f.cat).then((c) => live && setPreview(c)).catch((e) => live && setPreviewErr((e as Error).message));
+    return () => { live = false; };
+  }, [f.cat]);
+  const setCat = (cat: SkuCategory) => setF({ ...f, cat, kind: KINDS_OF_CATEGORY[cat][0] });
+  const create = async () => {
+    if (busy) return;
+    if (!canSave) { toast('error', tl(lang, 'You do not have permission to create products')); return; }
+    if (!f.name.trim()) { toast('error', tl(lang, 'Name is required')); return; }
+    if (f.barcode && db.products.some((x) => x.barcode === f.barcode)) { toast('error', tl(lang, 'Barcode is already used by another product')); return; }
+    setBusy(true);
+    try {
+      const sku = await reserveSku(f.cat, f.name.trim(), ref.current);
+      const id = run((d, c) => saveProduct(d, c, { name: f.name.trim(), sku: sku.code, kind: f.kind, category: f.category, brand: f.brand.trim() || undefined, unit: f.unit, price: f.price, stdCost: f.stdCost, barcode: f.barcode || undefined }), { perm: 'catalog:create' });
+      if (!id) { // saved nowhere: void the reserved code (it is never reused) and use a fresh request id next time
+        await voidSku(sku.code, 'product could not be saved on this device').catch(() => undefined);
+        ref.current = newClientRef();
+        return;
+      }
+      toast('success', tl(lang, 'Product created — SKU code {code} was generated automatically', { code: sku.code }));
+      onCreated(id);
+    } catch (e) {
+      toast('error', (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <Modal title="New product" onClose={onClose} footer={<><Button onClick={onClose}><Tx>Cancel</Tx></Button><Button variant="primary" onClick={() => run((d, c) => saveProduct(d, c, { ...f, barcode: f.barcode || undefined }), { ok: 'Product created', perm: 'catalog:create', onOk: onCreated })}><Tx>Create</Tx></Button></>}>
+    <Modal title="New product" onClose={onClose} footer={<><Button onClick={onClose}><Tx>Cancel</Tx></Button><Button variant="primary" onClick={create}>{busy ? <Tx>Creating…</Tx> : <Tx>Create</Tx>}</Button></>}>
       <div className="form-grid">
+        <Field label="SKU type"><Select value={f.cat} onChange={(e) => setCat(e.target.value as SkuCategory)}>{SKU_CATEGORIES.map((c) => <option key={c} value={c}>{SKU_CATEGORY_LABEL[c]}</option>)}</Select></Field>
+        <Field label="SKU code" hint={previewErr ?? 'Generated automatically. The final number is reserved when you save.'}><Input className="mono" readOnly aria-readonly="true" value={preview ?? (previewErr ? '–' : '…')} /></Field>
         <Field label="Name" full><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-        <Field label="SKU"><Input value={f.sku} onChange={(e) => setF({ ...f, sku: e.target.value })} /></Field>
         <Field label="Barcode"><Input value={f.barcode} onChange={(e) => setF({ ...f, barcode: e.target.value })} /></Field>
-        <Field label="Type"><Select value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value as ProductKind })}>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
+        <Field label="Brand"><Input value={f.brand} onChange={(e) => setF({ ...f, brand: e.target.value })} /></Field>
+        <Field label="Kind"><Select value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value as ProductKind })}>{KINDS_OF_CATEGORY[f.cat].map((k) => <option key={k} value={k}>{PRODUCT_KIND_LABEL[k]}</option>)}</Select></Field>
         <Field label="Category"><Input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></Field>
         <Field label="Unit"><Input value={f.unit} onChange={(e) => setF({ ...f, unit: e.target.value })} /></Field>
         <Field label="Selling price (฿, incl. VAT)"><NumInput value={f.price} onChange={(n) => setF({ ...f, price: n || 0 })} /></Field>
@@ -113,9 +185,10 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
       {tab === 'details' && (
         <div className="form-grid">
           <Field label="Name" full><Input value={cur.name} disabled={!canEdit} onChange={(e) => set({ name: e.target.value })} /></Field>
-          <Field label="SKU"><Input value={cur.sku} disabled={!canEdit} onChange={(e) => set({ sku: e.target.value })} /></Field>
+          <Field label="SKU code" hint={cur.legacySku ? tl(lang, 'Legacy code: {c}', { c: cur.legacySku }) : isStandardSku(cur.sku) ? 'Assigned automatically; it cannot be edited.' : 'Old-style code. Use “Assign standard SKU codes” on the Products page to give it a standard one.'}><Input className="mono" readOnly aria-readonly="true" value={cur.sku} /></Field>
           <Field label="Barcode"><Input value={cur.barcode ?? ''} disabled={!canEdit} onChange={(e) => set({ barcode: e.target.value || undefined })} /></Field>
           <Field label="Category"><Input value={cur.category} disabled={!canEdit} onChange={(e) => set({ category: e.target.value })} /></Field>
+          <Field label="Brand"><Input value={cur.brand ?? ''} disabled={!canEdit} onChange={(e) => set({ brand: e.target.value || undefined })} /></Field>
           <Field label="Unit"><Input value={cur.unit} disabled={!canEdit} onChange={(e) => set({ unit: e.target.value })} /></Field>
           <Field label="Price (฿, incl. VAT)"><NumInput value={cur.price} disabled={!canEdit} onChange={(n) => set({ price: n || 0 })} /></Field>
           {canCost && <Field label="Standard cost (฿)"><NumInput value={cur.stdCost} disabled={!canEdit} onChange={(n) => set({ stdCost: n || 0 })} /></Field>}
