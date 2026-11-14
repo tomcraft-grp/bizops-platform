@@ -1,0 +1,12 @@
+{
+  "name": "ar-opening-import",
+  "private": true,
+  "description": "Import opening AR balances into Supabase (dry run by default)",
+  "scripts": {
+    "dry-run": "node import.js",
+    "import": "node import.js --commit"
+  },
+  "dependencies": {
+    "xlsx": "0.18.5"
+  }
+}
