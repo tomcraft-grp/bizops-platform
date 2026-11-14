@@ -6,13 +6,14 @@ import { AGING_BUCKETS, agingFor, allocatedMap, approveSlip, createReceipt, cust
 import { PAY_METHODS, payLabel } from '../domain/meta';
 import { Badge, Banner, Button, Card, DataTable, Empty, Field, Input, Kpi, Modal, NumInput, PageHead, Select, Seg, Tabs, useConfirm, useHas, useRun, Tx } from '../ui/kit';
 import { MediaImg, usePrintDoc } from '../ui/shared';
+import OpeningReceivables from './OpeningReceivables';
 import { dateFmt, dateTimeFmt, money, money0, r2, relTime } from '../lib/util';
 import type { ID, PayMethod } from '../domain/types';
 import { OrderDrawer } from './OrderDetail';
 import { useMemo as _um } from 'react';
 import { t as tl } from '../lib/i18n';
 
-type Tab = 'aging' | 'slips' | 'receipts' | 'credit';
+type Tab = 'aging' | 'opening' | 'slips' | 'receipts' | 'credit';
 
 export default function Receivables() {
   const db = useDB();
@@ -39,7 +40,7 @@ export default function Receivables() {
         <Kpi label="Slips awaiting review" value={pendingSlips.length} sub="payment evidence uploaded" />
         <Kpi label="Customer credit held" value={money0(db.customers.reduce((s, c) => s + customerCredit(db, c.id), 0))} sub="unapplied receipts" />
       </div>
-      <Tabs value={tab} onChange={setTab} tabs={[{ v: 'aging', label: 'Outstanding & aging' }, { v: 'slips', label: 'Payment slips', count: pendingSlips.length || '' }, { v: 'receipts', label: 'Receipts' }, { v: 'credit', label: 'Customer credit' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ v: 'aging', label: 'Outstanding & aging' }, { v: 'opening', label: 'Opening balances' }, { v: 'slips', label: 'Payment slips', count: pendingSlips.length || '' }, { v: 'receipts', label: 'Receipts' }, { v: 'credit', label: 'Customer credit' }]} />
 
       {tab === 'aging' && (
         <Card flush>
@@ -53,6 +54,7 @@ export default function Receivables() {
             ]} />
         </Card>
       )}
+      {tab === 'opening' && <OpeningReceivables />}
       {tab === 'slips' && <Slips />}
       {tab === 'receipts' && <Receipts openOrder={setOpenOrder} />}
       {tab === 'credit' && (
