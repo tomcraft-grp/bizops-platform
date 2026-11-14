@@ -2,7 +2,7 @@
 // (shop_quote); placing the order sends only SKU + quantity + contact details and the total the customer saw, and the
 // database prices the order again. A retry of the same checkout returns the same order (see attemptKey).
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ShoppingCart, Store, Trash2, Truck } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Store, Trash2, Truck, Upload } from 'lucide-react';
 import { Banner, Empty } from '../ui/kit';
 import { cx } from '../lib/util';
 import { useAuth } from '../auth/AuthProvider';
@@ -15,6 +15,7 @@ import { K, useT } from './i18n';
 import { useShopHost, useShopNav } from './nav';
 import { ConfirmSheet, ErrorBox, errText, ProductImage, Stepper } from './ui';
 import { Choice, MethodCards, useMethods } from '../wallet/ui';
+import { removeOrderSlip, slipFingerprint, uploadOrderSlip } from '../wallet/api';
 
 export function CartCore() {
   const t = useT();
@@ -114,25 +115,38 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   // how the customer intends to pay: any active bank account, the wallet (only when it holds money) or the PromptPay QR. Chosen again, and changeable, on the payment screen.
   const { methods } = useMethods();
   const [pickedMethod, setPickedMethod] = useState<Choice>(null);
-  const method: Choice = pickedMethod ?? (methods ? (methods.banks.length ? { kind: 'bank', id: methods.banks[0].id } : methods.promptpay ? { kind: 'qr' } : null) : null);
+  const method: Choice = pickedMethod ?? (methods && methods.banks.length ? { kind: 'bank', id: methods.banks[0].id } : null);
+  // pay first: an order paid by transfer comes with its slip (the database refuses it otherwise); an order paid from the wallet needs none
+  const needsSlip = settings?.require_payment_slip === true && method?.kind !== 'wallet';
+  const [slip, setSlip] = useState<{ file: File; url: string | null } | null>(null);
+  const [slipWhen, setSlipWhen] = useState('');
+  const [slipRef, setSlipRef] = useState('');
+  const slipInput = useRef<HTMLInputElement>(null);
+  const slipUrl = useRef<string | null>(null);
+  useEffect(() => () => { if (slipUrl.current) URL.revokeObjectURL(slipUrl.current); }, []);
+  const pickSlip = (f: File | null) => { if (slipUrl.current) URL.revokeObjectURL(slipUrl.current); const url = f && f.type.startsWith('image/') ? URL.createObjectURL(f) : null; slipUrl.current = url; setSlip(f ? { file: f, url } : null); };
   const methodPref = method?.kind === 'bank' ? (methods?.banks.find((b) => b.id === method.id)?.code ? `bank:${methods.banks.find((b) => b.id === method.id)!.code}` : null) : method?.kind ?? null;
 
   const nameOk = name.trim().length > 0 && name.trim().length <= 100;
   const phoneOk = validPhone(phone);
-  const addrOk = fulfilment === 'pickup' || (address.trim().length >= 10 && address.trim().length <= 400);
+  const addrOk = address.trim().length <= 400;                                  // the address is optional
   const closed = !!settings && !settings.shop_open;
   const unavailable = settings && ((fulfilment === 'delivery' && !settings.delivery_enabled) || (fulfilment === 'pickup' && !settings.pickup_enabled));
   const formOk = nameOk && phoneOk && addrOk;
 
-  const ask = () => { setTouched(true); setErr(null); if (!formOk) return; setAsking(true); };
+  const ask = () => { setTouched(true); setErr(null); if (needsSlip && !slip) { setErr(t('co.slipMissing')); slipInput.current?.scrollIntoView({ block: 'center' }); return; } if (!formOk) return; setAsking(true); };
   const place = async () => {
     if (inflight.current) return;           // a second tap or a retry while one is running does nothing
     inflight.current = true; setBusy(true); setErr(null);
+    let uploaded: string | null = null;
     try {
       const items = toQuoteItems(lines);
-      const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? address.trim() : '', note: note.trim(), pm: methodPref });
+      const fp = needsSlip && slip ? await slipFingerprint(slip.file) : null;
+      const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? address.trim() : '', note: note.trim(), pm: methodPref, slip: fp?.sha256 ?? null });
       const key = attemptKey(sessionStorage, uid, payload);
-      const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: address.trim(), note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total });
+      if (fp && slip) uploaded = await uploadOrderSlip(slip.file, key, fp);        // the same key gives the same file: a retry never leaves a second one
+      const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: address.trim(), note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total,
+        slip: fp && uploaded ? { path: uploaded, sha256: fp.sha256, type: fp.type, transferAt: slipWhen ? new Date(slipWhen).toISOString() : null, ref: slipRef.trim() || null } : null });
       try { localStorage.setItem(CONTACT_KEY(uid), JSON.stringify({ name: name.trim(), phone: digits(phone), address: address.trim() } satisfies Contact)); } catch { /* ignore */ }
       forgetAttempt(sessionStorage, uid);
       useCart.getState().clear();
@@ -142,6 +156,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
     } catch (e) {
       setAsking(false);
       const code = e instanceof ShopError ? e.code : '';
+      if (uploaded && e instanceof ShopError && code !== 'NETWORK' && code !== 'ERROR') removeOrderSlip(uploaded);   // refused for good: do not keep the file (a lost answer might still have created the order, so then it stays)
       if (code === 'PRICE_CHANGED' || code === 'CART_INVALID') refresh();   // show the new numbers / the unavailable items
       setErr(errText(t, e));
     } finally { inflight.current = false; setBusy(false); }
@@ -171,7 +186,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
           {touched && !phoneOk && <small className="bad">{t('err.phone')}</small>}
           {fulfilment === 'delivery' && (
             <>
-              <label>{t('co.address')}<textarea value={address} rows={3} maxLength={400} autoComplete="street-address" placeholder={t('co.addressHint')} aria-invalid={touched && !addrOk} onChange={(e) => setAddress(e.target.value)} /></label>
+              <label>{t('co.address')} <small className="muted">({t('co.addressOptional')})</small><textarea value={address} rows={3} maxLength={400} autoComplete="street-address" placeholder={t('co.addressHint')} aria-invalid={touched && !addrOk} onChange={(e) => setAddress(e.target.value)} /></label>
               {touched && !addrOk && <small className="bad">{t('err.address')}</small>}
             </>
           )}
@@ -184,8 +199,26 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       </section>
 
       <section className="sp-sec"><h3>{t('co.payment')}</h3>
-        {methods ? <><MethodCards methods={methods} value={method} onChange={setPickedMethod} wallet={methods.wallet.balance > 0} qr /><div className="sp-note">{t('co.paymentHint')}</div></> : <div className="sp-note">{t('co.paymentLater')}</div>}
+        {methods ? <><MethodCards methods={methods} value={method} onChange={setPickedMethod} wallet={methods.wallet.balance > 0} /><div className="sp-note">{t('co.paymentHint')}</div></> : <div className="sp-note">{t('co.paymentLater')}</div>}
       </section>
+
+      {needsSlip && (
+        <section className="sp-sec" data-testid="slip-section"><h3>{t('co.slipTitle')} <span className="bad" aria-hidden>*</span></h3>
+          <p className="sp-note">{t('co.slipHelp')}</p>
+          <div className="wl-amount"><span className="wl-k">{t('co.slipAmount')}</span><b data-testid="transfer-amount">{baht(quote.total)}</b></div>
+          <div className="sp-form">
+            <input ref={slipInput} type="file" hidden accept="image/jpeg,image/png,application/pdf" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) { pickSlip(f); setErr(null); } }} />
+            {slip ? (
+              <div className="col gap-8" data-testid="slip-preview">
+                {slip.url ? <img src={slip.url} alt={t('co.slipPreview')} className="wl-slip" /> : <div className="muted wl-slip-file">{slip.file.name}</div>}
+                <label>{t('co.slipWhen')}<input type="datetime-local" value={slipWhen} onChange={(e) => setSlipWhen(e.target.value)} /></label>
+                <label>{t('co.slipRef')}<input value={slipRef} maxLength={80} onChange={(e) => setSlipRef(e.target.value)} /></label>
+                <button type="button" className="btn block" disabled={busy} onClick={() => slipInput.current?.click()}>{t('co.slipAnother')}</button>
+              </div>
+            ) : <button type="button" className="btn primary lg block" disabled={busy} onClick={() => slipInput.current?.click()}><Upload size={16} /> {t('co.slipChoose')}</button>}
+          </div>
+        </section>
+      )}
 
       <div className="sp-summary" aria-busy={loading}>
         <div className="row between"><span>{t('cart.subtotal')}</span><span>{baht(quote.subtotal)}</span></div>
@@ -195,7 +228,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       </div>
       <button type="button" className="btn primary lg block" disabled={busy || loading || !quote.ok || closed || !!unavailable} onClick={ask}>{busy ? t('co.placing') : `${t('co.place')} · ${baht(quote.total)}`}</button>
 
-      {asking && <ConfirmSheet title={t('co.confirmTitle')} body={t('co.confirmBody', { total: baht(quote.total) })} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} onConfirm={place} onCancel={() => setAsking(false)} />}
+      {asking && <ConfirmSheet title={t('co.confirmTitle')} body={t(needsSlip ? 'co.confirmBodySlip' : 'co.confirmBody', { total: baht(quote.total) })} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} onConfirm={place} onCancel={() => setAsking(false)} />}
     </div>
   );
 }

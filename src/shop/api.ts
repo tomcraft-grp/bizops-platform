@@ -17,7 +17,7 @@ export interface BrandFacet { brand: string; count: number }
 export interface Facets { categories: CategoryFacet[]; brands: BrandFacet[] }
 export interface ShopSettings {
   shop_open: boolean; closed_message: string | null; delivery_enabled: boolean; pickup_enabled: boolean; pickup_note: string | null;
-  shipping_fee: number; free_shipping_min: number | null;
+  shipping_fee: number; free_shipping_min: number | null; require_payment_slip?: boolean;
 }
 export type SortKey = 'recommended' | 'newest' | 'price_asc' | 'price_desc' | 'name';
 export interface CatalogQuery { search?: string; category?: string; brand?: string; sort?: SortKey; limit?: number; offset?: number; featured?: boolean }
@@ -44,7 +44,7 @@ export interface ShopOrder {
 }
 export type OrderFilter = 'all' | 'unpaid' | 'to_ship' | 'to_receive' | 'done' | 'cancelled';
 export interface OrdersPage { total: number; orders: ShopOrder[] }
-export interface PlaceOrderInput { key: string; items: { sku_code: string; qty: number }[]; fulfilment: Fulfilment; name: string; phone: string; address: string; note: string; paymentMethod?: string | null; expectedTotal: number | null }
+export interface PlaceOrderInput { key: string; items: { sku_code: string; qty: number }[]; fulfilment: Fulfilment; name: string; phone: string; address: string; note: string; paymentMethod?: string | null; slip?: { path: string; sha256: string; type: string; transferAt?: string | null; ref?: string | null } | null; expectedTotal: number | null }
 
 // staff
 export interface AdminOrder extends ShopOrder {
@@ -78,6 +78,8 @@ function fail(e: { message?: string; details?: string | null; code?: string }): 
   if (code) throw new ShopError(m, code[1], e.details ?? undefined);
   // a dropped connection is not a business error: the checkout is idempotent, so the customer may simply retry
   if (/fetch|network|failed to load|timeout/i.test(m)) throw new ShopError(m, 'NETWORK');
+  if (/slip was already submitted/i.test(m)) throw new ShopError(m, 'SLIP_ALREADY_USED');
+  if (/invalid file/i.test(m)) throw new ShopError(m, 'BAD_FILE');
   if (e.code === '42501' || /sign in|not allowed|permission denied/i.test(m)) throw new ShopError(m, 'FORBIDDEN');
   throw new ShopError(m || 'Request failed', 'ERROR');
 }
@@ -114,6 +116,7 @@ export const shop = {
     const r = await rpc<{ replay: boolean; order: ShopOrder }>('shop_place_order', {
       p_key: i.key, p_items: i.items, p_fulfilment: i.fulfilment, p_name: i.name, p_phone: i.phone, p_address: i.fulfilment === 'delivery' ? i.address : null,
       p_note: i.note || null, p_expected_total: i.expectedTotal, ...(i.paymentMethod ? { p_payment_method: i.paymentMethod } : {}),
+      ...(i.slip ? { p_slip_path: i.slip.path, p_slip_sha256: i.slip.sha256, p_slip_type: i.slip.type, p_slip_transfer_at: i.slip.transferAt ?? null, p_slip_ref: i.slip.ref || null } : {}),
     });
     clearShopCache();
     return r;

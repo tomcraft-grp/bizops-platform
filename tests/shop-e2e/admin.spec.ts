@@ -167,3 +167,36 @@ test.describe('payment choice', () => {
     await expect(page.locator('aside.drawer')).toContainText('กระเป๋าเงิน');
   });
 });
+
+test.describe('slip rule and pick-up', () => {
+  test('staff can switch "customers must attach the transfer slip" off and on; pick-up can be enabled', async ({ page }) => {
+    const fake = new FakeShop(); fake.settings.pickup_enabled = false; await openAdmin(page, fake);
+    await page.getByRole('tab', { name: 'Settings' }).click();
+    const slip = page.getByRole('switch', { name: 'Customers must attach the transfer slip with the order' });
+    await expect(slip).toHaveAttribute('aria-checked', 'true');                                      // on by default
+    await slip.click(); await expect.poll(() => fake.settings.require_payment_slip).toBe(false);
+    await slip.click(); await expect.poll(() => fake.settings.require_payment_slip).toBe(true);
+    const pickup = page.getByRole('switch', { name: 'Pick up at the shop' });
+    await expect(pickup).toHaveAttribute('aria-checked', 'false');
+    await pickup.click(); await expect.poll(() => fake.settings.pickup_enabled).toBe(true);
+    const call = fake.calls.filter((c) => c.fn === 'shop_admin_save_settings').map((c) => Object.keys(c.args.p_patch as object).join(','));
+    expect(call).toContain('require_payment_slip'); expect(call).toContain('pickup_enabled');
+  });
+  test('a delivery order without an address says so for staff', async ({ page }) => {
+    const fake = new FakeShop();
+    const r = fake.rpc('shop_place_order', { p_key: 'admin-order-na01', p_items: [{ sku_code: 'FG-000001', qty: 1 }], p_fulfilment: 'delivery', p_name: 'Somchai', p_phone: '0812345678', p_address: '', p_note: null }) as { order: { order_no: string } };
+    await openAdmin(page, fake);
+    await page.getByRole('row', { name: new RegExp(r.order.order_no) }).click();
+    await expect(page.locator('aside.drawer')).toContainText('No delivery address given: please call the customer');
+  });
+  test('the slip rule and the missing-address hint are in Thai', async ({ page }) => {
+    const fake = new FakeShop();
+    const r = fake.rpc('shop_place_order', { p_key: 'admin-order-na02', p_items: [{ sku_code: 'FG-000001', qty: 1 }], p_fulfilment: 'delivery', p_name: 'Somchai', p_phone: '0812345678', p_address: '', p_note: null }) as { order: { order_no: string } };
+    await openAdmin(page, fake, 'th');
+    await page.getByRole('row', { name: new RegExp(r.order.order_no) }).click();
+    await expect(page.locator('aside.drawer')).toContainText('ลูกค้าไม่ได้ระบุที่อยู่จัดส่ง');
+    await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: 'ตั้งค่า' }).click();
+    await expect(page.getByRole('switch', { name: 'ลูกค้าต้องแนบสลีปการโอนเงินพร้อมการสั่งซื้อ' })).toBeVisible();
+  });
+});

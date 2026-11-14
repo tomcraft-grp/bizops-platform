@@ -20,7 +20,7 @@ export interface FItem {
 interface FInvoice { id: string; invoice_no: string; amount: number; paid: number; cancelled: boolean; evidence: { id: string; status: string; claimed_amount: number; created_at: string; reject_reason?: string | null; reviewed_at?: string }[]; req: null | { ref: string; amount: number; qr_payload: string; expires_at: string }; source_ref: string; created_at: string; refunded?: number }
 interface FOrder { id: string; order_no: string; status: string; fulfilment: string; contact_name: string; contact_phone: string; delivery_address: string | null; note: string | null; items: { line_no: number; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[]; subtotal: number; discount: number; shipping_fee: number; total: number; created_at: string; key: string; hash: string; invoice: FInvoice; status_note: string | null; cancel_reason: string | null; payment_pref: string | null }
 
-export const settingsDefault = { shop_open: true, closed_message: null as string | null, delivery_enabled: true, pickup_enabled: true, pickup_note: 'รับที่ร้าน 99 ถนนทดสอบ', shipping_fee: 50, free_shipping_min: 1000 as number | null };
+export const settingsDefault = { require_payment_slip: true, shop_open: true, closed_message: null as string | null, delivery_enabled: true, pickup_enabled: true, pickup_note: 'รับที่ร้าน 99 ถนนทดสอบ', shipping_fee: 50, free_shipping_min: 1000 as number | null };
 
 export class FakeShop {
   items: FItem[];
@@ -90,7 +90,7 @@ export class FakeShop {
   invoiceState(inv: FInvoice) { return this.state(inv); }
   private payOf(o: FOrder) { return this.state(o.invoice).status_code; }
 
-  rpc(fn: string, a: Record<string, unknown>): unknown {
+  rpc(fn: string, a: Record<string, unknown>, viaHttp = false): unknown {
     switch (fn) {
       case 'get_published_customer_layout': return this.layout;
       case 'customer_app_query': return { columns: [{ key: 'sku_code', label: 'SKU', type: 'text' }, { key: 'name_full', label: 'Name', type: 'text' }, { key: 'price', label: 'Price', type: 'money' }], rows: this.items.slice(0, 3).map((i) => ({ sku_code: i.sku_code, name_full: i.name, price: i.price })) };
@@ -120,7 +120,7 @@ export class FakeShop {
           popular: [...sold].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([s]) => this.itemJson(this.item(s))) };
       }
       case 'shop_quote': return this.quote(a.p_items, String(a.p_fulfilment));
-      case 'shop_place_order': return this.place(a);
+      case 'shop_place_order': return this.place(a, viaHttp);
       case 'shop_my_orders': {
         const f = String(a.p_filter ?? 'all');
         const mine = this.orders.filter((o) => { const p = this.payOf(o); return f === 'unpaid' ? o.status !== 'cancelled' && [0, 1, 3, 4, 7, 9].includes(p) : f === 'to_ship' ? ['new', 'confirmed', 'preparing', 'packed'].includes(o.status) && [5, 6].includes(p) : f === 'to_receive' ? ['shipped', 'ready'].includes(o.status) : f === 'done' ? o.status === 'completed' : f === 'cancelled' ? ['cancelled', 'returned'].includes(o.status) : true; })
@@ -214,26 +214,37 @@ export class FakeShop {
     this.staff();
     return { ...this.settings, image_base_url: 'https://x.test/', updated_at: new Date().toISOString(), payment_account_ready: this.paymentAccountReady, visible_products: this.items.length - this.hidden.size, products_with_image: this.items.filter((i) => i.image_urls.length).length };
   }
-  private place(a: Record<string, unknown>) {
+  slipHashes = new Set<string>();
+  private place(a: Record<string, unknown>, viaHttp = false) {
     const key = String(a.p_key ?? '');
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) this.err('INVALID_KEY');
-    const norm = JSON.stringify({ i: (a.p_items as { sku_code: string; qty: number }[]).map((x) => [x.sku_code, x.qty]).sort(), f: a.p_fulfilment, n: String(a.p_name).trim(), p: String(a.p_phone).replace(/\D/g, ''), a: a.p_address ? String(a.p_address).trim() : null, note: a.p_note, ...(a.p_payment_method ? { pm: a.p_payment_method } : {}) });
+    const norm = JSON.stringify({ i: (a.p_items as { sku_code: string; qty: number }[]).map((x) => [x.sku_code, x.qty]).sort(), f: a.p_fulfilment, n: String(a.p_name).trim(), p: String(a.p_phone).replace(/\D/g, ''), a: a.p_address ? String(a.p_address).trim() : null, note: a.p_note, ...(a.p_payment_method ? { pm: a.p_payment_method } : {}), ...(a.p_slip_sha256 ? { slip: a.p_slip_sha256 } : {}) });
     const have = this.orders.find((o) => o.key === key);
     if (have) { if (have.hash !== norm) this.err('KEY_REUSED'); return { replay: true, order: this.orderJson(have) }; }
     if (!this.settings.shop_open) this.err('SHOP_CLOSED');
     const pm = a.p_payment_method ? String(a.p_payment_method) : null;     // 'wallet' | 'qr' | 'bank:<CODE>': validated like the database does
     if (pm && !(pm === 'wallet' || (pm === 'qr' && this.w.promptpay) || (pm.startsWith('bank:') && this.w.banks.some((b) => b.active && b.code === pm.slice(5))))) this.err('INVALID_PAYMENT_METHOD');
+    // the transfer slip comes with the order (only an order paid from the wallet needs none)
+    if (viaHttp && this.settings.require_payment_slip && pm !== 'wallet' && (!a.p_slip_path || !a.p_slip_sha256)) this.err('SLIP_REQUIRED');
     const phone = String(a.p_phone).replace(/\D/g, '');
     if (!String(a.p_name).trim()) this.err('INVALID_NAME'); if (!/^0\d{8,9}$/.test(phone)) this.err('INVALID_PHONE');
-    if (a.p_fulfilment === 'delivery' && String(a.p_address ?? '').trim().length < 10) this.err('INVALID_ADDRESS');
+    if (String(a.p_address ?? '').trim().length > 400) this.err('INVALID_ADDRESS');                   // optional, but not unbounded
     const q = this.quote(a.p_items, String(a.p_fulfilment)) as unknown as { ok: boolean; problems: unknown[]; total: number; subtotal: number; shipping_fee: number; lines: { ok: boolean; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[] };
     if (!q.ok) this.err('CART_INVALID', JSON.stringify(q.problems));
     if (a.p_expected_total != null && Number(a.p_expected_total) !== q.total) this.err('PRICE_CHANGED', String(q.total));
     const n = this.orders.length + 1; const no = `SO-202611-${String(n).padStart(5, '0')}`; const now = new Date(Date.now() + n * 1000).toISOString();
     const inv: FInvoice = { id: `inv-${n}`, invoice_no: `INV-202611-${String(n).padStart(5, '0')}`, amount: q.total, paid: 0, cancelled: false, evidence: [], req: null, source_ref: no, created_at: now };
-    const o: FOrder = { id: `ord-${n}`, order_no: no, status: 'new', fulfilment: String(a.p_fulfilment), contact_name: String(a.p_name).trim(), contact_phone: phone, delivery_address: a.p_fulfilment === 'delivery' ? String(a.p_address).trim() : null,
+    const o: FOrder = { id: `ord-${n}`, order_no: no, status: 'new', fulfilment: String(a.p_fulfilment), contact_name: String(a.p_name).trim(), contact_phone: phone, delivery_address: a.p_fulfilment === 'delivery' ? (String(a.p_address ?? '').trim() || null) : null,
       note: (a.p_note as string | null) ?? null, items: q.lines.map((l, i) => ({ line_no: i + 1, sku_code: l.sku_code, name: l.name, unit: l.unit, unit_price: l.unit_price, qty: l.qty, line_total: l.line_total, image_url: l.image_url })),
       subtotal: q.subtotal, discount: 0, shipping_fee: q.shipping_fee, total: q.total, created_at: now, key, hash: norm, invoice: inv, status_note: null, cancel_reason: null, payment_pref: pm };
+    if (a.p_slip_path) {       // checked like finance_submit_evidence; any refusal creates nothing
+      const path = String(a.p_slip_path); const sha = String(a.p_slip_sha256).toLowerCase();
+      if (!path.startsWith(USER_ID + '/') || path.includes('..')) this.err('Invalid file');
+      if (this.slipHashes.has(sha)) this.err('This slip was already submitted');
+      this.slipHashes.add(sha);
+      const id = 'ev-' + ++this.seq; inv.evidence.unshift({ id, status: 'submitted', claimed_amount: q.total, created_at: new Date().toISOString() });
+      this.w.noteSlip(id, pm?.startsWith('bank:') ? (this.w.banks.find((b) => b.code === pm.slice(5))?.id ?? null) : null);
+    }
     this.orders.push(o);
     return { replay: false, order: this.orderJson(o) };
   }
@@ -263,7 +274,7 @@ export class FakeShop {
         const left = this.fail.get(fn) ?? 0;
         if (left > 0) { this.fail.set(fn, left - 1); return json(route, { code: 'P0001', message: 'boom', details: null, hint: null }, 500); }
         try {
-          const out = this.rpc(fn, args);
+          const out = this.rpc(fn, args, true);
           if (this.drop.delete(fn)) return route.abort('connectionreset');   // handled by the server, never answered
           return json(route, out);
         } catch (e) { const er = e as Error & { details?: string }; return json(route, { code: 'P0001', message: er.message, details: er.details ?? null, hint: null }, 400); }

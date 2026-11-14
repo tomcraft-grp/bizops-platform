@@ -58,6 +58,12 @@ export function errText(t: ReturnType<typeof useT>, e: unknown): string {
     case 'NETWORK': return t('err.network');
     case 'INVALID_PHONE': return t('err.phone');
     case 'INVALID_ADDRESS': return t('err.address');
+    case 'SLIP_REQUIRED': return t('err.slipRequired');
+    case 'SLIP_ALREADY_USED': return t('err.slipUsed');
+    case 'BAD_FILE': case 'BAD_FILE_TYPE': return t('err.slipBad');
+    case 'FILE_TOO_BIG': return t('err.slipBig');
+    case 'UPLOAD_FAILED': return t('err.slipUpload');
+    case 'INVALID_PAYMENT_METHOD': return t('err.method');
     case 'INVALID_NAME': return t('err.name');
     case 'FORBIDDEN': return t('err.signin');
     default: return t('err.generic');

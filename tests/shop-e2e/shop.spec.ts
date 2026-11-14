@@ -9,6 +9,15 @@ const SHOTS = process.env.SHOP_SHOTS ?? 'test-results/shop';
 // a real (1x1) PNG: the slip uploader checks the file's first bytes, not its name
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
+/** the checkout asks for the transfer slip: attach a (unique) picture when the screen shows that step */
+async function attachSlip(page: Page) {
+  if (await page.getByTestId('slip-section').count() === 0) return;
+  if (await page.getByTestId('slip-preview').count() > 0) return;                              // already attached (a retry keeps the same slip)
+  await page.locator('[data-testid="slip-section"] input[type=file]').setInputFiles({ name: 'slip.png', mimeType: 'image/png', buffer: Buffer.concat([PNG, Buffer.from('#' + Math.random())]) });
+  await expect(page.getByTestId('slip-preview')).toBeVisible();
+}
+
+
 async function open(page: Page, fake: FakeShop, hash = '/app') {
   await fake.install(page);
   await page.goto(`/#${hash}`);
@@ -24,7 +33,7 @@ async function placeOrder(page: Page, fake: FakeShop, items: [string, number][] 
   await tab(page, t('nav.cart')).click();
   await page.getByRole('button', { name: t('cart.checkout') }).click();
   await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
-  await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
+  await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
   await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
   await expect(page.locator('.sp-order-detail')).toBeVisible();
   return fake.orders[fake.orders.length - 1];
@@ -207,23 +216,23 @@ test.describe('checkout and payment', () => {
     await tab(page, t('nav.cart')).click();
     await page.getByRole('button', { name: t('cart.checkout') }).click();
     await page.getByLabel(t('co.phone')).fill('123');
-    await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
+    await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await expect(page.getByText(t('err.phone'))).toBeVisible();
-    await expect(page.getByText(t('err.address'))).toBeVisible();
+    await expect(page.getByText(t('err.address'))).toHaveCount(0);                            // the address is optional: no error for leaving it empty
     expect(fake.orders).toHaveLength(0);
     await page.getByLabel(t('co.phone')).fill('081-234-5678');
     await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
     await page.screenshot({ path: `${SHOTS}/checkout-mobile.png` });
-    await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
+    await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await expect(page.locator('.sp-sheet')).toContainText('฿370');                          // 320 + 50 shipping
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
     await expect(page.locator('.sp-order-detail')).toContainText(/SO-\d{6}-\d{5}/);
     expect(fake.orders).toHaveLength(1);
     const call = fake.calls.find((c) => c.fn === 'shop_place_order')!;
-    expect(Object.keys(call.args).sort()).toEqual(['p_address', 'p_expected_total', 'p_fulfilment', 'p_items', 'p_key', 'p_name', 'p_note', 'p_payment_method', 'p_phone']);   // the payment choice is the only addition: still no price, amount or balance
+    expect(Object.keys(call.args).sort()).toEqual(['p_address', 'p_expected_total', 'p_fulfilment', 'p_items', 'p_key', 'p_name', 'p_note', 'p_payment_method', 'p_phone', 'p_slip_path', 'p_slip_ref', 'p_slip_sha256', 'p_slip_transfer_at', 'p_slip_type']);   // the payment choice and the slip are the only additions: still no price, amount or balance
     expect(call.args.p_items).toEqual([{ sku_code: 'FG-000001', qty: 1 }]);                 // no price anywhere
     await expect(page.locator('.phone-nav .sp-nav-badge')).toHaveCount(0);                   // the cart was emptied
-    await expect(page.locator('.sp-order-detail')).toContainText(t('pay.unpaid'));
+    await expect(page.locator('.sp-order-detail')).toContainText(t('pay.pending'));          // the slip came with the order: awaiting verification, not paid
   });
   test('pickup needs no address and costs no shipping', async ({ page }) => {
     const fake = new FakeShop(); await open(page, fake);
@@ -232,7 +241,7 @@ test.describe('checkout and payment', () => {
     await page.getByRole('radio', { name: t('co.pickup') }).click();
     await expect(page.getByLabel(t('co.address'))).toHaveCount(0);
     await expect(page.getByText('รับที่ร้าน 99 ถนนทดสอบ')).toBeVisible();
-    await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
+    await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
     await expect(page.locator('.sp-order-detail')).toBeVisible();
     expect(fake.orders[0].total).toBe(320); expect(fake.orders[0].delivery_address).toBeNull();
@@ -242,7 +251,7 @@ test.describe('checkout and payment', () => {
     await tab(page, t('nav.shop')).click(); await addFromCatalog(page, 'FG-000001');
     await tab(page, t('nav.cart')).click(); await page.getByRole('button', { name: t('cart.checkout') }).click();
     await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
-    await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
+    await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     const confirm = page.locator('.sp-sheet').getByRole('button', { name: t('co.place') });
     await confirm.dblclick();
     await expect(page.locator('.sp-order-detail')).toBeVisible();
@@ -255,11 +264,11 @@ test.describe('checkout and payment', () => {
     await tab(page, t('nav.cart')).click(); await page.getByRole('button', { name: t('cart.checkout') }).click();
     await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
     fake.dropResponseOnce('shop_place_order');
-    await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
+    await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
     await expect(page.getByText(t('err.network'))).toBeVisible();
     expect(fake.orders).toHaveLength(1);                                                    // the server did create it
-    await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
+    await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
     await expect(page.locator('.sp-order-detail')).toBeVisible();
     expect(fake.orders).toHaveLength(1);                                                    // the retry returned it, no second order
@@ -272,14 +281,14 @@ test.describe('checkout and payment', () => {
     await tab(page, t('nav.cart')).click(); await page.getByRole('button', { name: t('cart.checkout') }).click();
     await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
     fake.item('FG-000001').price = 400;                                                     // staff changed the price meanwhile
-    await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
+    await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
     await expect(page.getByText(t('err.priceChanged'))).toBeVisible();
     expect(fake.orders).toHaveLength(0);
     await expect(page.getByRole('button', { name: new RegExp('฿450') })).toBeVisible();      // the new total (400 + 50)
   });
-  test('the whole payment flow: QR for the exact amount, save image, slip preview, pending, rejected, paid', async ({ page }) => {
-    const fake = new FakeShop(); fake.decorate(); await open(page, fake);
+  test('the whole payment flow when the shop does not require the slip at checkout: QR for the exact amount, save image, slip preview, pending, rejected, paid', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate(); fake.settings.require_payment_slip = false; await open(page, fake);
     const order = await placeOrder(page, fake, [['FG-000001', 2], ['FG-000020', 1]]);        // 960 + 50
     expect(order.total).toBe(1010);
     await expect(page.locator('.sp-order-detail')).toContainText(t('pay.unpaid'));
@@ -323,7 +332,7 @@ test.describe('checkout and payment', () => {
     await tab(page, t('nav.cart')).click(); await page.getByRole('button', { name: t('cart.checkout') }).click();
     await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
     fake.settings.shop_open = false;                                                        // staff close the shop (the page still has its cached settings)
-    await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
+    await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
     await expect(page.getByText(t('err.closed'))).toBeVisible();
     expect(fake.orders).toHaveLength(0);

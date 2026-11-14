@@ -123,6 +123,7 @@ function OrderDrawer({ id, T, onClose, onChanged }: { id: string; T: TFn; onClos
             <b>{o.contact_name}</b><span>{o.contact_phone}</span>
             {o.customer && <span className="muted">{T('Customer account')}: {o.customer.code}{o.customer.line_user_id ? ' · LINE' : ''}</span>}
             {o.delivery_address && <span style={{ whiteSpace: 'pre-wrap' }}>{o.delivery_address}</span>}
+            {o.fulfilment === 'delivery' && !o.delivery_address && <span className="muted">{T('No delivery address given: please call the customer')}</span>}
             {o.note && <span className="muted">{T('Customer note')}: {o.note}</span>}
           </div>
           <table className="t"><thead><tr><th>{T('Item')}</th><th style={{ textAlign: 'right' }}>{T('Qty')}</th><th style={{ textAlign: 'right' }}>{T('Amount')}</th></tr></thead>
@@ -303,6 +304,7 @@ function SettingsPanel({ T }: { T: TFn }) {
           <Field label={T('Free shipping from (฿)')} hint={T('Leave empty for never')}><Input type="number" min={0} step="0.01" value={form.free_shipping_min} onChange={(e) => setForm({ ...form, free_shipping_min: e.target.value })} /></Field></div>
         <Switch checked={s.pickup_enabled} onChange={(v) => save({ pickup_enabled: v })} label="Pick up at the shop" />
         <Field label={T('Pick-up information (address, hours)')}><Textarea rows={2} maxLength={200} value={form.pickup_note} onChange={(e) => setForm({ ...form, pickup_note: e.target.value })} /></Field>
+        <Switch checked={s.require_payment_slip !== false} onChange={(v) => save({ require_payment_slip: v })} label="Customers must attach the transfer slip with the order" />
         <Field label={T('Message shown while the shop is closed')}><Input maxLength={200} value={form.closed_message} onChange={(e) => setForm({ ...form, closed_message: e.target.value })} /></Field>
         <div><Button variant="primary" loading={busy} disabled={busy} onClick={saveText}>{T('Save')}</Button></div>
       </div>

@@ -59,6 +59,26 @@ export const newKey = (): string => {
 /** A user-facing reason for a failed wallet call. `t` maps a code to text in the caller's language. */
 export function walletCode(e: unknown): string { return e instanceof ShopError ? e.code : e instanceof Error && /fetch|network/i.test(e.message) ? 'NETWORK' : 'ERROR'; }
 
+// ---------------------------------------------------------------- slips at checkout
+/** Check a slip file (type by its first bytes, size) and fingerprint it. Throws a ShopError the screens translate. */
+export async function slipFingerprint(file: File): Promise<{ type: string; sha256: string; ext: string }> {
+  const type = await sniffType(file);
+  if (!type) throw new ShopError('Only JPG, PNG or PDF files are accepted', 'BAD_FILE_TYPE');
+  if (file.size > EVIDENCE_MAX) throw new ShopError('The file must be 5 MB or smaller', 'FILE_TOO_BIG');
+  return { type, sha256: await sha256(file), ext: type === 'application/pdf' ? 'pdf' : type === 'image/png' ? 'png' : 'jpg' };
+}
+/** Upload the slip into the customer's own folder of the private bucket BEFORE the order is placed. The same order key always gives the same path,
+ *  so a retry reuses the file instead of leaving a second one. The order itself is created (with the slip) by one database call. */
+export async function uploadOrderSlip(file: File, key: string, fp: { type: string; ext: string }): Promise<string> {
+  const { data: u } = await supabase.auth.getUser();
+  const uid = u.user?.id; if (!uid) throw new ShopError('Please sign in', 'FORBIDDEN');
+  const path = `${uid}/orders/${key}.${fp.ext}`;
+  const up = await supabase.storage.from('payment-evidence').upload(path, file, { contentType: fp.type, upsert: false });
+  if (up.error && !/already exists|duplicate/i.test(up.error.message)) throw new ShopError(up.error.message, 'UPLOAD_FAILED');
+  return path;
+}
+export const removeOrderSlip = (path: string) => { void supabase.storage.from('payment-evidence').remove([path]); };
+
 // ---------------------------------------------------------------- customer
 export const wallet = {
   methods: () => rpc<PaymentMethods>('finance_payment_methods'),

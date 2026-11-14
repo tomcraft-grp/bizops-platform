@@ -9,9 +9,9 @@ Migration `supabase/migrations/20261115300000_online_ordering.sql`, rollback `su
 |---|---|---|
 | 1 Browse | Home, categories, search, product page. Only **Active finished-goods SKUs with a price** appear; the price is read from the database. | Online shop → Products: pictures, descriptions, hide / sold-out / max per order |
 | 2 Cart | Quantities, remove, subtotal, shipping, total. Every amount is the server's quote; the app sends only SKU + quantity. | |
-| 3 Checkout | Name and phone (pre-filled), delivery address or pick-up, note, **how to pay** (SCB, BBL, wallet when it holds money, PromptPay QR when configured). One tap = one order, even with double taps or a dropped connection. | Online shop → Orders: the order appears, with the customer's chosen method |
+| 3 Checkout (pay first) | Name and phone (pre-filled), **delivery or pick-up**, the **delivery address is optional** (the shop calls if it is empty), note, **how to pay** (SCB, BBL, or the wallet when it holds money). For a bank transfer the customer sees the amount to transfer, transfers, and **must attach the transfer slip picture before the order can be placed**. The database enforces it (`SLIP_REQUIRED`); an order paid from the wallet needs none. One tap = one order, even with double taps or a dropped connection. | Online shop → Orders: the order appears with the chosen method and its slip already attached |
 | 4 Payment request | The order page shows the invoice, the amount owed, the chosen bank with a **copy account number** button, the **payment reference** (invoice number) with a copy button, or the QR with **Save QR image**, or the wallet panel. | |
-| 5 Slip | Upload JPG / PNG / PDF (≤ 5 MB). The invoice becomes **awaiting verification**. It is never "paid" because of a slip. | Payment review: the slip, the amount the customer claims, the bank chosen |
+| 5 Slip | Comes **with the order** (one database call creates the order, its invoice and the slip; a bad slip creates nothing). JPG / PNG / PDF (≤ 5 MB). The invoice is immediately **awaiting verification**. It is never "paid" because of a slip. If staff reject the slip, the order page lets the customer send a new one. | Payment review: the slip, the amount the customer claims (the server priced it), the bank chosen |
 | 6 Verify | Sees "paid" / "partly paid" after verification, or the rejection reason. | A verifier or manager enters **the amount the bank shows** and the bank reference, then approves (or rejects with a reason). More than owed: the extra is credited to the customer's wallet. |
 | 7 Fulfil | Order progress: new → confirmed → preparing → packed → shipped / ready → completed | Online shop → order → move it along; tracking number goes in the message box |
 
@@ -28,7 +28,7 @@ Order status and payment status are separate. Payment statuses: unpaid, awaiting
 
 1. **Open the shop**: Online shop → Settings → switch on. (It is switched on by the deployment of this change; the checklist on that page shows what is still missing.)
 2. **PromptPay QR (optional)**: Payment review → Payment account → your PromptPay ID (phone number or tax ID). Until then the QR option is not offered and customers pay by bank transfer + slip. No gateway credentials are needed for this: the QR is generated from your PromptPay ID.
-3. **Shipping**: Online shop → Settings: delivery on / pick-up on, shipping fee, free-shipping threshold, pick-up note.
+3. **Shipping and pick-up**: Online shop → Settings: delivery on / **pick-up on** (it is switched on), shipping fee, free-shipping threshold, and the **pick-up information** (address and opening hours of the shop: write it, customers see it at checkout). The switch **"Customers must attach the transfer slip with the order"** is on; switching it off lets customers place an order first and pay afterwards.
 4. **VAT treatment** for the accountant (see above).
 5. **Roles**: SUPER_ADMIN accounts already act as finance managers. Give verifiers / clerks a role under Payment review → Access.
 6. **Pictures and descriptions** (optional): Online shop → Products. Without a picture the app shows a placeholder.
