@@ -23,6 +23,8 @@ insert into t_ctx select 'B', id::text from public.profiles where role = 'USER' 
 insert into t_ctx select 'C', id::text from public.profiles where role = 'USER' and status = 'active' order by created_at offset 2 limit 1;
 insert into t_ctx select 'D', id::text from public.profiles where role = 'USER' and status = 'active' order by created_at offset 3 limit 1;
 insert into t_ctx select 'S', id::text from public.profiles where role = 'SUPER_ADMIN' and status = 'active' order by created_at limit 1;
+-- these suites place orders without a slip (the slip rule has its own tests in online_ordering.sql, section O11)
+update public.shop_settings set require_payment_slip = false;
 insert into public.finance_staff_roles (user_id, role) values (pg_temp.c('C')::uuid, 'verifier'), (pg_temp.c('D')::uuid, 'manager');
 insert into t_ctx select 'scb', id::text from public.finance_bank_accounts where code = 'SCB';
 insert into t_ctx select 'bbl', id::text from public.finance_bank_accounts where code = 'BBL';

@@ -33,7 +33,7 @@ insert into t_ctx select 'bbl', id::text from public.finance_bank_accounts where
 insert into t_ctx select 'P1', coalesce(nullif(ecommerce_price, 0), nullif(selling_price, 0), nullif(retail_price, 0))::text from public.sku_registry where sku_code = 'FG-000001';
 insert into t_res (test, ok, detail) select 'test users and a priced real SKU found', (select count(*) from t_ctx where k in ('A', 'B', 'C', 'S', 'scb', 'bbl', 'P1')) = 7 and pg_temp.c('P1')::numeric > 0, (select string_agg(k, ',') from t_ctx);
 -- the shop is closed in production until staff open it: open it inside this transaction (pickup, so the totals have no shipping)
-update public.shop_settings set shop_open = true, pickup_enabled = true, delivery_enabled = true, shipping_fee = 50, free_shipping_min = null;
+update public.shop_settings set shop_open = true, pickup_enabled = true, delivery_enabled = true, shipping_fee = 50, free_shipping_min = null, require_payment_slip = false;   -- O1-O10 add the slip on the payment screen; O11 tests the slip-with-the-order rule
 
 -- =========================================================================================== O1 browsing and prices
 reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('A')::uuid);
@@ -247,6 +247,76 @@ select pg_temp.err_like('O9 anonymous visitors cannot place orders', $q$select p
 reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('C')::uuid);
 select pg_temp.err_like('O9 a verifier cannot reverse a receipt (manager only)', format($q$select public.finance_reverse_receipt(%L, 'x')$q$, pg_temp.c('rc1')), '%not allowed%');
 select pg_temp.err_like('O9 a verifier cannot adjust a wallet', format($q$select public.finance_wallet_adjust(%L, 'credit', 10, 'sneaking in a credit now', 'adj-key-sneak', null)$q$, pg_temp.c('fcA')), '%not allowed%');
+
+-- =========================================================================================== O11 pay first: the slip comes with the order; the address is optional; pick-up
+reset role;
+update public.shop_settings set require_payment_slip = true;                                    -- the production default
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('B')::uuid);
+insert into t_res (test, ok, detail) select 'O11 the app can read that the slip is required', (public.shop_settings_public() ->> 'require_payment_slip')::boolean, public.shop_settings_public()::text;
+select pg_temp.err_like('O11 a bank-transfer order WITHOUT a slip is refused (the database, not just the screen)', $q$select public.shop_place_order('o11-key-0001', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Malee', '0891112222', null, null, null, 'bank:SCB')$q$, '%SLIP_REQUIRED%');
+select pg_temp.err_like('O11 an order with no payment method counts as a transfer: it needs the slip too', $q$select public.shop_place_order('o11-key-0002', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Malee', '0891112222', null, null)$q$, '%SLIP_REQUIRED%');
+select pg_temp.err_like('O11 a slip from another customer''s folder is refused', format($q$select public.shop_place_order('o11-key-0003', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Malee', '0891112222', null, null, null, 'bank:SCB', %L, repeat('1', 64), 'image/png', now(), null)$q$, pg_temp.c('A') || '/slip.png'), '%Invalid file%');
+select pg_temp.err_like('O11 a path with .. is refused', format($q$select public.shop_place_order('o11-key-0004', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Malee', '0891112222', null, null, null, 'bank:SCB', %L, repeat('2', 64), 'image/png', now(), null)$q$, pg_temp.c('B') || '/../slip.png'), '%Invalid file%');
+reset role;
+insert into t_res (test, ok, detail) select 'O11 every refusal created NO order, invoice or slip (one transaction)',
+  (select count(*) from public.shop_orders where idempotency_key like 'o11-key-000%') = 0
+  and (select count(*) from public.finance_payment_evidence where file_sha256 in (repeat('1', 64), repeat('2', 64))) = 0, null;
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('B')::uuid);
+-- delivery WITHOUT an address, with the slip
+insert into t_ctx select 'o11a', public.shop_place_order('o11-key-0010', '[{"sku_code":"FG-000001","qty":1}]', 'delivery', 'Malee', '0891112222', null, null, pg_temp.c('P1')::numeric + 50, 'bank:BBL',
+  pg_temp.c('B') || '/orders/o11-key-0010.png', repeat('7', 64), 'image/png', now(), 'my transfer')::text;
+insert into t_ctx select 'i11a', (v::jsonb) -> 'order' -> 'invoice' ->> 'id' from t_ctx where k = 'o11a';
+insert into t_res (test, ok, detail) select 'O11 a delivery order needs no address',
+  (v::jsonb) -> 'order' ->> 'fulfilment' = 'delivery' and (v::jsonb) -> 'order' ->> 'delivery_address' is null, left(v, 200) from t_ctx where k = 'o11a';
+insert into t_res (test, ok, detail) select 'O11 the slip came with the order: AWAITING VERIFICATION, nothing paid',
+  ((v::jsonb) -> 'order' -> 'invoice' ->> 'status_code')::int = 3 and ((v::jsonb) -> 'order' -> 'invoice' ->> 'paid')::numeric = 0 and (v::jsonb) -> 'order' ->> 'status' = 'new'
+  and ((v::jsonb) -> 'order' -> 'invoice' ->> 'pending_evidence')::int = 1, left(v, 300) from t_ctx where k = 'o11a';
+reset role;
+insert into t_res (test, ok, detail) select 'O11 the slip belongs to the right invoice, bank and server-priced amount (not a client amount)',
+  (select e.claimed_amount = pg_temp.c('P1')::numeric + 50 and e.claimed_bank = 'BBL' and e.bank_account_id = pg_temp.c('bbl')::uuid and e.status = 'submitted' and e.file_path = pg_temp.c('B') || '/orders/o11-key-0010.png'
+          and e.customer_id = (select id from public.finance_customers where profile_id = pg_temp.c('B')::uuid) and e.claimed_ref = 'my transfer'
+   from public.finance_payment_evidence e where e.invoice_id = pg_temp.c('i11a')::uuid), null;
+insert into t_res (test, ok, detail) select 'O11 no receipt and no accounting entry exist until staff verify', (select count(*) from public.finance_receipts where invoice_id = pg_temp.c('i11a')::uuid) = 0 and pg_temp.qn(pg_temp.c('i11a')::uuid, 'INVOICE_ISSUE') = 0, null;
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('B')::uuid);
+-- pick-up with the slip
+insert into t_ctx select 'o11b', public.shop_place_order('o11-key-0011', '[{"sku_code":"FG-000001","qty":2}]', 'pickup', 'Malee', '0891112222', 'ignored for pick-up', null, 2 * pg_temp.c('P1')::numeric, 'bank:SCB',
+  pg_temp.c('B') || '/orders/o11-key-0011.jpg', repeat('8', 64), 'image/jpeg', null, null)::text;
+insert into t_res (test, ok, detail) select 'O11 a PICK-UP order with the slip is accepted, no address, no shipping, awaiting verification',
+  (v::jsonb) -> 'order' ->> 'fulfilment' = 'pickup' and (v::jsonb) -> 'order' ->> 'delivery_address' is null and ((v::jsonb) -> 'order' ->> 'shipping_fee')::numeric = 0
+  and ((v::jsonb) -> 'order' -> 'invoice' ->> 'status_code')::int = 3 and ((v::jsonb) -> 'order' ->> 'total')::numeric = 2 * pg_temp.c('P1')::numeric, left(v, 250) from t_ctx where k = 'o11b';
+insert into t_res (test, ok, detail) select 'O11 an address that is given is kept (delivery)',
+  public.shop_place_order('o11-key-0012', '[{"sku_code":"FG-000001","qty":1}]', 'delivery', 'Malee', '0891112222', '5 Another Road Chiang Mai', null, null, 'bank:SCB', pg_temp.c('B') || '/orders/o11-key-0012.png', repeat('9', 64), 'image/png', now(), null) -> 'order' ->> 'delivery_address' = '5 Another Road Chiang Mai', null;
+-- retries and reuse
+insert into t_res (test, ok, detail) select 'O11 a retry (same key, same slip) is a replay: ONE order, ONE slip',
+  (public.shop_place_order('o11-key-0010', '[{"sku_code":"FG-000001","qty":1}]', 'delivery', 'Malee', '0891112222', null, null, null, 'bank:BBL', pg_temp.c('B') || '/orders/o11-key-0010.png', repeat('7', 64), 'image/png', now(), 'my transfer') ->> 'replay')::boolean, null;
+select pg_temp.err_like('O11 the same key with a different slip is refused', format($q$select public.shop_place_order('o11-key-0010', '[{"sku_code":"FG-000001","qty":1}]', 'delivery', 'Malee', '0891112222', null, null, null, 'bank:BBL', %L, repeat('6', 64), 'image/png', now(), 'my transfer')$q$, pg_temp.c('B') || '/orders/other.png'), '%KEY_REUSED%');
+select pg_temp.err_like('O11 the same slip file cannot back a second order', format($q$select public.shop_place_order('o11-key-0013', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Malee', '0891112222', null, null, null, 'bank:SCB', %L, repeat('7', 64), 'image/png', now(), null)$q$, pg_temp.c('B') || '/orders/o11-key-0013.png'), '%already submitted%');
+reset role;
+insert into t_res (test, ok, detail) select 'O11 retries and refusals left exactly the three real orders, each with one slip',
+  (select count(*) from public.shop_orders where idempotency_key like 'o11-key-00%') = 3
+  and (select count(*) from public.finance_payment_evidence e join public.shop_orders o on o.invoice_id = e.invoice_id where o.idempotency_key like 'o11-key-00%') = 3, null;
+-- the wallet needs no slip
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('B')::uuid);
+insert into t_res (test, ok, detail) select 'O11 an order meant to be paid from the wallet needs no slip',
+  public.shop_place_order('o11-key-0014', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Malee', '0891112222', null, null, null, 'wallet') -> 'order' ->> 'payment_pref' = 'wallet', null;
+-- the switch
+select pg_temp.err_like('O11 a customer cannot switch the slip rule off', $q$update public.shop_settings set require_payment_slip = false$q$, '%permission denied%');
+select pg_temp.err_like('O11 a customer cannot save shop settings', $q$select public.shop_admin_save_settings('{"require_payment_slip": false}')$q$, '%not allowed%');
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('S')::uuid);
+select public.shop_admin_save_settings('{"require_payment_slip": false}');
+insert into t_res (test, ok, detail) select 'O11 staff can switch the rule off (the settings page shows it); then no slip is needed',
+  (public.shop_admin_settings() ->> 'require_payment_slip')::boolean = false, public.shop_admin_settings()::text;
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('B')::uuid);
+insert into t_res (test, ok, detail) select 'O11 with the rule off an order without a slip is accepted',
+  public.shop_place_order('o11-key-0015', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Malee', '0891112222', null, null, null, 'bank:SCB') -> 'order' ->> 'status' = 'new', null;
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('S')::uuid);
+select public.shop_admin_save_settings('{"require_payment_slip": true}');
+insert into t_res (test, ok, detail) select 'O11 staff can switch it back on', (public.shop_admin_settings() ->> 'require_payment_slip')::boolean, null;
+-- staff verification of a slip that came with the order works like any other slip
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('S')::uuid);
+insert into t_ctx select 'ev11', id::text from public.finance_payment_evidence where invoice_id = pg_temp.c('i11a')::uuid;
+insert into t_res (test, ok, detail) select 'O11 staff verify the slip that came with the order: paid, on the customer''s bank',
+  (public.finance_verify_evidence(pg_temp.c('ev11')::uuid, pg_temp.c('P1')::numeric + 50, 'BBL-BANKREF-0011', now(), null, 'staff') -> 'state' ->> 'status_code')::int = 5, null;
 
 -- =========================================================================================== O10 integrity
 reset role;

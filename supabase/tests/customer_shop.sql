@@ -28,6 +28,9 @@ create or replace function pg_temp.tlv(id text, v text) returns text language sq
 insert into t_ctx select 'A', id::text from public.profiles where role = 'USER' and status = 'active' order by created_at limit 1;
 insert into t_ctx select 'B', id::text from public.profiles where role = 'USER' and status = 'active' order by created_at offset 1 limit 1;
 insert into t_ctx select 'S', id::text from public.profiles where role = 'SUPER_ADMIN' and status = 'active' order by created_at limit 1;
+-- these suites place orders without a slip (the slip rule has its own tests in online_ordering.sql, section O11)
+-- the live shop is open now; these tests describe a shop that has just been installed: start from the migration's defaults (inside this transaction only)
+update public.shop_settings set shop_open = false, closed_message = null, delivery_enabled = true, pickup_enabled = false, pickup_note = null, shipping_fee = 0, free_shipping_min = null, require_payment_slip = false;
 insert into t_res (test, ok, detail) select 'test users found', count(*) = 3, string_agg(k, ',') from t_ctx;
 insert into t_ctx select 'expected', count(*)::text from public.sku_registry
   where status = 'active' and sku_category = 'FG' and coalesce(nullif(ecommerce_price, 0), nullif(selling_price, 0), nullif(retail_price, 0)) > 0;
@@ -177,7 +180,7 @@ reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('A'):
 insert into t_res (test, ok, detail) select 'S5 shop is open once an account exists', (public.shop_settings_public() ->> 'shop_open')::boolean = true, null;
 select pg_temp.err_like('S5 invalid idempotency key', $q$select public.shop_place_order('x', '[{"sku_code":"FG-000001","qty":2}]', 'delivery', 'Somchai', '0812345678', '99 Test Road Bangkok 10110', null)$q$, '%INVALID_KEY%');
 select pg_temp.err_like('S5 invalid phone', $q$select public.shop_place_order('key-phone-0001', '[{"sku_code":"FG-000001","qty":2}]', 'delivery', 'Somchai', '12345', '99 Test Road Bangkok 10110', null)$q$, '%INVALID_PHONE%');
-select pg_temp.err_like('S5 delivery needs an address', $q$select public.shop_place_order('key-addr-00001', '[{"sku_code":"FG-000001","qty":2}]', 'delivery', 'Somchai', '0812345678', 'short', null)$q$, '%INVALID_ADDRESS%');
+select pg_temp.err_like('S5 an address over 400 characters is refused (the address itself is optional)', format($q$select public.shop_place_order('key-addr-00001', '[{"sku_code":"FG-000001","qty":2}]', 'delivery', 'Somchai', '0812345678', %L, null)$q$, repeat('x', 401)), '%INVALID_ADDRESS%');
 select pg_temp.err_like('S5 name required', $q$select public.shop_place_order('key-name-00001', '[{"sku_code":"FG-000001","qty":2}]', 'delivery', '  ', '0812345678', '99 Test Road Bangkok 10110', null)$q$, '%INVALID_NAME%');
 select pg_temp.err_like('S5 sold-out item blocks the order', $q$select public.shop_place_order('key-sold-00001', '[{"sku_code":"FG-000002","qty":1}]', 'delivery', 'Somchai', '0812345678', '99 Test Road Bangkok 10110', null)$q$, '%CART_INVALID%');
 select pg_temp.err_like('S5 price changed since the customer looked', $q$select public.shop_place_order('key-price-00001', '[{"sku_code":"FG-000001","qty":2}]', 'delivery', 'Somchai', '0812345678', '99 Test Road Bangkok 10110', null, 1)$q$, '%PRICE_CHANGED%');
