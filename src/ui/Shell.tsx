@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell, Boxes, Calculator, ChefHat, ChevronsLeft, ChevronsRight, CircleUser, Factory, FileImage, Gift, Heart, LayoutDashboard, Layers, Languages, LineChart, Lock, LogOut, Menu, Monitor, Moon,
-  Package, Percent, Printer, Search, Settings, ShieldCheck, ShoppingBag, ShoppingCart, Smartphone, Sparkles, Store, Sun, Tag, Truck, Users, Wallet, Radio, Hash, FileText, Activity, Map, Check, MessageSquarePlus,
+  Package, Percent, Printer, Receipt, Search, Settings, ShieldCheck, ShoppingBag, ShoppingCart, Smartphone, Sparkles, Store, Sun, Tag, Truck, Users, Wallet, Radio, Hash, FileText, Activity, Map, Check, MessageSquarePlus,
   Palette,
 } from 'lucide-react';
 import { act, setLang, setTheme, toggleCollapsed, setUI, useDB, useLang, useStore } from '../domain/store';
@@ -40,6 +40,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
     { to: '/production', label: 'BOM & production', icon: <Factory />, perm: 'production:view' },
   ] },
   { title: 'Finance', items: [
+    { to: '/expenses', label: 'Daily expenses', icon: <Receipt />, perm: '' },   // open to every back-office user: access is decided by the expense role in the database
     { to: '/accounting', label: 'Accounting', icon: <Calculator />, perm: 'accounting:view' },
     { to: '/profit', label: 'Profit engine', icon: <LineChart />, perm: 'profit:view' },
     { to: '/reports', label: 'Reports', icon: <FileText />, perm: 'reports:view' },
@@ -86,7 +87,7 @@ export function Shell() {
         <div className="brand"><div className="logo"><Store size={17} /></div><div>BizOps<small>{db.org.name.split(' ')[0]} · {t(lang, 'Prototype')}</small></div></div>
         <nav className="nav">
           {NAV.map((g) => {
-            const items = g.items.filter((i) => hasPerm(perms, i.perm));
+            const items = g.items.filter((i) => !i.perm || hasPerm(perms, i.perm));
             if (!items.length) return null;
             return (
               <div className="nav-group" key={g.title}>
@@ -185,7 +186,7 @@ function SearchPalette({ onClose, go }: { onClose: () => void; go: (p: string) =
   const results = useMemo(() => {
     const s = q.trim().toLowerCase();
     const out: { k: string; icon: ReactNode; title: string; sub: string; to: string }[] = [];
-    for (const g of NAV) for (const i of g.items) if (hasPerm(perms, i.perm) && (!s || i.label.toLowerCase().includes(s))) out.push({ k: 'p' + i.to, icon: i.icon, title: i.label, sub: 'Go to page', to: i.to });
+    for (const g of NAV) for (const i of g.items) if ((!i.perm || hasPerm(perms, i.perm)) && (!s || i.label.toLowerCase().includes(s))) out.push({ k: 'p' + i.to, icon: i.icon, title: i.label, sub: 'Go to page', to: i.to });
     if (s.length >= 2) {
       if (hasPerm(perms, 'catalog:view')) for (const p of db.products) if ((p.name + p.sku + (p.barcode ?? '')).toLowerCase().includes(s)) { out.push({ k: 'pr' + p.id, icon: <Package />, title: p.name, sub: `Product · ${p.sku}`, to: `/products?p=${p.id}` }); if (out.length > 30) break; }
       if (hasPerm(perms, 'customers:view')) for (const c of db.customers) if ((c.name + c.phone + c.code).toLowerCase().includes(s)) out.push({ k: 'c' + c.id, icon: <CircleUser />, title: c.name, sub: `Customer · ${c.code} · ${c.phone}`, to: `/customers?c=${c.id}` });

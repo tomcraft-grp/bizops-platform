@@ -428,3 +428,44 @@ details.acc > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
 .dev-fieldrow { font-size: 12.5px; } .dev-fieldrow > .input, .dev-fieldrow > select { min-width: 0; }
 .dev-preview-data { max-height: 260px; overflow: auto; }
 .dev-pageprops { padding-bottom: 12px; margin-bottom: 4px; border-bottom: 1px solid var(--hairline, var(--border)); }
+
+/* ---- daily expenses ---- */
+.exp-form { display: flex; flex-direction: column; gap: 14px; max-width: 900px; }
+.exp-block { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--surface); }
+.exp-block.bad { border-color: var(--crit); }
+.exp-q { font-weight: 650; margin-bottom: 10px; }
+.exp-cats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.exp-cat { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 12px; min-height: 92px; border: 1.5px solid var(--border-strong); border-radius: 12px; background: var(--surface); color: inherit; font: inherit; cursor: pointer; }
+.exp-cat span { font-weight: 600; } .exp-cat small { color: var(--text-2); font-size: 11.5px; }
+.exp-cat:hover { background: var(--surface-3); } .exp-cat.on { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-text); }
+.exp-cat:focus-visible, .exp-method:focus-visible, .exp-chip:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.exp-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; } .exp-amount { flex: 1 1 200px; } .exp-amount label { display: block; font-size: 12.5px; margin-bottom: 4px; color: var(--text-2); } .exp-date { flex: 1 1 180px; }
+.exp-big { width: 100%; font-size: 28px; font-weight: 650; padding: 12px 14px; text-align: right; }
+.exp-methods { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.exp-method { flex: 1 1 120px; padding: 12px; border: 1.5px solid var(--border-strong); border-radius: 10px; background: var(--surface); color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.exp-method.on { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-text); }
+.exp-sub { margin-top: 8px; font-size: 12.5px; }
+.exp-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 12px; }
+.exp-chip { padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-3); color: inherit; font: inherit; font-size: 12.5px; cursor: pointer; }
+.exp-files { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.exp-file { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px; background: var(--surface-3); font-size: 12.5px; }
+.exp-file button { border: 0; background: none; color: inherit; cursor: pointer; display: inline-flex; padding: 0; }
+.exp-more { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--brand-text); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.exp-tax { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
+.exp-tax.on { border-color: var(--brand); background: var(--brand-soft); } .exp-tax span { display: flex; flex-direction: column; gap: 2px; }
+.exp-summary { border: 1px dashed var(--border-strong); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 6px; background: var(--surface-3); }
+.exp-summary-h { font-weight: 650; } .exp-total { font-size: 17px; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+.exp-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; } .exp-form .exp-actions .btn { padding: 12px 20px; }
+.exp-err { color: var(--crit-text); font-size: 12.5px; margin-top: 4px; } .input.bad { border-color: var(--crit); }
+.exp-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-items: end; } .exp-search { grid-column: 1 / -1; }
+.exp-list { margin: 6px 0 0; padding-left: 18px; }
+.exp-section { border: 1px solid var(--border); border-radius: 12px; padding: 12px; } .exp-section-h { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.exp-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+.exp-receipt { display: flex; flex-direction: column; gap: 4px; color: inherit; text-decoration: none; font-size: 12px; }
+.exp-receipt img { width: 100%; height: 100px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+.exp-receipt-ph { height: 100px; border-radius: 8px; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; background: var(--surface-3); font-weight: 650; }
+.exp-timeline { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; } .exp-ev { display: flex; gap: 10px; } .exp-ev i { width: 9px; height: 9px; border-radius: 50%; background: var(--brand); margin-top: 6px; flex: none; }
+.exp-top { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5; }
+.exp-standalone { min-height: 100vh; background: var(--bg, var(--surface-2, #f6f5f1)); } .exp-main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.exp-steps { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+@media (max-width: 560px) { .exp-cats { grid-template-columns: repeat(2, 1fr); } .exp-big { font-size: 24px; } .exp-form .exp-actions .btn { flex: 1 1 100%; } }

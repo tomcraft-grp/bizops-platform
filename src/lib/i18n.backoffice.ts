@@ -882,4 +882,11 @@ export const TH_BACKOFFICE: Record<string, string> = {
   'Products saved before creation dates were recorded are left out while a date is set.': 'สินค้าที่บันทึกก่อนมีการเก็บวันที่สร้างจะไม่ถูกแสดงเมื่อกำหนดช่วงวันที่',
   '{n} of {total} products · {r} stock rows': 'พบ {n} จาก {total} สินค้า · {r} แถวสต็อก',
   'No items match these filters': 'ไม่พบรายการที่ตรงกับตัวกรอง', 'Try removing a filter or searching with fewer words.': 'ลองลบตัวกรองบางตัว หรือค้นหาด้วยคำที่น้อยลง',
+  // daily expenses
+  'Daily expenses': 'บันทึกรายจ่ายประจำวัน', 'Open Daily expenses': 'เปิดบันทึกรายจ่ายประจำวัน',
+  'Record everyday spending in under a minute. A manager approves it, then the accountant checks the tax and posts it to the books.': 'บันทึกรายจ่ายประจำวันได้ภายในหนึ่งนาที ผู้จัดการอนุมัติ จากนั้นนักบัญชีตรวจภาษีและลงบัญชี',
+  'For everyday spending use Daily expenses: employees record it, a manager approves it and the accountant posts it. “Add expense” here posts straight to the books without an approval step.':
+    'รายจ่ายประจำวันให้ใช้ “บันทึกรายจ่ายประจำวัน”: พนักงานบันทึก ผู้จัดการอนุมัติ และนักบัญชีลงบัญชี ส่วน “เพิ่มค่าใช้จ่าย” ที่นี่จะลงบัญชีทันทีโดยไม่มีขั้นตอนอนุมัติ',
+  'Use a manual journal only for adjustments that no other screen records (corrections, accruals, opening items). Every line needs a debit or a credit and the totals must match. Everyday spending belongs in Daily expenses.':
+    'ใช้ร่างรายการบัญชีเฉพาะการปรับปรุงที่หน้าอื่นบันทึกไม่ได้ (การแก้ไข ค่าใช้จ่ายค้างจ่าย ยอดยกมา) ทุกบรรทัดต้องมีเดบิตหรือเครดิต และยอดรวมสองฝั่งต้องเท่ากัน ส่วนรายจ่ายประจำวันให้บันทึกที่ “บันทึกรายจ่ายประจำวัน”',
 };

@@ -179,7 +179,7 @@ export function resolveLine(d: DB, account: string, date: string, opts?: { allow
 
 export function post(
   d: DB, ctx: Ctx,
-  p: { memo: string; refType: string; refId?: ID; lines: JournalLine[]; date?: string; manual?: boolean; reverses?: ID; dim?: JournalDim; approvedBy?: ID; allowInactive?: boolean },
+  p: { memo: string; refType: string; refId?: ID; lines: JournalLine[]; date?: string; manual?: boolean; reverses?: ID; dim?: JournalDim; approvedBy?: ID; allowInactive?: boolean; info?: Journal['info'] },
 ): ID | undefined {
   const date = p.date ?? ctx.now;
   const lines = p.lines
@@ -200,7 +200,7 @@ export function post(
   const id = nid(d, 'JV');
   d.journals.push({
     id, no: docNo(d, 'JV'), date, memo: p.memo, refType: p.refType, refId: p.refId, lines, status: 'posted',
-    createdBy: ctx.userId, manual: p.manual, reverses: p.reverses, dim: p.dim, approvedBy: p.approvedBy,
+    createdBy: ctx.userId, manual: p.manual, reverses: p.reverses, dim: p.dim, approvedBy: p.approvedBy, info: p.info,
   });
   return id;
 }

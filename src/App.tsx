@@ -31,6 +31,7 @@ import CustomerApp from './pages/CustomerApp';
 import FeedbackIssues from './pages/FeedbackIssues';
 import DevApp from './pages/DevApp';
 import Finance from './pages/Finance';
+import ExpensesPage from './expenses/ExpensesPage';
 import Login from './pages/auth/Login';
 import ForgotPassword from './pages/auth/ForgotPassword';
 import ResetPassword from './pages/auth/ResetPassword';
@@ -94,6 +95,7 @@ export default function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
           <Route path="/app" element={<RequireAuth><CustomerApp /></RequireAuth>} />
+          <Route path="/my-expenses" element={<RequireAuth><ExpensesPage mode="standalone" /></RequireAuth>} />
           <Route element={<RequireAuth><RequireRole roles={['SUPER_ADMIN', 'ADMIN']}><Shell /></RequireRole></RequireAuth>}>
             <Route index element={<G perm="dashboard:view"><Dashboard /></G>} />
             <Route path="pos" element={<G perm="pos:view"><POS /></G>} />
@@ -111,6 +113,7 @@ export default function App() {
             <Route path="inventory" element={<G perm="inventory:view"><Inventory /></G>} />
             <Route path="purchasing" element={<G perm="purchasing:view"><Purchasing /></G>} />
             <Route path="production" element={<G perm="production:view"><Production /></G>} />
+            <Route path="expenses" element={<ExpensesPage mode="backoffice" />} />
             <Route path="accounting" element={<G perm="accounting:view"><Accounting /></G>} />
             <Route path="accounting/setup" element={<G perm="accounting:view"><AccountingSetup /></G>} />
             <Route path="profit" element={<Profit />} />

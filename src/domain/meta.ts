@@ -52,6 +52,8 @@ export const PAGE_META: Record<string, PageMeta> = {
   '/inventory': { page: 'Inventory', module: 'inventory' },
   '/purchasing': { page: 'Purchasing', module: 'purchasing' },
   '/production': { page: 'BOM & production', module: 'production' },
+  '/expenses': { page: 'Daily expenses', module: 'accounting', feature: 'daily-expenses' },
+  '/my-expenses': { page: 'Daily expenses (employee)', module: 'accounting', feature: 'daily-expenses' },
   '/accounting': { page: 'Accounting', module: 'accounting' },
   '/accounting/setup': { page: 'Accounting setup', module: 'accounting', feature: 'setup' },
   '/profit': { page: 'Profit engine', module: 'profit' },

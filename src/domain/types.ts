@@ -228,6 +228,8 @@ export interface JournalDim { branchId?: ID; channel?: ChannelCode }
 export interface Journal {
   id: ID; no: string; date: string; memo: string; refType: string; refId?: ID; lines: JournalLine[];
   status: 'posted' | 'reversed'; reverses?: ID; reversedBy?: ID; createdBy: ID; manual?: boolean; dim?: JournalDim; approvedBy?: ID;
+  /** Source details kept with the journal so reports can group it without a second copy of the numbers (daily expense claims). */
+  info?: { claimNo: string; categoryCode: string; categoryNameEn: string; categoryNameTh: string; vendor?: string; paymentMethod: string; taxType: string; treatment: string; vat: number; wht: number; expenseDate: string; approvedAt?: string; postedBy?: ID };
 }
 export interface Expense { id: ID; no: string; date: string; account: string; vendor: string; amount: number; vat: number; paidFrom: 'cash' | 'bank'; branchId?: ID; note?: string; journalId?: ID; mediaId?: ID }
 

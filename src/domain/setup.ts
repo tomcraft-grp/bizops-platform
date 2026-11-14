@@ -366,7 +366,7 @@ export function reconciliationMatrix(d: DB): ReconRow[] {
   const outGl = sumAccounts(d, bal, (a) => a.control === 'tax' && a.fsLine === 'tax_payable' && a.taxCode !== undefined);
   const inGl = sumAccounts(d, bal, (a) => a.control === 'tax' && a.fsLine === 'tax_asset');
   const outSub = d.orders.reduce((s, o) => s + (o.recognizedAt ? o.vatAmount ?? 0 : 0), 0) - d.returns.reduce((s, r) => s + r.vatAmount, 0);
-  const inSub = d.apInvoices.reduce((s, i) => s + i.vat, 0) + d.expenses.reduce((s, e) => s + e.vat, 0) - d.supplierReturns.reduce((s, r) => s + (r.vat ?? 0), 0);
+  const inSub = d.apInvoices.reduce((s, i) => s + i.vat, 0) + liveExpenses(d).reduce((s, e) => s + e.vat, 0) - d.supplierReturns.reduce((s, r) => s + (r.vat ?? 0), 0);
   add('tax', 'VAT (output − input)', codes('tax'), r2(outGl - inGl), r2(outSub - inSub), 'Tax base of sales, purchases and expenses', 'Net VAT payable per ledger vs per source documents');
   // cash & bank: reconciled-to-statement status
   const cashAccts = d.accounts.filter(isControl('cash_bank'));
@@ -399,7 +399,7 @@ export function reconDrill(d: DB, key: string): { label: string; amount: number;
     add('Output VAT on sales', d.orders.reduce((s, o) => s + (o.recognizedAt ? o.vatAmount ?? 0 : 0), 0));
     add('Output VAT reversed by returns', -d.returns.reduce((s, r) => s + r.vatAmount, 0));
     add('Input VAT on purchases', -d.apInvoices.reduce((s, i) => s + i.vat, 0));
-    add('Input VAT on expenses', -d.expenses.reduce((s, e) => s + e.vat, 0));
+    add('Input VAT on expenses', -liveExpenses(d).reduce((s, e) => s + e.vat, 0));
     add('Input VAT returned to suppliers', d.supplierReturns.reduce((s, r) => s + (r.vat ?? 0), 0));
   }
   return Object.entries(m).map(([label, amount]) => ({ label, amount: r2(amount) })).filter((x) => Math.abs(x.amount) > 0.004).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
@@ -470,13 +470,17 @@ export function assignStageOwner(d: DB, ctx: Ctx, stage: string, userId: ID) {
 // ======================================================================================
 // Reports that depend on the approved mapping (§23.11)
 // ======================================================================================
+/** The expense register without entries whose journal was reversed: their input VAT is no longer claimable and no longer in the ledger. */
+export const liveExpenses = (d: DB) => { const rev = new Set(d.journals.filter((j) => j.status === 'reversed').map((j) => j.id)); return d.expenses.filter((e) => !(e.journalId && rev.has(e.journalId))); };
+
 export function vatReport(d: DB, from: string, to: string) {
   const inRange = (iso: string) => { const k = dayKey(iso); return k >= from && k <= to; };
   const sales: { doc: string; date: string; code: string; base: number; vat: number; channel: string }[] = [];
   for (const o of d.orders) if (o.recognizedAt && inRange(o.recognizedAt)) sales.push({ doc: o.no, date: o.recognizedAt, code: o.taxCode ?? 'n/a', base: o.taxBase ?? 0, vat: o.vatAmount ?? 0, channel: o.channel });
   const returns = d.returns.filter((r) => inRange(r.ts)).map((r) => ({ doc: r.no, date: r.ts, base: -r.netAmount, vat: -r.vatAmount }));
   const purchases = d.apInvoices.filter((i) => inRange(i.date)).map((i) => ({ doc: i.no, date: i.date, base: i.net, vat: i.vat, kind: 'Purchase invoice' }));
-  const expenses = d.expenses.filter((e) => inRange(e.date) && e.vat > 0).map((e) => ({ doc: e.no, date: e.date, base: r2(e.amount - e.vat), vat: e.vat, kind: 'Expense' }));
+  // reversed expenses are skipped by liveExpenses()
+  const expenses = liveExpenses(d).filter((e) => inRange(e.date) && e.vat > 0).map((e) => ({ doc: e.no, date: e.date, base: r2(e.amount - e.vat), vat: e.vat, kind: 'Expense' }));
   const byCode: Record<string, { base: number; vat: number; n: number }> = {};
   for (const s of sales) { const b = (byCode[s.code] ||= { base: 0, vat: 0, n: 0 }); b.base += s.base; b.vat += s.vat; b.n++; }
   const outputVat = r2(sales.reduce((s, x) => s + x.vat, 0) + returns.reduce((s, x) => s + x.vat, 0));
@@ -490,7 +494,7 @@ export function cashFlowReport(d: DB, from: string, to: string) {
   const classify = (refType: string): { cls: CashClass; label: string } => {
     if (refType.startsWith('movement:')) { const k = refType.slice(9); return { cls: k === 'transfer' ? 'internal' : 'financing', label: k.replace('_', ' ') }; }
     if (refType === 'opening_balance') return { cls: 'financing', label: 'opening balances' };
-    const label: Record<string, string> = { receipt: 'Customer receipts', settlement: 'Platform settlements', supplier_payment: 'Supplier payments', expense: 'Operating expenses', refund_paid: 'Customer refunds', order: 'Cash sales', manual: 'Manual journals', reversal: 'Reversals' };
+    const label: Record<string, string> = { receipt: 'Customer receipts', settlement: 'Platform settlements', supplier_payment: 'Supplier payments', expense: 'Operating expenses', expense_claim: 'Operating expenses', refund_paid: 'Customer refunds', order: 'Cash sales', manual: 'Manual journals', reversal: 'Reversals' };
     return { cls: 'operating', label: label[refType] ?? refType };
   };
   let opening = 0, closing = 0;
@@ -501,7 +505,7 @@ export function cashFlowReport(d: DB, from: string, to: string) {
     if (k <= to) closing += net;
     if (k < from) { opening += net; continue; }
     if (k > to || Math.abs(net) < 0.005) continue;
-    const c = classify(j.refType);
+    const c = j.refType === 'expense_claim' && j.info?.treatment === 'fixed_asset' ? { cls: 'investing' as CashClass, label: 'Equipment purchases' } : classify(j.refType);  // buying equipment is an investing outflow
     const r = (rows[c.cls + c.label] ||= { ...c, inflow: 0, outflow: 0 });
     if (net > 0) r.inflow += net; else r.outflow += -net;
   }

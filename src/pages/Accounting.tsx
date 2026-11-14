@@ -115,9 +115,10 @@ function DraftModal({ id, onClose }: { id?: string; onClose: () => void }) {
       footer={<><div className="grow">{Math.abs(td - tc) < 0.005 && td > 0 ? <Badge tone="good"><Tx>balanced</Tx></Badge> : <Badge tone="bad"><Tx>out of balance by</Tx>{' '}{money(td - tc)}</Badge>}</div><Button onClick={onClose}><Tx>Cancel</Tx></Button>
         <Button disabled={!memo.trim()} onClick={() => run((d, c) => saveDraft(d, c, payload()), { ok: 'Draft saved', perm: 'accounting:create', onOk: onClose })}><Tx>Save draft</Tx></Button>
         <Button variant="primary" disabled={!memo.trim() || Math.abs(td - tc) > 0.005 || td <= 0} onClick={() => run((d, c) => { const x = saveDraft(d, c, payload()); submitDraft(d, c, x); }, { ok: 'Submitted for approval', perm: 'accounting:create', onOk: onClose })}><Tx>Submit for approval</Tx></Button></>}>
+      <div className="mb16"><Banner><Tx>Use a manual journal only for adjustments that no other screen records (corrections, accruals, opening items). Every line needs a debit or a credit and the totals must match. Everyday spending belongs in Daily expenses.</Tx></Banner></div>
       <div className="form-grid"><Field label="Date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field><Field label="Memo (reason / reference)"><Input value={memo} onChange={(e) => setMemo(e.target.value)} /></Field></div>
       <table className="t compact mt16"><thead><tr><th><Tx>Account</Tx></th><th className="num"><Tx>Debit</Tx></th><th className="num"><Tx>Credit</Tx></th><th /></tr></thead>
-        <tbody>{lines.map((l, i) => <tr key={i}><td><Select sm value={l.account} aria-label={tl(lang, 'Account')} onChange={(e) => setLines(lines.map((x, k) => (k === i ? { ...x, account: e.target.value } : x)))}>{db.accounts.filter((a) => a.posting && a.active).map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</Select></td><td className="num"><NumInput style={{ width: 120 }} aria-label={tl(lang, 'Debit')} value={l.debit || ''} onChange={(n) => setLines(lines.map((x, k) => (k === i ? { ...x, debit: n || 0, credit: n ? 0 : x.credit } : x)))} /></td><td className="num"><NumInput style={{ width: 120 }} aria-label={tl(lang, 'Credit')} value={l.credit || ''} onChange={(n) => setLines(lines.map((x, k) => (k === i ? { ...x, credit: n || 0, debit: n ? 0 : x.debit } : x)))} /></td><td><Button size="sm" variant="ghost" icon aria-label={tl(lang, 'Remove line')} onClick={() => setLines(lines.filter((_, k) => k !== i))}><Trash2 size={13} /></Button></td></tr>)}</tbody>
+        <tbody>{lines.map((l, i) => <tr key={i}><td><Select sm value={l.account} aria-label={tl(lang, 'Account')} onChange={(e) => setLines(lines.map((x, k) => (k === i ? { ...x, account: e.target.value } : x)))}>{db.accounts.filter((a) => a.posting && a.active).map((a) => <option key={a.code} value={a.code}>{a.code} {lang === 'th' ? a.nameTh : a.name}</option>)}</Select></td><td className="num"><NumInput style={{ width: 120 }} aria-label={tl(lang, 'Debit')} value={l.debit || ''} onChange={(n) => setLines(lines.map((x, k) => (k === i ? { ...x, debit: n || 0, credit: n ? 0 : x.credit } : x)))} /></td><td className="num"><NumInput style={{ width: 120 }} aria-label={tl(lang, 'Credit')} value={l.credit || ''} onChange={(n) => setLines(lines.map((x, k) => (k === i ? { ...x, credit: n || 0, debit: n ? 0 : x.debit } : x)))} /></td><td><Button size="sm" variant="ghost" icon aria-label={tl(lang, 'Remove line')} onClick={() => setLines(lines.filter((_, k) => k !== i))}><Trash2 size={13} /></Button></td></tr>)}</tbody>
         <tfoot><tr className="total"><td><Tx>Total</Tx></td><td className="num">{money(td)}</td><td className="num">{money(tc)}</td><td /></tr></tfoot></table>
       <div className="mt8"><Button size="sm" onClick={() => setLines([...lines, { account: '6300', debit: 0, credit: 0 }])}><Plus size={13} />{' '}<Tx>Add line</Tx></Button></div>
     </Modal>
@@ -164,6 +165,7 @@ function Approvals({ onEdit }: { onEdit: (id: string) => void }) {
 }
 
 function Expenses() {
+  const lang = useLang();
   const db = useDB();
   const run = useRun();
   const canCreate = useHas('accounting:create');
@@ -171,19 +173,22 @@ function Expenses() {
   const accts = expenseAccounts(db);
   const [f, setF] = useState({ date: dayKey(new Date()), account: '6300', vendor: '', amount: 0, vat: 0, paidFrom: 'bank' as 'cash' | 'bank', branchId: '', note: '' });
   return (
+    <>
+    <div className="mb16"><Banner><Tx>For everyday spending use Daily expenses: employees record it, a manager approves it and the accountant posts it. “Add expense” here posts straight to the books without an approval step.</Tx>{' '}<Link to="/expenses"><b><Tx>Open Daily expenses</Tx></b></Link></Banner></div>
     <Card flush>
       <DataTable rows={[...db.expenses].reverse()} rowKey={(e) => e.id} pageSize={12} toolbar={canCreate && <Button size="sm" variant="primary" onClick={() => setOpen(true)}><Plus size={14} />{' '}<Tx>Add expense</Tx></Button>}
         cols={[{ key: 'd', header: 'Date', render: (e) => dateFmt(e.date) }, { key: 'v', header: 'Vendor', render: (e) => <><b>{e.vendor}</b><div className="sub">{e.note}</div></> }, { key: 'a', header: 'Category', render: (e) => db.accounts.find((a) => a.code === e.account)?.name }, { key: 'b', header: 'Branch', hideSm: true, render: (e) => (e.branchId ? db.branches.find((b) => b.id === e.branchId)?.code : '–') }, { key: 'p', header: 'Paid from', render: (e) => <Badge>{e.paidFrom}</Badge> }, { key: 'm', header: 'Amount', num: true, render: (e) => <>{money(e.amount)}{e.vat > 0 && <div className="sub"><Tx>VAT</Tx>{' '}{money(e.vat)}</div>}</> }]} />
       {open && (
         <Modal title="Add expense" size="sm" onClose={() => setOpen(false)} footer={<><Button onClick={() => setOpen(false)}><Tx>Cancel</Tx></Button><Button variant="primary" disabled={!f.vendor || !(f.amount > 0)} onClick={() => run((d, c) => addExpense(d, c, { ...f, date: new Date(f.date + 'T12:00:00').toISOString(), branchId: f.branchId || undefined }), { ok: 'Expense posted', perm: 'accounting:create', onOk: () => setOpen(false) })}><Tx>Post</Tx></Button></>}>
           <div className="col"><Field label="Date"><Input type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field><Field label="Vendor"><Input value={f.vendor} onChange={(e) => setF({ ...f, vendor: e.target.value })} /></Field>
-            <Field label="Category (account)"><Select value={f.account} onChange={(e) => setF({ ...f, account: e.target.value })}>{accts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</Select></Field>
+            <Field label="Category (account)"><Select value={f.account} onChange={(e) => setF({ ...f, account: e.target.value })}>{accts.map((a) => <option key={a.code} value={a.code}>{a.code} {lang === 'th' ? a.nameTh : a.name}</option>)}</Select></Field>
             <div className="form-grid"><Field label="Amount (incl. VAT)"><NumInput value={f.amount || ''} onChange={(n) => setF({ ...f, amount: n || 0 })} /></Field><Field label="of which VAT"><NumInput value={f.vat || ''} onChange={(n) => setF({ ...f, vat: n || 0 })} /></Field></div>
             <Field label="Branch (analysis dimension)"><Select value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}><option value="">Unallocated</option>{db.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</Select></Field>
             <Field label="Paid from"><Select value={f.paidFrom} onChange={(e) => setF({ ...f, paidFrom: e.target.value as 'cash' | 'bank' })}><option value="bank">Bank</option><option value="cash">Cash</option></Select></Field></div>
         </Modal>
       )}
     </Card>
+    </>
   );
 }
 
