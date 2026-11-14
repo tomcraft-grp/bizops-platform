@@ -62,7 +62,7 @@ select pg_temp.err_like('W2 satang beyond 2 decimals refused', format($q$select 
 select pg_temp.err_like('W2 a deactivated bank cannot be chosen', format($q$select public.finance_deposit_create(%L, 1000, 'dep-key-bank')$q$, pg_temp.c('kb')), '%BANK_NOT_AVAILABLE%');
 insert into t_ctx select 'd1', public.finance_deposit_create(pg_temp.c('scb')::uuid, 5000, 'dep-key-0001', 'my transfer')::text;
 insert into t_ctx select 'd1id', (v::jsonb) ->> 'id' from t_ctx where k = 'd1';
-insert into t_res (test, ok, detail) select 'W2 a new deposit is pending with a payment reference', (v::jsonb) ->> 'status' = 'pending' and (v::jsonb) ->> 'deposit_no' ~ '^DP-[0-9]{6}-[0-9]{5}$' and ((v::jsonb) ->> 'amount')::numeric = 5000, v from t_ctx where k = 'd1';
+insert into t_res (test, ok, detail) select 'W2 a new deposit is pending with a payment reference', (v::jsonb) ->> 'status' = 'pending' and (v::jsonb) ->> 'deposit_no' ~ '^DEP-[0-9]{6}$' and ((v::jsonb) ->> 'amount')::numeric = 5000, v from t_ctx where k = 'd1';
 insert into t_res (test, ok, detail) select 'W2 the deposit never leaks reviewer ids', not ((v::jsonb) ? 'reviewed_by' or (v::jsonb) ? 'review_note' or (v::jsonb) ? 'created_by'), null from t_ctx where k = 'd1';
 insert into t_res (test, ok, detail) select 'W2 retry with the same key returns the same deposit', public.finance_deposit_create(pg_temp.c('scb')::uuid, 5000, 'dep-key-0001') ->> 'id' = pg_temp.c('d1id'), null;
 select pg_temp.err_like('W2 same key, different amount is refused', format($q$select public.finance_deposit_create(%L, 6000, 'dep-key-0001')$q$, pg_temp.c('scb')), '%KEY_REUSED%');
@@ -96,7 +96,7 @@ insert into t_ctx select 'ver1', public.finance_deposit_verify(pg_temp.c('d1id')
 insert into t_res (test, ok, detail) select 'W2 verification credits what the BANK shows (4990), not the claim (5000)', (select balance from public.finance_wallets where customer_id = (select customer_id from public.finance_wallet_deposits where id = pg_temp.c('d1id')::uuid)) = 4990
   and ((v::jsonb) ->> 'balance')::numeric = 4990, v from t_ctx where k = 'ver1';
 insert into t_res (test, ok, detail) select 'W2 the ledger row is complete', (select (txn_type = 'DEPOSIT' and direction = 'credit' and amount = 4990 and balance_before = 0 and balance_after = 4990 and ref_type = 'deposit' and payment_method = 'bank_transfer'
-    and bank_account_id = pg_temp.c('scb')::uuid and verification_status = 'verified' and created_by = pg_temp.c('A')::uuid and approved_by = pg_temp.c('S')::uuid and txn_no ~ '^WT-[0-9]{6}-[0-9]{5}$' and ref_no like 'DP-%')
+    and bank_account_id = pg_temp.c('scb')::uuid and verification_status = 'verified' and created_by = pg_temp.c('A')::uuid and approved_by = pg_temp.c('S')::uuid and txn_no ~ '^WAL-[0-9]{6}$' and ref_no like 'DEP-%')
   from public.finance_wallet_transactions where ref_id = pg_temp.c('d1id')::uuid), null;
 select pg_temp.err_like('W2 a verified deposit cannot be verified again (no duplicate credit)', format($q$select public.finance_deposit_verify(%L, 4990, 'BANKREF-D1', now())$q$, pg_temp.c('d1id')), '%DEPOSIT_NOT_REVIEWABLE%');
 select pg_temp.err_like('W2 a verified deposit cannot be rejected', format($q$select public.finance_deposit_reject(%L, 'late')$q$, pg_temp.c('d1id')), '%Only a submitted deposit%');

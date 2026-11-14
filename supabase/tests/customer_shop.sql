@@ -29,9 +29,13 @@ insert into t_ctx select 'A', id::text from public.profiles where role = 'USER' 
 insert into t_ctx select 'B', id::text from public.profiles where role = 'USER' and status = 'active' order by created_at offset 1 limit 1;
 insert into t_ctx select 'S', id::text from public.profiles where role = 'SUPER_ADMIN' and status = 'active' order by created_at limit 1;
 -- these suites place orders without a slip (the slip rule has its own tests in online_ordering.sql, section O11)
+-- real orders may exist by now: remember how many events and how many sold SKUs there are, so the tests count only what THEY create
+insert into t_ctx select 'base_place', count(*)::text from public.shop_events where action = 'order.place';
+insert into t_ctx select 'base_issue', count(*)::text from public.finance_events where action = 'invoice.issue' and detail ->> 'source' = 'shop';
+insert into t_ctx select 'base_popular', count(distinct i.sku_code)::text from public.shop_order_items i join public.shop_orders o on o.id = i.order_id where o.status <> 'cancelled';
 -- the live shop is open now; these tests describe a shop that has just been installed: start from the migration's defaults (inside this transaction only)
 update public.shop_settings set shop_open = false, closed_message = null, delivery_enabled = true, pickup_enabled = false, pickup_note = null, shipping_fee = 0, free_shipping_min = null, require_payment_slip = false;
-insert into t_res (test, ok, detail) select 'test users found', count(*) = 3, string_agg(k, ',') from t_ctx;
+insert into t_res (test, ok, detail) select 'test users found', count(*) filter (where k in ('A', 'B', 'S')) = 3, string_agg(k, ',') from t_ctx;
 insert into t_ctx select 'expected', count(*)::text from public.sku_registry
   where status = 'active' and sku_category = 'FG' and coalesce(nullif(ecommerce_price, 0), nullif(selling_price, 0), nullif(retail_price, 0)) > 0;
 
@@ -120,8 +124,8 @@ insert into t_res (test, ok, detail) select 'S3 product detail', (public.shop_pr
 insert into t_res (test, ok, detail) select 'S3 product detail has related products', jsonb_array_length(public.shop_product('FG-000001') -> 'related') > 0, null;
 insert into t_res (test, ok, detail) select 'S3 inactive product has no detail page', public.shop_product('FG-000010') is null, null;
 insert into t_res (test, ok, detail) select 'S3 unknown product has no detail page', public.shop_product('nope') is null, null;
-insert into t_res (test, ok, detail) select 'S3 home: new arrivals filled, best sellers empty until orders exist',
-  jsonb_array_length(public.shop_home() -> 'newest') = 8 and jsonb_array_length(public.shop_home() -> 'popular') = 0 and jsonb_array_length(public.shop_home() -> 'featured') = 0, null;
+insert into t_res (test, ok, detail) select 'S3 home: new arrivals filled, best sellers only from real orders (none created yet by this test)',
+  jsonb_array_length(public.shop_home() -> 'newest') = 8 and jsonb_array_length(public.shop_home() -> 'popular') = least(pg_temp.c('base_popular')::int, 8) and jsonb_array_length(public.shop_home() -> 'featured') = 0, public.shop_home() -> 'popular' ->> 0;
 insert into t_res (test, ok, detail) select 'S3 shop starts closed', (public.shop_settings_public() ->> 'shop_open')::boolean = false, null;
 
 -- =========================================================================================== S4 quote (the server prices everything)
@@ -188,7 +192,7 @@ insert into t_ctx select 'oA1', public.shop_place_order('key-order-A001', '[{"sk
 insert into t_res (test, ok, detail) select 'S5 order created with server totals (2x320 + 1x320 + 50 shipping = 1010)', ((v::jsonb) -> 'order' ->> 'total')::numeric = 1010 and ((v::jsonb) -> 'order' ->> 'subtotal')::numeric = 960 and ((v::jsonb) -> 'order' ->> 'shipping_fee')::numeric = 50, v from t_ctx where k = 'oA1';
 insert into t_ctx select 'oA1id', (v::jsonb) -> 'order' ->> 'id' from t_ctx where k = 'oA1';
 insert into t_res (test, ok, detail) select 'S5 new order starts as new / unpaid', (v::jsonb) -> 'order' ->> 'status' = 'new' and ((v::jsonb) -> 'order' -> 'invoice' ->> 'status_code')::int = 0, null from t_ctx where k = 'oA1';
-insert into t_res (test, ok, detail) select 'S5 order number SO-YYYYMM-#####', (v::jsonb) -> 'order' ->> 'order_no' ~ '^SO-[0-9]{6}-[0-9]{5}$', (v::jsonb) -> 'order' ->> 'order_no' from t_ctx where k = 'oA1';
+insert into t_res (test, ok, detail) select 'S5 order number ORD-######', (v::jsonb) -> 'order' ->> 'order_no' ~ '^ORD-[0-9]{6}$', (v::jsonb) -> 'order' ->> 'order_no' from t_ctx where k = 'oA1';
 insert into t_res (test, ok, detail) select 'S5 phone normalised to digits', (v::jsonb) -> 'order' ->> 'contact_phone' = '0812345678', null from t_ctx where k = 'oA1';
 insert into t_res (test, ok, detail) select 'S5 two item lines snapshotted', jsonb_array_length((v::jsonb) -> 'order' -> 'items') = 2, null from t_ctx where k = 'oA1';
 -- idempotency: a retry (double click, network retry) returns the same order and creates nothing new
@@ -200,8 +204,8 @@ insert into t_res (test, ok, detail) select 'S5 exactly one order and one invoic
   and (select count(*) from public.finance_invoices where source_ref = (select v::jsonb -> 'order' ->> 'order_no' from t_ctx where k = 'oA1')) = 1, null;
 insert into t_res (test, ok, detail) select 'S5 invoice amount = order total, linked by order number', (select i.amount from public.finance_invoices i join public.shop_orders o on o.invoice_id = i.id where o.idempotency_key = 'key-order-A001') = 1010, null;
 insert into t_res (test, ok, detail) select 'S5 a finance customer was linked to member A', (select count(*) from public.finance_customers where profile_id = pg_temp.c('A')::uuid) = 1, (select code from public.finance_customers where profile_id = pg_temp.c('A')::uuid);
-insert into t_res (test, ok, detail) select 'S5 audit events written (order + invoice)', (select count(*) from public.shop_events where action = 'order.place') = 1
-  and (select count(*) from public.finance_events where action = 'invoice.issue' and detail ->> 'source' = 'shop') = 1, null;
+insert into t_res (test, ok, detail) select 'S5 audit events written (order + invoice)', (select count(*) from public.shop_events where action = 'order.place') - pg_temp.c('base_place')::int = 1
+  and (select count(*) from public.finance_events where action = 'invoice.issue' and detail ->> 'source' = 'shop') - pg_temp.c('base_issue')::int = 1, null;
 -- an order keeps the price it was sold at
 update public.sku_registry set selling_price = 999 where sku_code = 'FG-000001';
 insert into t_res (test, ok, detail) select 'S5 later price change does not touch the placed order', (select (public.shop_order_json(id) -> 'items' -> 0 ->> 'unit_price')::numeric from public.shop_orders where idempotency_key = 'key-order-A001') = 320, null;
@@ -368,7 +372,7 @@ insert into t_res (test, ok, detail) select 'S11 finance_invoice_state (staff) e
 set local role authenticated; select pg_temp.as_user(pg_temp.c('A')::uuid);
 insert into t_res (test, ok, detail) select 'S11 member sees state only for their own invoices', (select count(*) from public.finance_invoices) > 0
   and public.finance_invoice_state(pg_temp.c('invA1')::uuid) is not null and public.finance_invoice_state((select invoice_id from public.shop_orders where id = pg_temp.c('oB1id')::uuid)) is null, null;
-insert into t_res (test, ok, detail) select 'S11 finance_my_invoices tells which order an invoice bills', (select count(*) from jsonb_array_elements(public.finance_my_invoices()) i where i ->> 'source_ref' like 'SO-%') = jsonb_array_length(public.finance_my_invoices()), null;
+insert into t_res (test, ok, detail) select 'S11 finance_my_invoices tells which order an invoice bills', (select count(*) from jsonb_array_elements(public.finance_my_invoices()) i where i ->> 'source_ref' ~ '^(SO|ORD)-') = jsonb_array_length(public.finance_my_invoices()), null;
 insert into t_res (test, ok, detail) select 'S11 finance_my_invoices lists the member''s own invoices', jsonb_array_length(public.finance_my_invoices()) >= 10, jsonb_array_length(public.finance_my_invoices())::text;
 
 -- =========================================================================================== result

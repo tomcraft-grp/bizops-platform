@@ -60,11 +60,11 @@ insert into t_ctx select 'o1', public.shop_place_order('ord-key-0001', '[{"sku_c
 insert into t_ctx select 'o1id', (v::jsonb) -> 'order' ->> 'id' from t_ctx where k = 'o1';
 insert into t_ctx select 'i1id', (v::jsonb) -> 'order' -> 'invoice' ->> 'id' from t_ctx where k = 'o1';
 insert into t_res (test, ok, detail) select 'O2 the order is saved with a unique number, status new, the server total and the payment choice',
-  (v::jsonb) -> 'order' ->> 'order_no' ~ '^SO-[0-9]{6}-[0-9]{5}$' and (v::jsonb) -> 'order' ->> 'status' = 'new' and ((v::jsonb) -> 'order' ->> 'total')::numeric = 2 * pg_temp.c('P1')::numeric
+  (v::jsonb) -> 'order' ->> 'order_no' ~ '^ORD-[0-9]{6}$' and (v::jsonb) -> 'order' ->> 'status' = 'new' and ((v::jsonb) -> 'order' ->> 'total')::numeric = 2 * pg_temp.c('P1')::numeric
   and (v::jsonb) -> 'order' ->> 'payment_pref' = 'bank:SCB' and (v::jsonb) -> 'order' ->> 'contact_phone' = '0812345678', left(v, 300) from t_ctx where k = 'o1';
 insert into t_res (test, ok, detail) select 'O2 the invoice (payment request) bills exactly the order total and is unpaid',
   ((v::jsonb) -> 'order' -> 'invoice' ->> 'amount')::numeric = 2 * pg_temp.c('P1')::numeric and ((v::jsonb) -> 'order' -> 'invoice' ->> 'status_code')::int = 0 and ((v::jsonb) -> 'order' -> 'invoice' ->> 'paid')::numeric = 0
-  and (v::jsonb) -> 'order' -> 'invoice' ->> 'invoice_no' ~ '^INV-[0-9]{6}-[0-9]{5}$', null from t_ctx where k = 'o1';
+  and (v::jsonb) -> 'order' -> 'invoice' ->> 'invoice_no' ~ '^INV-[0-9]{6}$', null from t_ctx where k = 'o1';
 do $$ begin for i in 1..5 loop perform public.shop_place_order('ord-key-0001', '[{"sku_code":"FG-000001","qty":2}]', 'pickup', 'Somchai', '081-234-5678', null, 'please pack carefully', null, 'bank:SCB'); end loop; end $$;
 insert into t_res (test, ok, detail) select 'O2 FIVE submissions of the same checkout create ONE order', (select count(*) from public.shop_orders where profile_id = pg_temp.c('A')::uuid) = 1, null;
 insert into t_res (test, ok, detail) select 'O2 a repeat returns the same order and says it is a replay',
