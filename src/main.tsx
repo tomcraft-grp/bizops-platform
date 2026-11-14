@@ -6,6 +6,7 @@ import { AuthProvider } from './auth/AuthProvider';
 import { applyTheme, boot, useStore } from './domain/store';
 import { isLiffEntry } from './lib/liff';
 import { DEMO_SEED } from './domain/demo';
+import { BRAND } from './brand';
 
 // LINE opens the LIFF endpoint as ".../?entry=liff" (LINE does not allow a #hash in the endpoint URL),
 // so route it to the LINE sign-in page before the hash router starts.
@@ -24,7 +25,7 @@ if (isLiffEntry() && !window.location.hash.startsWith('#/liff')) window.location
 
 applyTheme(useStore.getState().ui.theme);
 const root = createRoot(document.getElementById('root')!);
-root.render(<div className="splash"><div><div className="spinner" /><b>{DEMO_SEED ? 'Preparing demo data…' : 'Loading…'}</b>{DEMO_SEED && <div className="muted" style={{ marginTop: 4 }}>Generating 26 days of trading history with the real engine</div>}</div></div>);
+root.render(<div className="splash"><div><div className="spinner" /><b>{DEMO_SEED ? 'Preparing demo data…' : 'Loading…'}</b><div className="muted" style={{ marginTop: 4 }}>{BRAND.name}</div>{DEMO_SEED && <div className="muted" style={{ marginTop: 4 }}>Generating 26 days of trading history with the real engine</div>}</div></div>);
 boot().then(() => root.render(<React.StrictMode><AuthProvider><App /></AuthProvider></React.StrictMode>)).catch((e) => {
-  root.render(<div className="splash"><div><b>Failed to start</b><pre style={{ maxWidth: 600, whiteSpace: 'pre-wrap' }}>{String(e?.stack || e)}</pre></div></div>);
+  root.render(<div className="splash"><div><b>Failed to start</b><div className="muted">{BRAND.name}</div><pre style={{ maxWidth: 600, whiteSpace: 'pre-wrap' }}>{String(e?.stack || e)}</pre></div></div>);
 });

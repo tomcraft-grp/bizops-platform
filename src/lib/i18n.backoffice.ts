@@ -882,6 +882,8 @@ export const TH_BACKOFFICE: Record<string, string> = {
   'Products saved before creation dates were recorded are left out while a date is set.': 'สินค้าที่บันทึกก่อนมีการเก็บวันที่สร้างจะไม่ถูกแสดงเมื่อกำหนดช่วงวันที่',
   '{n} of {total} products · {r} stock rows': 'พบ {n} จาก {total} สินค้า · {r} แถวสต็อก',
   'No items match these filters': 'ไม่พบรายการที่ตรงกับตัวกรอง', 'Try removing a filter or searching with fewer words.': 'ลองลบตัวกรองบางตัว หรือค้นหาด้วยคำที่น้อยลง',
+  // branding
+  'Platform': 'แพลตฟอร์ม',
   // daily expenses
   'Daily expenses': 'บันทึกรายจ่ายประจำวัน', 'Open Daily expenses': 'เปิดบันทึกรายจ่ายประจำวัน',
   'Record everyday spending in under a minute. A manager approves it, then the accountant checks the tax and posts it to the books.': 'บันทึกรายจ่ายประจำวันได้ภายในหนึ่งนาที ผู้จัดการอนุมัติ จากนั้นนักบัญชีตรวจภาษีและลงบัญชี',

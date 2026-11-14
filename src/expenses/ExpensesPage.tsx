@@ -8,6 +8,8 @@ import { useAuth } from '../auth/AuthProvider';
 import { setLang, toast, useDB, useLang } from '../domain/store';
 import { claimJournal, planExpensePosting } from '../domain/expenseLedger';
 import { Badge, Banner, Button, Card, PageHead, Tabs } from '../ui/kit';
+import { BrandMark } from '../ui/Brand';
+import { BRAND } from '../brand';
 import { dayKey } from '../lib/util';
 import { STATUS_META, canDo, dashboard, loadCategories, loadSettings, markPosted, myRole, useT, type Category, type Claim, type ExpenseCap, type ExpenseRole, type Settings, type Status } from './api';
 import { ExpenseCtx, claimToPosting, useExpense } from './parts';
@@ -53,7 +55,7 @@ export default function ExpensesPage({ mode }: { mode: 'backoffice' | 'standalon
   return (
     <div className="exp-standalone">
       <header className="exp-top">
-        <b>BizOps · {T('Daily expenses', 'รายจ่ายประจำวัน')}</b>
+        <span className="row gap-8 exp-top-brand"><BrandMark size={30} /><span className="exp-top-title"><b>{BRAND.name}</b><small className="muted">{T('Daily expenses', 'รายจ่ายประจำวัน')}</small></span></span>
         <div className="row gap-8">
           <Button size="sm" onClick={() => setLang(lang === 'th' ? 'en' : 'th')}><Languages size={14} />{' '}{lang === 'th' ? 'English' : 'ไทย'}</Button>
           <Button size="sm" variant="ghost" onClick={() => { void signOut().then(() => { window.location.hash = '#/login'; }); }}><LogOut size={14} />{' '}{T('Sign out', 'ออกจากระบบ')}</Button>

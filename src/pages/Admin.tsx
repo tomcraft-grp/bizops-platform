@@ -11,6 +11,7 @@ import type { ID, Role, User } from '../domain/types';
 import { Gate } from '../ui/Shell';
 import { audit } from '../domain/core';
 import { t as tl } from '../lib/i18n';
+import { BRAND } from '../brand';
 
 // ================= Team & access =================
 export function Team() {
@@ -141,7 +142,7 @@ function SettingsInner() {
           <div className="col">
             <div className="muted"><Tx>Local working data lives in your browser (IndexedDB). Use Export to keep a copy.</Tx></div>
             <div className="row wrap">
-              <Button onClick={() => download(`bizops-backup-${new Date().toISOString().slice(0, 10)}.json`, exportBackup(), 'application/json')}><Download size={15} />{' '}<Tx>Export backup</Tx></Button>
+              <Button onClick={() => download(`${BRAND.filePrefix}-backup-${new Date().toISOString().slice(0, 10)}.json`, exportBackup(), 'application/json')}><Download size={15} />{' '}<Tx>Export backup</Tx></Button>
               <input ref={file} type="file" accept="application/json" hidden onChange={async (e) => { const fl = e.target.files?.[0]; e.target.value = ''; if (!fl) return; try { await importBackup(await fl.text()); toast('success', 'Backup restored'); } catch (err) { toast('error', (err as Error).message); } }} />
               <Button onClick={() => file.current?.click()}><Upload size={15} />{' '}<Tx>Restore backup</Tx></Button>
               {DEMO_SEED && <Button variant="danger" onClick={async () => { const x = await confirm({ title: 'Reset all demo data?', body: 'Everything you created is deleted and the demo business is regenerated from scratch.', typeToConfirm: 'RESET', danger: true, confirmLabel: 'Reset data' }); if (x.ok) { await resetDemoData(); toast('success', 'Demo data regenerated'); } }}><RotateCcw size={15} />{' '}<Tx>Reset demo data</Tx></Button>}

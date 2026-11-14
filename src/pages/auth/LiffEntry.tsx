@@ -5,6 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import { signInWithLine } from '../../lib/liff';
 import { Banner, Button, Card } from '../../ui/kit';
 import { setLang } from '../../domain/store';
+import { AuthLayout } from '../../ui/Brand';
+import { BRAND } from '../../brand';
 
 export default function LiffEntry() {
   const nav = useNavigate();
@@ -31,8 +33,8 @@ export default function LiffEntry() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="auth-shell">
-      <Card title={error ? 'เข้าสู่ระบบไม่สำเร็จ' : 'กำลังเชื่อมต่อ LINE…'} sub="BizOps" className="auth-card">
+    <AuthLayout>
+      <Card title={error ? 'เข้าสู่ระบบไม่สำเร็จ' : 'กำลังเชื่อมต่อ LINE…'} sub={BRAND.name} className="auth-card">
         {error ? (
           <div className="col gap-12">
             <Banner tone="bad">{error}</Banner>
@@ -42,6 +44,6 @@ export default function LiffEntry() {
           <div className="center" style={{ padding: '12px 0' }}><div className="spinner" /></div>
         )}
       </Card>
-    </div>
+    </AuthLayout>
   );
 }

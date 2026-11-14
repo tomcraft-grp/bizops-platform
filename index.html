@@ -4,8 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#2a78d6" />
-    <title>BizOps – Commerce Operations Platform</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M9 21V11l7-4 7 4v10l-7 4z' fill='none' stroke='white' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M9 11l7 4 7-4M16 15v10' stroke='white' stroke-width='2' fill='none'/%3E%3C/svg%3E" />
+    <!-- The name, description and icon below are filled in from src/brand.ts at build time (see vite.config.ts), so the name lives in one place -->
+    <title>{{brand.name}}</title>
+    <meta name="description" content="{{brand.name}} — {{brand.tagline}}" />
+    <meta name="application-name" content="{{brand.name}}" />
+    <meta name="apple-mobile-web-app-title" content="{{brand.shortName}}" />
+    <meta property="og:site_name" content="{{brand.name}}" />
+    <meta property="og:title" content="{{brand.name}}" />
+    <meta property="og:description" content="{{brand.tagline}}" />
+    <link rel="icon" href="{{brand.favicon}}" />
   </head>
   <body>
     <div id="root"></div>

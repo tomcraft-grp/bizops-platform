@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Business Operations & Commerce Management Platform - interactive prototype",
+  "description": "Tom-Craft Platform - business operations and commerce management",
   "scripts": {
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",

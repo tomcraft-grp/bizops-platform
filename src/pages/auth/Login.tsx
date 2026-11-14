@@ -2,6 +2,8 @@ import { FormEvent, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
 import { Banner, Button, Card, Field, Input, PasswordInput } from '../../ui/kit';
+import { AuthLayout } from '../../ui/Brand';
+import { BRAND } from '../../brand';
 
 export default function Login() {
   const { signIn } = useAuth();
@@ -24,8 +26,8 @@ export default function Login() {
   };
 
   return (
-    <div className="auth-shell">
-      <Card title="Sign in" sub="BizOps Platform" className="auth-card">
+    <AuthLayout>
+      <Card title="Sign in" sub={BRAND.name} className="auth-card">
         <form onSubmit={submit} className="col gap-12">
           {state?.notice && !err && <Banner tone="good">{state.notice}</Banner>}
           {err && <Banner tone="bad">{err}</Banner>}
@@ -37,6 +39,6 @@ export default function Login() {
           </div>
         </form>
       </Card>
-    </div>
+    </AuthLayout>
   );
 }

@@ -1,3 +1,4 @@
+import { BRAND } from '../brand';
 // DEV APP Customer: the layout configuration of a customer-facing app, as structured JSON.
 // The config never holds markup or code. The app renders it with the fixed component allow-list in
 // SECTION_DEFS / CORE_DEFS, and validateLayout() (mirrored server-side by public.customer_app_validate) rejects anything else.
@@ -271,7 +272,7 @@ export function newSection(type: SectionType): Section {
 const coreSection = (tab: PageTab): Section => ({ ...newSection(CORE_OF[tab]), id: `core-${tab}` });
 /** A tab page as it is without any customisation: just its core block (= the original tab). */
 export const defaultPage = (tab: PageTab): Section[] => [coreSection(tab)];
-export function defaultLayout(title = 'Sabaidee'): LayoutConfig {
+export function defaultLayout(title: string = BRAND.shortName): LayoutConfig {
   const mk = (id: string, type: SectionType): Section => ({ ...newSection(type), id });
   return {
     schemaVersion: SCHEMA_VERSION,

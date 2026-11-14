@@ -3,6 +3,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
 import { supabase } from '../../lib/supabase';
 import { Banner, Button, Card, Field, PasswordInput } from '../../ui/kit';
+import { AuthLayout } from '../../ui/Brand';
+import { BRAND } from '../../brand';
 
 // Reached from the password-reset email: #/reset-password?token_hash=…&type=recovery (template in
 // supabase/auth/recovery-email.html). The token is checked when the form is submitted (single use, 1 hour).
@@ -62,21 +64,21 @@ export default function ResetPassword() {
 
   if (invalid) {
     return (
-      <div className="auth-shell">
-        <Card title="Reset link expired" sub="BizOps Platform" className="auth-card">
+      <AuthLayout>
+        <Card title="Reset link expired" sub={BRAND.name} className="auth-card">
           <div className="col gap-12">
             <Banner tone="warn">This password reset link has expired or has already been used. Reset links work once and are valid for 1 hour.</Banner>
             <Link to="/forgot-password"><Button variant="primary" className="block">Request a new link</Button></Link>
             <div style={{ fontSize: 13 }}><Link to="/login">Back to sign in</Link></div>
           </div>
         </Card>
-      </div>
+      </AuthLayout>
     );
   }
 
   return (
-    <div className="auth-shell">
-      <Card title="Set a new password" sub="BizOps Platform" className="auth-card">
+    <AuthLayout>
+      <Card title="Set a new password" sub={BRAND.name} className="auth-card">
         <form onSubmit={submit} className="col gap-12" noValidate>
           {err && <Banner tone="bad">{err}</Banner>}
           <Field label="New password" hint={PASSWORD_RULES}>
@@ -89,6 +91,6 @@ export default function ResetPassword() {
           <div style={{ fontSize: 13 }}><Link to="/login">Back to sign in</Link></div>
         </form>
       </Card>
-    </div>
+    </AuthLayout>
   );
 }

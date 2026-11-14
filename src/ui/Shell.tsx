@@ -14,6 +14,8 @@ import { CHANNELS } from '../domain/meta';
 import { FeedbackButton } from './FeedbackWidget';
 import { t } from '../lib/i18n';
 import { useAuth } from '../auth/AuthProvider';
+import { BrandMark } from './Brand';
+import { BRAND } from '../brand';
 
 interface NavItem { to: string; label: string; icon: ReactNode; perm: string; badge?: 'orders' | 'slips' | 'prints' | 'sync' | 'low' }
 const NAV: { title: string; items: NavItem[] }[] = [
@@ -84,7 +86,7 @@ export function Shell() {
   return (
     <div className={cx('app', ui.collapsed && 'collapsed')}>
       <aside className={cx('sidebar', ui.sidebarOpen && 'open')} aria-label={t(lang, 'Main navigation')}>
-        <div className="brand"><div className="logo"><Store size={17} /></div><div>BizOps<small>{db.org.name.split(' ')[0]} · {t(lang, 'Prototype')}</small></div></div>
+        <div className="brand"><BrandMark /><div>{BRAND.shortName}<small>{t(lang, 'Platform')}</small></div></div>
         <nav className="nav">
           {NAV.map((g) => {
             const items = g.items.filter((i) => !i.perm || hasPerm(perms, i.perm));

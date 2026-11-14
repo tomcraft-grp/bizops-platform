@@ -1,4 +1,8 @@
-# BizOps — Business Operations & Commerce Management Platform (interactive prototype)
+# Tom-Craft Platform
+
+Business operations and commerce management: POS, orders, inventory, purchasing, accounting, daily expenses, customer app (LINE).
+
+> The platform name is defined in one place, `src/brand.ts`. The repository / folder / web path is still called `bizops-platform` on purpose (Supabase redirect URLs and the LINE LIFF endpoint point at `/bizops-platform/`), and so are the internal browser database and `bizops.*` storage keys: renaming them would orphan data that already exists.
 
 A working prototype of the platform described in *Business_Operations_Commerce_Requirements_Scope_v1.0.md*.
 It is a real, clickable application running on a **transactional domain engine** — not a mock-up.

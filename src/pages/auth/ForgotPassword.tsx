@@ -2,6 +2,8 @@ import { FormEvent, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
 import { Banner, Button, Card, Field, Input } from '../../ui/kit';
+import { AuthLayout } from '../../ui/Brand';
+import { BRAND } from '../../brand';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -34,21 +36,21 @@ export default function ForgotPassword() {
 
   if (done) {
     return (
-      <div className="auth-shell">
-        <Card title="Check your email" sub="BizOps Platform" className="auth-card">
+      <AuthLayout>
+        <Card title="Check your email" sub={BRAND.name} className="auth-card">
           <div className="col gap-12">
             <p className="text2" style={{ margin: 0 }}>If an account exists with this email address, you will receive a password reset link shortly. Please check your inbox and spam folder.</p>
             <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>The link works once and expires after 1 hour.</p>
             <Link to="/login"><Button variant="primary" className="block">Back to sign in</Button></Link>
           </div>
         </Card>
-      </div>
+      </AuthLayout>
     );
   }
 
   return (
-    <div className="auth-shell">
-      <Card title="Forgot password" sub="BizOps Platform" className="auth-card">
+    <AuthLayout>
+      <Card title="Forgot password" sub={BRAND.name} className="auth-card">
         <form onSubmit={submit} className="col gap-12" noValidate>
           <p className="text2" style={{ margin: 0 }}>Enter the email address you sign in with. We'll email you a link to set a new password.</p>
           {err && <Banner tone="bad">{err}</Banner>}
@@ -57,6 +59,6 @@ export default function ForgotPassword() {
           <div style={{ fontSize: 13 }}><Link to="/login">Back to sign in</Link></div>
         </form>
       </Card>
-    </div>
+    </AuthLayout>
   );
 }
