@@ -45,6 +45,10 @@ supabase functions deploy feedback-english-context --project-ref hlvravynjalculv
 
 What is sent to the AI service: the issue text, title, category, priority, page/module/app/version/browser/OS details and the **attachment file names, types and sizes**. **Images are not sent**, and the English text says screenshots were not analysed. The report is passed as quoted data, so instructions written inside a report are not followed. The answer is validated (nine headings in order, English, ≤ 20,000 characters); a wrong shape is retried once, then recorded as `failed`.
 
+## Cost (the API is pay-as-you-go, not free)
+
+One AI call per issue (plus one retry only when the answer has the wrong shape). Prices per million tokens as cached on 2026-11-03: Sonnet 5.5 (the default, `claude-sonnet-5-5`) $2 input / $10 output; Opus 5.5 $4 / $20; Haiku 5.5 $0.10 / $0.50. An issue is roughly 1,200 tokens in (instructions + report) and roughly 1,000 out (answer + brief thinking) — **an estimate, not measured**: about 1.3 US cents per issue on Sonnet 5.5, about 0.07 cent on Haiku 5.5, about 2.7 cents on Opus 5.5. Change the model with `AI_MODEL`; `AI_EFFORT` (default `low`) trades thoroughness for tokens. A Claude.ai subscription is a separate product and does not include API credit. Customers are limited to 3 attempts per issue and 10 starts per hour (see above), which also caps the worst case.
+
 ## Validation queries (read-only)
 
 ```sql

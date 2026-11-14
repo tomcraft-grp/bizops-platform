@@ -161,8 +161,24 @@ describe('providers', () => {
     expect(c.init.headers['x-api-key']).toBe('sk-ant-secretsecret1');
     expect(c.init.headers['anthropic-version']).toBe('2023-06-01');
     const body = JSON.parse(c.init.body);
-    expect(body).toMatchObject({ model: 'claude-sonnet-5-5', system: 'SYS', temperature: 0, messages: [{ role: 'user', content: 'USER' }] });
+    expect(body).toMatchObject({ model: 'claude-sonnet-5-5', system: 'SYS', messages: [{ role: 'user', content: 'USER' }], output_config: { effort: 'low' } });
+    // the current models answer HTTP 400 to temperature / top_p / top_k and to a "disabled" thinking setting: none of them may be sent
+    for (const forbidden of ['temperature', 'top_p', 'top_k', 'thinking']) expect(body, forbidden).not.toHaveProperty(forbidden);
+    expect(body.max_tokens).toBeGreaterThanOrEqual(4000);                                       // room for the answer plus the model's own thinking
     expect(c.init.body).not.toContain('sk-ant-secretsecret1');
+  });
+  it('Anthropic: effort is sent only to the model families that accept it, and can be overridden', async () => {
+    const f = fakeFetch(() => ({ ok: true, status: 200, body: { content: [{ type: 'text', text: 'x' }] } }));
+    await selectProvider({ ANTHROPIC_API_KEY: 'k-12345678', AI_MODEL: 'claude-haiku-4-5' }, f.fn)!.complete('s', 'u');     // an older model rejects effort
+    expect(JSON.parse(f.calls[0].init.body)).not.toHaveProperty('output_config');
+    await selectProvider({ ANTHROPIC_API_KEY: 'k-12345678', AI_MODEL: 'claude-opus-5-5', AI_EFFORT: 'medium' }, f.fn)!.complete('s', 'u');
+    expect(JSON.parse(f.calls[1].init.body).output_config).toEqual({ effort: 'medium' });
+  });
+  it('Anthropic: thinking blocks in the answer are ignored and a refusal becomes a clear failure', async () => {
+    const mixed = fakeFetch(() => ({ ok: true, status: 200, body: { content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: 'ANSWER' }] } }));
+    expect(await selectProvider({ ANTHROPIC_API_KEY: 'k-12345678' }, mixed.fn)!.complete('s', 'u')).toBe('ANSWER');
+    const refused = fakeFetch(() => ({ ok: true, status: 200, body: { stop_reason: 'refusal', content: [] } }));
+    await expect(selectProvider({ ANTHROPIC_API_KEY: 'k-12345678' }, refused.fn)!.complete('s', 'u')).rejects.toMatchObject({ code: 'AI_REFUSED' });
   });
   it('Anthropic: model and base URL can be configured', async () => {
     const f = fakeFetch(() => ({ ok: true, status: 200, body: { content: [{ type: 'text', text: 'x' }] } }));
@@ -178,6 +194,7 @@ describe('providers', () => {
     expect(f.calls[0].url).toBe('https://llm.example/v1/chat/completions');
     expect(f.calls[0].init.headers.authorization).toBe('Bearer key-abcdefgh');
     expect(JSON.parse(f.calls[0].init.body).messages).toEqual([{ role: 'system', content: 'SYS' }, { role: 'user', content: 'USER' }]);
+    expect(JSON.parse(f.calls[0].init.body)).not.toHaveProperty('temperature');                 // newer models of several providers reject non-default sampling values
   });
   it('a failing service gives a short code and never echoes the key', async () => {
     const f = fakeFetch(() => ({ ok: false, status: 401, body: { error: { message: 'invalid x-api-key: sk-ant-secretsecret1' } } }));

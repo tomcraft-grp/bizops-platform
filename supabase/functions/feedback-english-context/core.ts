@@ -155,6 +155,9 @@ async function post(fetchFn: FetchFn, url: string, headers: Record<string, strin
 }
 
 export const DEFAULT_MODEL = 'claude-sonnet-5-5';
+// The current model families take an `effort` setting; older ones reject it. Sampling parameters (temperature, top_p, top_k) are NOT sent at all:
+// the current models answer HTTP 400 to any non-default value, and this task does not need them.
+const supportsEffort = (model: string) => /^claude-(opus|sonnet|haiku|fable|mythos)-5/.test(model);
 
 /** Chooses the provider from the environment. Returns null when no key is configured (the caller reports AI_NOT_CONFIGURED). */
 export function selectProvider(env: Env, fetchFn: FetchFn, timeoutMs = 60000): Provider | null {
@@ -167,8 +170,11 @@ export function selectProvider(env: Env, fetchFn: FetchFn, timeoutMs = 60000): P
     return {
       name: 'anthropic', model,
       async complete(system, user) {
-        const j = (await post(fetchFn, `${base}/v1/messages`, { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-          { model, max_tokens: 3000, temperature: 0, system, messages: [{ role: 'user', content: user }] }, timeoutMs, [key])) as { content?: { type?: string; text?: string }[] };
+        // "low" effort keeps the model's own thinking (and the bill) small for this short structuring task; thinking blocks in the answer are ignored below
+        const body: Record<string, unknown> = { model, max_tokens: 8000, system, messages: [{ role: 'user', content: user }] };
+        if (supportsEffort(model)) body.output_config = { effort: env.AI_EFFORT?.trim() || 'low' };
+        const j = (await post(fetchFn, `${base}/v1/messages`, { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, body, timeoutMs, [key])) as { content?: { type?: string; text?: string }[]; stop_reason?: string };
+        if (j.stop_reason === 'refusal') throw new GenError('AI_REFUSED', 'The AI service declined to process this report');
         return (j.content ?? []).filter((b) => b.type === undefined || b.type === 'text').map((b) => b.text ?? '').join('');
       },
     };
@@ -182,7 +188,7 @@ export function selectProvider(env: Env, fetchFn: FetchFn, timeoutMs = 60000): P
       name: 'openai-compatible', model,
       async complete(system, user) {
         const j = (await post(fetchFn, `${base}/chat/completions`, { authorization: `Bearer ${key}` },
-          { model, temperature: 0, max_tokens: 3000, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }, timeoutMs, [key])) as { choices?: { message?: { content?: string } }[] };
+          { model, max_tokens: 8000, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }, timeoutMs, [key])) as { choices?: { message?: { content?: string } }[] };
         return j.choices?.[0]?.message?.content ?? '';
       },
     };
