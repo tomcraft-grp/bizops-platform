@@ -33,7 +33,8 @@ const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
 
 function recordLoginAttempt(email: string, success: boolean) {
-  void supabase.from('login_attempts').insert({ email, success }).then(() => undefined, () => undefined);
+  // Validated, rate-capped server function (the table no longer needs to be writable by anon). Never blocks sign-in.
+  void supabase.rpc('record_login_attempt', { p_email: email, p_success: success }).then(() => undefined, () => undefined);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
