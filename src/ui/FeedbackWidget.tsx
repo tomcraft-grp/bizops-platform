@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { MessageSquarePlus } from 'lucide-react';
-import { FEEDBACK_CATEGORIES, FEEDBACK_PRIORITIES, FeedbackCategory, FeedbackPriority, submitFeedback } from '../lib/feedbackApi';
+import { FEEDBACK_CATEGORIES, FEEDBACK_PRIORITIES, FeedbackCategory, FeedbackPriority, autoTranslateIssue, submitFeedback } from '../lib/feedbackApi';
 import { pageMetaFor } from '../domain/meta';
 import { Button, Field, Input, Modal, Select, Textarea } from './kit';
 import { AttachmentPicker } from './feedbackParts';
@@ -34,6 +34,7 @@ export function FeedbackButton() {
         category, subject, description: desc, priority, pageName: meta.page, module: meta.module, appId: 'backoffice', idempotencyKey: idemKey, files,
       });
       toast('success', `${t(lang, 'Thanks — your feedback was recorded.')} (${issue.id})`);
+      void autoTranslateIssue(issue);       // English version, on this computer, when the Thai language pack is already installed; never blocks or fails the submit
       if (failedFiles.length) toast('error', `${t(lang, 'Some files could not be uploaded')}: ${failedFiles.join(', ')}`);
       setOpen(false);
     } catch (e) {

@@ -1,7 +1,7 @@
-// A fake of the feedback endpoints for browser tests of the screenshot paste / English-context UI. It mirrors the contracts that
+// A fake of the feedback endpoints for browser tests of the screenshot paste / English version UI. It mirrors the contracts that
 // supabase/tests/feedback_permissions.sql and supabase/tests/feedback_english_context.sql prove against the real database (who may read what,
-// one generation at a time, 3 attempts for customers, uploads must exist before they are recorded) and a switchable FAKE AI for the Edge
-// Function. This file proves the SCREENS; it proves nothing about the database, the storage policies or a real AI model.
+// uploads must exist before they are recorded, only staff save the English text, its source is 'manual' or 'translation').
+// This file proves the SCREENS; it proves nothing about the database or the storage policies.
 // Install it AFTER FakeShop.install(page): it handles the feedback paths and passes everything else on (route.fallback).
 import type { Page, Route } from '@playwright/test';
 import { FakeShop, USER_ID } from './fakeBackend';
@@ -19,7 +19,6 @@ export interface FIssue {
   english_context_model?: string | null; english_context_attempts?: number; english_context_started_at?: string | null;
 }
 interface FAtt { id: string; issue_id: string; comment_id: string | null; storage_path: string; file_name: string; mime_type: string; size_bytes: number; created_at: string }
-export type AiMode = 'ok' | 'fail' | 'not_configured' | 'not_deployed';
 
 export class FakeFeedback {
   issues: FIssue[] = [];
@@ -28,19 +27,16 @@ export class FakeFeedback {
   files = new Map<string, { type: string; bytes: Buffer }>();
   uploads: { path: string; type: string; size: number }[] = [];
   signed: { path: string; expiresIn: number }[] = [];
-  functionCalls: { issue_id: string; authorised: boolean; status: number }[] = [];
   rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
-  ai: AiMode = 'ok';
-  aiDelayMs = 0;
   private seq = 1000;
   private n = 0;
-
   private shop: FakeShop;
   constructor(shop: FakeShop) { this.shop = shop; }
   get staff() { return this.shop.profile.role === 'ADMIN' || this.shop.profile.role === 'SUPER_ADMIN'; }
   issue = (id: string) => this.issues.find((i) => i.id === id);
+  count = (fn: string) => this.rpcCalls.filter((c) => c.fn === fn).length;
 
-  /** an issue that existed before the English-context feature: its row has none of the new columns */
+  /** an issue that existed before the English version feature: its row has none of the new columns */
   seedLegacy(over: Partial<FIssue> = {}): FIssue {
     const id = `FB-00${++this.seq}`;
     const now = new Date(Date.now() - 86400_000).toISOString();
@@ -49,6 +45,10 @@ export class FakeFeedback {
       app_version: '0.1.0', root_cause: null, resolution: null, remark: null, created_at: now, updated_at: now, last_activity_at: now, resolved_at: null, archived_at: null, ...over };
     this.issues.push(row);
     return row;
+  }
+  /** an issue whose English version was saved earlier */
+  seedEnglish(issueId: string, text: string, source: 'translation' | 'manual' | 'ai' = 'translation') {
+    Object.assign(this.issue(issueId)!, { english_context: text, english_context_status: 'completed', english_context_error: null, english_context_at: new Date().toISOString(), english_context_source: source, english_context_model: null, english_context_attempts: 0 });
   }
   /** an attachment that is already stored for an issue (a 1x1 PNG, or any bytes) */
   seedAttachment(issueId: string, name: string, bytes = PNG_1x1, type = 'image/png'): FAtt {
@@ -92,42 +92,18 @@ export class FakeFeedback {
       }
       case 'feedback_set_english_context': {
         if (!this.staff) this.err('Only support staff can change the English context');
+        const source = a.p_source === undefined ? 'manual' : String(a.p_source);
+        if (!['manual', 'translation'].includes(source)) this.err('Unknown source');
         const i = this.issue(String(a.p_issue)); if (!i) this.err('Feedback not found');
         const text = String(a.p_context ?? '').trim();
         if (!text || text.length > 20000) this.err('The English context must be 1 to 20,000 characters');
-        Object.assign(i, { english_context: text, english_context_status: 'completed', english_context_error: null, english_context_at: new Date().toISOString(), english_context_source: 'manual', english_context_model: null });
+        Object.assign(i, { english_context: text, english_context_status: 'completed', english_context_error: null, english_context_at: new Date().toISOString(), english_context_source: source, english_context_model: null });
         return i;
       }
       case 'feedback_staff_list': return [];
       case 'feedback_mark_read': return null;
       default: this.err(`Unknown function ${fn}`);
     }
-  }
-
-  /** the Edge Function: verifies the caller, claims the generation (feedback_english_context_begin) and finishes it with the fake AI */
-  async generate(issueId: string, authorised: boolean): Promise<{ status: number; body: unknown }> {
-    if (this.ai === 'not_deployed') return { status: 404, body: { code: 'NOT_FOUND', message: 'Requested function was not found' } };
-    if (!authorised) return { status: 401, body: { error: 'Sign in first' } };
-    const i = this.issue(issueId);
-    if (!i || !this.visible(i)) return { status: 404, body: { error: 'Feedback not found' } };
-    const started = i.english_context_started_at ? Date.parse(i.english_context_started_at) : 0;
-    if (i.english_context_status === 'processing' && Date.now() - started < 300_000) return { status: 200, body: { status: 'processing' } };
-    if (i.english_context_status === 'completed' && !this.staff) return { status: 200, body: { status: 'completed', already: true } };
-    if (!this.staff && (i.english_context_attempts ?? 0) >= 3) return { status: 429, body: { status: 'failed', error: 'RATE_LIMITED: too many attempts, ask the support team to regenerate it' } };
-    Object.assign(i, { english_context_status: 'processing', english_context_error: null, english_context_started_at: new Date().toISOString(), english_context_attempts: (i.english_context_attempts ?? 0) + 1 });
-    if (this.aiDelayMs) await new Promise((r) => setTimeout(r, this.aiDelayMs));
-    if (this.ai === 'not_configured') { Object.assign(i, { english_context_status: 'failed', english_context_error: 'AI_NOT_CONFIGURED: no AI key is set for this project (the administrator must add one)' }); return { status: 200, body: { status: 'failed', error: i.english_context_error } }; }
-    if (this.ai === 'fail') { Object.assign(i, { english_context_status: 'failed', english_context_error: 'AI_HTTP_500: the AI service had an internal error' }); return { status: 200, body: { status: 'failed', error: i.english_context_error } }; }
-    const files = this.attachments.filter((x) => x.issue_id === i.id && !x.comment_id).map((x) => x.file_name);
-    Object.assign(i, { english_context: this.fakeEnglish(i, files), english_context_status: 'completed', english_context_error: null, english_context_at: new Date().toISOString(), english_context_source: 'ai', english_context_model: 'fake-model' });
-    return { status: 200, body: { status: 'completed' } };
-  }
-  /** what a correct answer looks like: nine sections, identifiers kept, "Not provided" where the report says nothing */
-  private fakeEnglish(i: FIssue, files: string[]) {
-    const ids = i.description.match(/\b[A-Z]{2,3}-\d{4,}\b/g)?.join(', ');
-    return ['## Issue Title', `Report ${i.id}: ${i.title}`, '', '## Background', `- Page: ${i.page_name} (${i.page_path})`, '', '## Problem Description', `Reporter's words (translated): ${i.description.slice(0, 60)}`, '',
-      '## Expected Behavior', 'Not provided', '', '## Actual Behavior', ids ? `Concerns ${ids}.` : 'Not provided', '', '## Impact', `Reported priority: ${i.priority}`, '',
-      '## Technical Evidence', files.length ? `- Attached screenshots/files (not analysed): ${files.join(', ')}` : '- No files attached', '', '## Implementation Requirements', 'Not provided', '', '## Acceptance Criteria', 'Not provided'].join('\n');
   }
 
   rest(table: string, url: URL): unknown[] | undefined {
@@ -146,14 +122,6 @@ export class FakeFeedback {
     await page.route(`https://${HOST}/**`, async (route) => {
       const req = route.request(); const url = new URL(req.url()); const p = url.pathname;
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
-      // the Edge Function
-      if (p === '/functions/v1/feedback-english-context') {
-        const authorised = /^Bearer \S+/.test(req.headers().authorization ?? '');
-        let issueId = ''; try { issueId = (JSON.parse(req.postData() || '{}') as { issue_id?: string }).issue_id ?? ''; } catch { /* none */ }
-        const out = await this.generate(issueId, authorised);
-        this.functionCalls.push({ issue_id: issueId, authorised, status: out.status });
-        return json(route, out.body, out.status);
-      }
       // feedback RPCs
       if (p.startsWith('/rest/v1/rpc/feedback_')) {
         let args: Record<string, unknown> = {};
@@ -204,3 +172,45 @@ export class FakeFeedback {
 }
 
 export const PNG_1x1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+
+// ------------------------------------------------------------ a fake of Chrome's built-in Translator API (the real model cannot be downloaded in the test browser)
+export interface FakeTranslatorOptions {
+  /** what Translator.availability() answers; null = this browser has no Translator at all */
+  state: 'available' | 'downloadable' | 'unavailable' | null;
+  delayMs?: number;          // time one translate() call takes
+  failTimes?: number;        // the first N translate() calls throw
+}
+export async function installFakeTranslator(page: Page, o: FakeTranslatorOptions) {
+  await page.addInitScript((opts) => {
+    // the test browser (Chrome 138+) has a REAL Translator: for "no translator" it must be removed, otherwise the real one answers
+    if (opts.state === null) { Object.defineProperty(window, 'Translator', { value: undefined, configurable: true, writable: true }); return; }
+    const w = window as unknown as Record<string, unknown>;
+    w.__tr = { state: opts.state, fail: opts.failTimes ?? 0, creates: 0, calls: [] as string[], downloads: 0 };
+    const tr = w.__tr as { state: string; fail: number; creates: number; calls: string[]; downloads: number };
+    const dict: [string, string][] = [
+      ['ที่หน้า สินค้า กดบันทึก', 'On the Products page, pressing Save'], ['แล้วขึ้น error', 'then shows an error'], ['บรรทัดที่สอง   มีช่องว่างหลายตัว', 'Second line with several spaces'],
+      ['ปุ่มบันทึกกดไม่ได้', 'The Save button cannot be pressed'], ['ปุ่มค้นหากดแล้วไม่มีอะไรเกิดขึ้น', 'Nothing happens when the search button is pressed'], ['ข้อความเก่า', 'Old message'],
+      ['อยากให้ แสดงออเดอร์ทุกช่องทาง', 'Please show orders from every channel'],
+    ];
+    (w as { Translator: unknown }).Translator = {
+      availability: async () => tr.state,
+      create: async (o: { monitor?: (m: EventTarget) => void }) => {
+        tr.creates++;
+        if (tr.state === 'downloadable') {                         // the first use downloads the language pack, with progress
+          const m = new EventTarget(); o.monitor?.(m);
+          for (const f of [0.25, 0.75, 1]) { await new Promise((r) => setTimeout(r, 300)); const e = new Event('downloadprogress') as Event & { loaded: number }; e.loaded = f; m.dispatchEvent(e); }
+          tr.state = 'available'; tr.downloads++;
+        }
+        return {
+          translate: async (s: string) => {
+            tr.calls.push(s);
+            if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs));
+            if (tr.fail > 0) { tr.fail--; throw new Error('the translator crashed'); }
+            return dict.reduce((acc, [th, en]) => acc.split(th).join(en), s);
+          },
+          destroy: () => undefined,
+        };
+      },
+    };
+  }, o);
+}

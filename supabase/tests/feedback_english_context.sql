@@ -160,6 +160,37 @@ insert into t_res (test, ok, detail) select 'E9 ... and the refused issue is unt
 insert into t_res (test, ok, detail) select 'E9 staff are not limited per hour either', public.feedback_english_context_begin('FB-990002', pg_temp.c('S')::uuid) ->> 'id' = 'FB-990002', null;
 insert into t_res (test, ok, detail) select 'E9 a clone-based test leaves the five real issues alone', (select count(*) from public.bizops_feedback_issues where id in ('FB-001001','FB-001002','FB-001003','FB-001004','FB-001005') and english_context_status = 'pending' and english_context is null) = 5, null;
 
+-- =========================================================================================== E10 plain translation saved by staff (20261115620000)
+reset role;
+insert into t_ctx select 'i10', id from (select id from public.bizops_feedback_issues where id = 'FB-990003') x;
+insert into t_res (test, ok, detail) select 'E10 there is exactly one set function (no ambiguous overload)', (select count(*) from pg_proc where proname = 'feedback_set_english_context') = 1, null;
+insert into t_res (test, ok, detail) select 'E10 signed-in users may call it, anonymous visitors may not', has_function_privilege('authenticated', 'public.feedback_set_english_context(text, text, text)', 'execute') and not has_function_privilege('anon', 'public.feedback_set_english_context(text, text, text)', 'execute'), null;
+-- a customer cannot save a translation (or anything) by hand
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('A')::uuid);
+select pg_temp.err_like('E10 a customer cannot save a translation', $q$select public.feedback_set_english_context('FB-990003', 'Title: x', 'translation')$q$, '%Only support staff%');
+reset role; set local role anon;
+select pg_temp.err_like('E10 anonymous visitors cannot', $q$select public.feedback_set_english_context('FB-990003', 'Title: x', 'translation')$q$, '%permission denied%');
+-- staff
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('S')::uuid);
+select pg_temp.err_like('E10 an unknown source is refused', $q$select public.feedback_set_english_context('FB-990003', 'Title: x', 'robot')$q$, '%Unknown source%');
+select pg_temp.err_like('E10 a null source is refused', $q$select public.feedback_set_english_context('FB-990003', 'Title: x', null)$q$, '%Unknown source%');
+select pg_temp.err_like('E10 an empty translation is refused', $q$select public.feedback_set_english_context('FB-990003', '   ', 'translation')$q$, '%1 to 20,000%');
+insert into t_res (test, ok, detail) select 'E10 staff save a translation: completed, source translation, no model, the original description untouched',
+  (r).english_context = E'Title: Save button\n\nPressing Save does nothing for FG-000001' and (r).english_context_source = 'translation' and (r).english_context_status = 'completed' and (r).english_context_model is null
+  and (r).description = (select description from public.bizops_feedback_issues where id = 'FB-990002'),
+  null from (select public.feedback_set_english_context('FB-990003', E'Title: Save button\n\nPressing Save does nothing for FG-000001', 'translation') as r) x;
+reset role;
+insert into t_res (test, ok, detail) select 'E10 the history says it was a translation, staff only', exists (select 1 from public.feedback_events where issue_id = 'FB-990003' and kind = 'english_context' and note = 'Translated on the staff computer' and customer_visible = false), null;
+-- the old 2-argument call still works exactly as before
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('S')::uuid);
+insert into t_res (test, ok, detail) select 'E10 a 2-argument call still means "written by hand"', (public.feedback_set_english_context('FB-990003', 'Typed by staff')).english_context_source = 'manual', null;
+reset role;
+insert into t_res (test, ok, detail) select 'E10 ... and is recorded as "Written by hand"', exists (select 1 from public.feedback_events where issue_id = 'FB-990003' and note = 'Written by hand'), null;
+-- a generation by the AI path overwrites a translation like any text, and the constraint knows the three sources
+insert into t_res (test, ok, detail) select 'E10 the source constraint accepts ai, manual and translation only',
+  (select pg_get_constraintdef(oid) from pg_constraint where conname = 'feedback_ctx_source_check') ~ 'ai.*manual.*translation', null;
+insert into t_res (test, ok, detail) select 'E10 the five real issues are still untouched', (select count(*) from public.bizops_feedback_issues where id in ('FB-001001','FB-001002','FB-001003','FB-001004','FB-001005') and english_context is null and english_context_status = 'pending') = 5, null;
+
 -- =========================================================================================== result
 do $$ declare r text; bad int; tot int;
 begin

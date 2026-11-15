@@ -4,6 +4,7 @@
 // and enforces the workflow (supabase/migrations/20261114120000_feedback_issue_system.sql). Nothing here can
 // widen access: a customer who edits the URL or calls these functions directly still sees only their own issues.
 import { supabase } from './supabase';
+import { translateInBrowser, translatorState } from './feedbackTranslate';
 
 declare const __APP_VERSION__: string | undefined;
 export const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
@@ -25,7 +26,7 @@ export interface FeedbackIssue {
   created_at: string; updated_at: string; last_activity_at: string; resolved_at: string | null; archived_at: string | null;
   // English technical context (migration 20261115600000): absent/null on issues that were never processed; the description above is never changed by it
   english_context?: string | null; english_context_status?: EnglishContextStatus; english_context_error?: string | null; english_context_at?: string | null;
-  english_context_source?: 'ai' | 'manual' | null; english_context_model?: string | null; english_context_attempts?: number; english_context_started_at?: string | null;
+  english_context_source?: 'ai' | 'manual' | 'translation' | null; english_context_model?: string | null; english_context_attempts?: number; english_context_started_at?: string | null;
 }
 export interface FeedbackComment { id: string; issue_id: string; author_id: string | null; author_label: string; kind: CommentKind; body: string; requests_info: boolean; created_at: string }
 export interface FeedbackAttachment { id: string; issue_id: string; comment_id: string | null; storage_path: string; file_name: string; mime_type: string; size_bytes: number; created_at: string }
@@ -144,8 +145,6 @@ export async function submitFeedback(i: SubmitInput): Promise<{ issue: FeedbackI
   fail(error);
   const issue = data as FeedbackIssue;
   const failedFiles = i.files?.length ? await uploadAttachments(issue.id, i.files) : [];
-  // The English context is asked for AFTER the issue and its files are saved, and is never awaited: it cannot delay or fail the submission.
-  void requestEnglishContext(issue.id);
   return { issue, failedFiles };
 }
 
@@ -169,11 +168,28 @@ export async function requestEnglishContext(issueId: string): Promise<ContextRes
   }
 }
 
-/** Staff write or correct the English text by hand (kept apart from the original description, which is never touched). */
-export async function setEnglishContext(issueId: string, text: string): Promise<FeedbackIssue> {
-  const { data, error } = await supabase.rpc('feedback_set_english_context', { p_issue: issueId, p_context: text });
+/**
+ * Staff save the English text (kept apart from the original description, which is never touched): typed by hand ('manual', the default) or the
+ * plain translation made in this browser ('translation'). Only a translation sends the source, so a database without that option still takes hand-written text.
+ */
+export async function setEnglishContext(issueId: string, text: string, source: 'manual' | 'translation' = 'manual'): Promise<FeedbackIssue> {
+  const args: Record<string, unknown> = { p_issue: issueId, p_context: text };
+  if (source !== 'manual') args.p_source = source;
+  const { data, error } = await supabase.rpc('feedback_set_english_context', args);
   fail(error);
   return data as FeedbackIssue;
+}
+
+/**
+ * After a staff member submits feedback: if the Thai language pack is already on this computer, translate the report and save it (never throws, never
+ * blocks the submission). If the pack still has to be downloaded the translation waits: it needs a click in the issue screen.
+ */
+export async function autoTranslateIssue(issue: Pick<FeedbackIssue, 'id' | 'title' | 'description'>): Promise<boolean> {
+  try {
+    if ((await translatorState()) !== 'available') return false;
+    await setEnglishContext(issue.id, await translateInBrowser(issue), 'translation');
+    return true;
+  } catch { return false; }
 }
 
 /** A generation that has been "processing" for more than 5 minutes has died (the database allows a new one after the same time). */

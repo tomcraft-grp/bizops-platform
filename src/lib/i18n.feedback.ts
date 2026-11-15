@@ -113,4 +113,22 @@ export const TH_FEEDBACK: Record<string, string> = {
   // issue detail: C) evidence
   'Evidence & attachments': 'หลักฐานและไฟล์แนบ', '{n} file(s) attached to the original report': 'แนบมากับรายงานต้นฉบับ {n} ไฟล์',
   'No screenshots or files were attached.': 'ไม่มีภาพหน้าจอหรือไฟล์แนบ',
+  // issue detail: B) the English version (plain translation made on the staff computer)
+  'English version': 'ฉบับภาษาอังกฤษ',
+  'A plain English translation of the report, made on this computer. The original feedback above is not changed.': 'คำแปลภาษาอังกฤษทั่วไปของเรื่องนี้ แปลบนเครื่องนี้ ข้อความต้นฉบับด้านบนไม่ถูกแก้ไข',
+  'Translate to English': 'แปลเป็นอังกฤษ', 'Translate again': 'แปลอีกครั้ง', 'Translating…': 'กำลังแปล…', 'Not translated yet': 'ยังไม่ได้แปล',
+  'Translated and saved': 'แปลและบันทึกแล้ว', 'Translated on this computer': 'แปลบนเครื่องนี้', 'The translation did not work': 'การแปลไม่สำเร็จ', 'The translation failed': 'การแปลล้มเหลว',
+  'Downloading the Thai language pack to this computer… {n}%': 'กำลังดาวน์โหลดชุดภาษาไทยลงเครื่องนี้… {n}%',
+  'The first time, the browser downloads the Thai language pack to this computer (one time only). Nothing is sent to any server.': 'ครั้งแรกเบราว์เซอร์จะดาวน์โหลดชุดภาษาไทยลงเครื่องนี้ (ครั้งเดียว) ไม่มีข้อมูลถูกส่งไปที่เซิร์ฟเวอร์ใด',
+  'This browser cannot translate on the computer (it needs Chrome 138 or newer, on a computer). You can write the English text by hand, or open the report in Google Translate and paste the result.':
+    'เบราว์เซอร์นี้แปลบนเครื่องไม่ได้ (ต้องใช้ Chrome 138 ขึ้นไปบนคอมพิวเตอร์) คุณพิมพ์ข้อความอังกฤษเอง หรือเปิดเรื่องนี้ใน Google Translate แล้ววางผลลัพธ์ได้',
+  'Open in Google Translate': 'เปิดใน Google Translate',
+  'This browser has no built-in translator (use Chrome 138 or newer on a computer)': 'เบราว์เซอร์นี้ไม่มีตัวแปลในตัว (ใช้ Chrome 138 ขึ้นไปบนคอมพิวเตอร์)',
+  'Click the button again: the browser only downloads the language pack right after a click': 'กดปุ่มอีกครั้ง: เบราว์เซอร์ดาวน์โหลดชุดภาษาได้เฉพาะทันทีหลังการคลิก',
+  'There is no English version of this report yet.': 'ยังไม่มีฉบับภาษาอังกฤษของเรื่องนี้',
+  'Write only what the report says.': 'เขียนเฉพาะสิ่งที่รายงานระบุไว้', 'Save English text': 'บันทึกข้อความอังกฤษ', 'English text saved': 'บันทึกข้อความอังกฤษแล้ว',
+  'Replace the text staff wrote?': 'แทนที่ข้อความที่พนักงานพิมพ์เอง?',
+  'Translating again overwrites the English text that staff typed. The original feedback is not changed.': 'การแปลใหม่จะเขียนทับข้อความอังกฤษที่พนักงานพิมพ์ไว้ ข้อความต้นฉบับไม่ถูกแก้ไข',
+  'English text copied to the clipboard': 'คัดลอกข้อความอังกฤษแล้ว',
+  'Copied the English text and {n} attachment link(s). Images are linked, not embedded.': 'คัดลอกข้อความอังกฤษและลิงก์ไฟล์แนบ {n} รายการแล้ว (รูปภาพเป็นลิงก์ ไม่ได้ฝังในข้อความ)',
 };

@@ -1,24 +1,27 @@
-// Screenshots + English context in the Feedback & Issue module, in a real Chrome against a FAKE backend (fakeBackend.ts + fakeFeedback.ts).
-// The fake mirrors the contracts that the SQL suites prove for real; THIS file proves the screens and the browser behaviour (real Ctrl+V, drag and
-// drop, thumbnails, previews, downloads, the clipboard text) and that the screens cope with a failing, missing or slow AI service.
+// Screenshots + the English version in the Feedback & Issue module, in a real Chrome against a FAKE backend (fakeBackend.ts + fakeFeedback.ts) and a FAKE
+// of Chrome's built-in Translator (the real language model cannot be downloaded in the test browser). The fake backend mirrors the contracts that the SQL
+// suites prove for real; THIS file proves the screens and the browser behaviour (real Ctrl+V, drag and drop, thumbnails, previews, downloads, the clipboard
+// text, translating on the computer) and that the screens cope with a missing, slow or failing translator. It does not prove the quality of real translations.
 import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { FakeShop } from './fakeBackend';
-import { FakeFeedback, PNG_1x1, type AiMode } from './fakeFeedback';
+import { FakeFeedback, PNG_1x1, installFakeTranslator, type FakeTranslatorOptions } from './fakeFeedback';
 
 test.use({ viewport: { width: 1440, height: 900 }, locale: 'en-US' });
 
-async function boot(page: Page, o: { role?: string; lang?: 'en' | 'th'; path?: string; ai?: AiMode } = {}) {
+async function boot(page: Page, o: { role?: string; lang?: 'en' | 'th'; path?: string; translator?: FakeTranslatorOptions } = {}) {
   const shop = new FakeShop();
   shop.profile.role = o.role ?? 'SUPER_ADMIN'; shop.profile.display_name = 'Staff';
-  const fb = new FakeFeedback(shop); fb.ai = o.ai ?? 'ok';
+  const fb = new FakeFeedback(shop);
   await shop.install(page); await fb.install(page);
+  await installFakeTranslator(page, o.translator ?? { state: null });
   await page.addInitScript((l) => { try { localStorage.setItem('bizops.lang', l); } catch { /* ignore */ } }, o.lang ?? 'en');
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`/#${o.path ?? '/'}`);
   return { shop, fb, errors };
 }
+const tr = (page: Page) => page.evaluate(() => (window as unknown as { __tr: { state: string; creates: number; calls: string[]; downloads: number } }).__tr);
 const grantClipboard = (page: Page) => page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:4179' });
 
 async function openWidget(page: Page) {
@@ -63,50 +66,62 @@ async function submitForm(page: Page, description: string, subject = '') {
 }
 
 test.describe('submitting', () => {
-  test('Thai: the form is fully Thai, the Thai text is saved exactly, the English version is asked for AFTER saving and never delays the submit', async ({ page }) => {
-    const { fb } = await boot(page, { lang: 'th' });
-    fb.aiDelayMs = 2500;                                                  // a slow AI service must not hold the form
+  test('Thai: the form is fully Thai, the Thai text is saved exactly, and the English version follows without ever delaying the submit', async ({ page }) => {
+    const { fb } = await boot(page, { lang: 'th', translator: { state: 'available', delayMs: 1200 } });   // a slow translator must not hold the form
     const modal = await openWidget(page);
-    // the three texts that were still English in the reported screenshot
+    // the texts that were still English in the reported screenshot
     await expect(modal.getByText('มีปัญหา ไอเดีย หรือฟีเจอร์เพิ่มเติมอะไรที่คุณต้องการเห็นในหน้านี้?')).toBeVisible();
     await expect(modal.getByPlaceholder('อธิบายสิ่งที่พบหรือสิ่งที่อยากให้เปลี่ยน…')).toBeVisible();
     await expect(modal.getByText('วางภาพหน้าจอได้ทันทีด้วย Ctrl+V หรือลากรูปภาพมาวางที่นี่')).toBeVisible();
     await expect(modal.getByText(/What's the issue|Describe what you noticed|Paste your screenshot/)).toHaveCount(0);
     const text = 'ที่หน้า สินค้า กดบันทึก SKU FG-000001 แล้วขึ้น error "permission denied for table sku_registry"\nบรรทัดที่สอง   มีช่องว่างหลายตัว';
     await submitForm(page, text, 'ปุ่มบันทึกกดไม่ได้');
-    await expect(modal).toBeHidden({ timeout: 1500 });                    // closed long before the 2.5 s AI call can finish
+    await expect(modal).toBeHidden({ timeout: 1000 });                    // closed before the first of the 3 slow translate calls can finish
     expect(fb.issues).toHaveLength(1);
     expect(fb.issues[0].description).toBe(text);                          // byte for byte
     expect(fb.issues[0].title).toBe('ปุ่มบันทึกกดไม่ได้');
-    await expect.poll(() => fb.functionCalls.length).toBe(1);
-    expect(fb.functionCalls[0]).toMatchObject({ issue_id: fb.issues[0].id, authorised: true });
-    await expect.poll(() => fb.issues[0].english_context_status, { timeout: 8000 }).toBe('completed');
-    expect(fb.issues[0].description).toBe(text);                          // still untouched after the generation
-    expect(fb.issues[0].english_context).toContain('FG-000001');
+    await expect.poll(() => fb.issues[0].english_context_source, { timeout: 10000 }).toBe('translation');
+    expect(fb.issues[0].english_context).toBe('Title: The Save button cannot be pressed\n\nOn the Products page, pressing Save SKU FG-000001 then shows an error "permission denied for table sku_registry"\nSecond line with several spaces');
+    expect(fb.issues[0].description).toBe(text);                          // still untouched after the translation
+    expect(fb.rpcCalls.find((c) => c.fn === 'feedback_set_english_context')!.args).toMatchObject({ p_issue: fb.issues[0].id, p_source: 'translation' });
   });
 
-  test('English: saved as typed and structured in the nine sections', async ({ page }) => {
-    const { fb } = await boot(page);
+  test('English: nothing needs translating, the English version is the same text, and the translator is not even asked', async ({ page }) => {
+    const { fb } = await boot(page, { translator: { state: 'available' } });
     await openWidget(page);
     const text = 'The Save button on Products does nothing after I edit SKU FG-000002.';
     await submitForm(page, text);
-    await expect.poll(() => fb.issues[0]?.english_context_status).toBe('completed');
+    await expect.poll(() => fb.issues[0]?.english_context_source).toBe('translation');
     expect(fb.issues[0].description).toBe(text);
-    expect((fb.issues[0].english_context ?? '').match(/^## /gm)).toHaveLength(9);
+    expect(fb.issues[0].english_context).toBe(`Title: ${fb.issues[0].title}\n\n${text}`);
+    expect((await tr(page)).calls).toEqual([]);
   });
 
-  for (const ai of ['not_deployed', 'not_configured', 'fail'] as const) {
-    test(`AI service "${ai}": the submission is never blocked, the issue is saved, the failure is recorded for staff`, async ({ page }) => {
-      const { fb } = await boot(page, { ai });
+  test('the Thai language pack is not installed yet: the submit works, nothing is translated by itself (it needs a click in the issue screen)', async ({ page }) => {
+    const { fb } = await boot(page, { translator: { state: 'downloadable' } });
+    await openWidget(page);
+    await submitForm(page, 'ปุ่มบันทึกกดไม่ได้');
+    await expect(page.locator('.modal')).toBeHidden();
+    await expect(page.getByText(/your feedback was recorded/i).first()).toBeVisible();
+    await page.waitForTimeout(800);
+    expect(fb.issues).toHaveLength(1);
+    expect(fb.issues[0].english_context ?? null).toBeNull();
+    expect(fb.count('feedback_set_english_context')).toBe(0);
+    expect((await tr(page)).creates).toBe(0);                              // no download was started behind the person's back
+  });
+
+  for (const [name, translator] of [['this browser has no translator', { state: null }], ['the translator is unavailable', { state: 'unavailable' }], ['the translator crashes', { state: 'available', failTimes: 5 }]] as const) {
+    test(`${name}: the submission is never blocked and nothing wrong is saved`, async ({ page }) => {
+      const { fb, errors } = await boot(page, { translator });
       await openWidget(page);
-      await submitForm(page, `Problem while the AI is ${ai}`);
+      await submitForm(page, 'ปุ่มบันทึกกดไม่ได้');
       await expect(page.locator('.modal')).toBeHidden();
       await expect(page.getByText(/your feedback was recorded/i).first()).toBeVisible();
+      await page.waitForTimeout(600);
       expect(fb.issues).toHaveLength(1);
-      expect(fb.issues[0].description).toBe(`Problem while the AI is ${ai}`);
-      await expect.poll(() => fb.functionCalls.length).toBe(1);
+      expect(fb.issues[0].description).toBe('ปุ่มบันทึกกดไม่ได้');
       expect(fb.issues[0].english_context ?? null).toBeNull();
-      expect(fb.issues[0].english_context_status).toBe(ai === 'not_deployed' ? 'pending' : 'failed');   // not installed: the database never heard of it
+      expect(errors).toEqual([]);
     });
   }
 });
@@ -254,7 +269,6 @@ test.describe('screenshots: Ctrl+V, drag and drop, browse', () => {
     const { fb } = await boot(page);
     const modal = await openWidget(page);
     await modal.getByTestId('attachment-input').setInputFiles([png('a.png')]);
-    fb.files.clear();
     await page.route('**/storage/v1/object/feedback-attachments/**', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"boom"}' }));
     await submitForm(page, 'Upload will fail');
     await expect(page.getByText(/Some files could not be uploaded: a\.png/)).toBeVisible();
@@ -263,14 +277,16 @@ test.describe('screenshots: Ctrl+V, drag and drop, browse', () => {
   });
 });
 
-test.describe('issue detail: original / English context / evidence', () => {
-  async function seeded(page: Page, o: { ai?: AiMode; legacy?: boolean; completed?: boolean } = {}) {
-    const ctx = await boot(page, { path: '/feedback', ai: o.ai });
+const ENGLISH = 'Title: Save button\n\nPressing Save does nothing for FG-000001';
+
+test.describe('issue detail: original / English version / evidence', () => {
+  async function seeded(page: Page, o: { translator?: FakeTranslatorOptions; legacy?: boolean; english?: boolean | 'manual' } = {}) {
+    const ctx = await boot(page, { path: '/feedback', translator: o.translator });
     const { fb } = ctx;
     const issue = fb.seedLegacy({ title: 'ปุ่มบันทึกกดไม่ได้', description: 'ที่หน้า สินค้า กดบันทึก SKU FG-000001 แล้วขึ้น error "permission denied"', source: 'customer', app_id: 'line-liff', submitter_label: 'Somchai' });
     if (!o.legacy) Object.assign(issue, { english_context: null, english_context_status: 'pending', english_context_error: null, english_context_at: null, english_context_source: null, english_context_model: null, english_context_attempts: 0, english_context_started_at: null });
     fb.seedAttachment(issue.id, 'screenshot-1.png'); fb.seedAttachment(issue.id, 'screenshot-2.png');
-    if (o.completed) await fb.generate(issue.id, true);
+    if (o.english) fb.seedEnglish(issue.id, ENGLISH, o.english === 'manual' ? 'manual' : 'translation');
     await page.reload();
     await page.getByRole('row', { name: /ปุ่มบันทึกกดไม่ได้/ }).click();
     const drawer = page.locator('aside.drawer');
@@ -278,23 +294,20 @@ test.describe('issue detail: original / English context / evidence', () => {
     return { ...ctx, issue, drawer };
   }
 
-  test('reopening an issue shows A) the original, B) the English context, C) the evidence, in that order', async ({ page }) => {
-    const { drawer, fb, issue } = await seeded(page, { completed: true });
+  test('reopening an issue shows A) the original, B) the English version, C) the evidence, in that order', async ({ page }) => {
+    const { drawer, fb, issue } = await seeded(page, { english: true });
     const titles = await drawer.locator('.card-h h2').allInnerTexts();
-    const order = ['Original feedback', 'English technical context', 'Evidence & attachments'].map((t) => titles.findIndex((x) => x.includes(t)));
+    const order = ['Original feedback', 'English version', 'Evidence & attachments'].map((t) => titles.findIndex((x) => x.includes(t)));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);               // A before B before C
     // A: exactly as written + language, reporter, date
     await expect(drawer.getByTestId('original-description')).toHaveText('ที่หน้า สินค้า กดบันทึก SKU FG-000001 แล้วขึ้น error "permission denied"');
     await expect(drawer.getByText('Original language')).toBeVisible();
     await expect(drawer.getByText('Somchai (Customer)').first()).toBeVisible();
-    // B: nine sections from the AI, marked as generated
+    // B: the saved English text, marked as a translation made on a computer
     await expect(drawer.getByTestId('ctx-status')).toHaveAttribute('data-status', 'completed');
-    for (const s of ['Issue Title', 'Background', 'Problem Description', 'Expected Behavior', 'Actual Behavior', 'Impact', 'Technical Evidence', 'Implementation Requirements', 'Acceptance Criteria']) {
-      await expect(drawer.getByTestId('ctx-text').getByText(s, { exact: true })).toBeVisible();
-    }
-    await expect(drawer.getByTestId('ctx-text')).toContainText('Generated by AI · fake-model');
-    await expect(drawer.getByTestId('ctx-text')).toContainText('FG-000001');
+    await expect(drawer.getByTestId('ctx-text')).toContainText('Translated on this computer');
+    await expect(drawer.getByTestId('ctx-text')).toContainText('Pressing Save does nothing for FG-000001');
     // C: both screenshots with name, size, upload date, Preview and Download
     const items = drawer.getByTestId('attachment-item');
     await expect(items).toHaveCount(2);
@@ -313,7 +326,7 @@ test.describe('issue detail: original / English context / evidence', () => {
   });
 
   test('Preview opens the picture full size (Esc closes only it) and Download saves it under its own name', async ({ page }) => {
-    const { drawer } = await seeded(page, { completed: true });
+    const { drawer } = await seeded(page, { english: true });
     const first = drawer.getByTestId('attachment-item').first();
     await first.getByRole('button', { name: /Preview$/ }).click();
     const box = page.getByTestId('image-lightbox');
@@ -326,82 +339,108 @@ test.describe('issue detail: original / English context / evidence', () => {
     expect(download.suggestedFilename()).toBe('screenshot-1.png');
   });
 
-  test('an old issue (no English-context columns) opens normally, says it is not generated yet, and can be generated', async ({ page }) => {
-    const { drawer, fb, issue, errors } = await seeded(page, { legacy: true });
+  test('an old issue (no English-version columns at all) opens normally; the Thai pack must be downloaded: one click shows the progress, translates and saves', async ({ page }) => {
+    const { drawer, fb, issue, errors } = await seeded(page, { legacy: true, translator: { state: 'downloadable' } });
     await expect(drawer.getByTestId('ctx-status')).toHaveAttribute('data-status', 'pending');
     await expect(drawer.getByTestId('ctx-pending')).toBeVisible();
+    await expect(drawer.getByText('Nothing is sent to any server')).toBeVisible();
     await expect(drawer.getByTestId('ctx-copy')).toBeDisabled();           // nothing to copy yet
     await expect(drawer.getByTestId('ctx-copy-files')).toBeDisabled();
     await expect(drawer.getByTestId('original-description')).toContainText('SKU FG-000001');
-    await drawer.getByTestId('ctx-regenerate').click();                    // "Generate"
+    expect((await tr(page)).creates).toBe(0);                              // opening the issue downloaded nothing
+    await drawer.getByTestId('ctx-translate').click();
+    await expect(drawer.getByTestId('ctx-working')).toContainText('Downloading the Thai language pack to this computer');
     await expect(drawer.getByTestId('ctx-status')).toHaveAttribute('data-status', 'completed');
-    await expect(drawer.getByTestId('ctx-text')).toContainText('screenshot-1.png, screenshot-2.png');   // evidence names, as listed (not analysed)
-    expect(fb.issue(issue.id)!.english_context_source).toBe('ai');
+    await expect(drawer.getByTestId('ctx-text')).toContainText('Title: The Save button cannot be pressed');
+    await expect(drawer.getByTestId('ctx-text')).toContainText('On the Products page, pressing Save SKU FG-000001 then shows an error "permission denied"');
+    expect(fb.issue(issue.id)!.english_context_source).toBe('translation');
+    expect(fb.issue(issue.id)!.description).toBe('ที่หน้า สินค้า กดบันทึก SKU FG-000001 แล้วขึ้น error "permission denied"');   // the original is untouched
+    expect((await tr(page)).downloads).toBe(1);
+    await expect(drawer.getByTestId('ctx-copy')).toBeEnabled();
     expect(errors).toEqual([]);
   });
 
-  test('a failed generation shows the reason and keeps working: Retry succeeds, and a failure after a success keeps the earlier text', async ({ page }) => {
-    const { drawer, fb, issue } = await seeded(page, { ai: 'fail' });
-    await drawer.getByTestId('ctx-regenerate').click();
-    await expect(drawer.getByTestId('ctx-status')).toHaveAttribute('data-status', 'failed');
-    await expect(drawer.getByTestId('ctx-error')).toContainText('AI_HTTP_500');
-    await expect(drawer.getByTestId('ctx-regenerate')).toHaveText(/Retry/);
-    fb.ai = 'ok';
-    await drawer.getByTestId('ctx-regenerate').click();
+  test('when the Thai pack is already installed, an untranslated issue is translated as soon as staff open it, once', async ({ page }) => {
+    const { drawer, fb, issue } = await seeded(page, { translator: { state: 'available' } });
     await expect(drawer.getByTestId('ctx-status')).toHaveAttribute('data-status', 'completed');
-    const first = fb.issue(issue.id)!.english_context;
-    expect(first).toBeTruthy();
-    fb.ai = 'fail';
-    await drawer.getByTestId('ctx-regenerate').click();                    // "Regenerate" fails: the text that was there stays
-    await expect(drawer.getByTestId('ctx-status')).toHaveAttribute('data-status', 'failed');
-    await expect(drawer.getByTestId('ctx-text')).toContainText('Report FB-');
-    expect(fb.issue(issue.id)!.english_context).toBe(first);
-    await expect(drawer.getByTestId('ctx-copy')).toBeEnabled();            // the old text can still be copied
+    await expect(drawer.getByTestId('ctx-text')).toContainText('Translated on this computer');
+    expect(fb.issue(issue.id)!.english_context_source).toBe('translation');
+    expect(fb.count('feedback_set_english_context')).toBe(1);
+    await page.keyboard.press('Escape');                                   // close and open it again: nothing is translated twice
+    await page.getByRole('row', { name: /ปุ่มบันทึกกดไม่ได้/ }).click();
+    await expect(page.locator('aside.drawer').getByTestId('ctx-status')).toHaveAttribute('data-status', 'completed');
+    await page.waitForTimeout(500);
+    expect(fb.count('feedback_set_english_context')).toBe(1);
   });
 
-  test('service not installed / no key: a clear message, and staff can write the English text by hand instead', async ({ page }) => {
-    const { drawer, fb, issue } = await seeded(page, { ai: 'not_deployed' });
-    await drawer.getByTestId('ctx-regenerate').click();
-    await expect(drawer.getByTestId('ctx-error')).toContainText('not set up or cannot be reached');
-    await expect(drawer.getByTestId('ctx-error')).toContainText('AI_NOT_DEPLOYED');
+  test('a failed translation shows the reason, does not retry in a loop, and clicking again works', async ({ page }) => {
+    const { drawer, fb, issue } = await seeded(page, { translator: { state: 'available', failTimes: 1 } });
+    await expect(drawer.getByTestId('ctx-status')).toHaveAttribute('data-status', 'failed');
+    await expect(drawer.getByTestId('ctx-error')).toContainText('the translator crashed');
+    await page.waitForTimeout(1200);
+    expect((await tr(page)).calls).toHaveLength(1);                        // one attempt only: no loop
+    expect(fb.issue(issue.id)!.english_context ?? null).toBeNull();        // nothing half-saved
+    await drawer.getByTestId('ctx-translate').click();
+    await expect(drawer.getByTestId('ctx-status')).toHaveAttribute('data-status', 'completed');
+    expect(fb.issue(issue.id)!.english_context_source).toBe('translation');
+  });
+
+  test('a browser without the translator: a clear message, a Google Translate link, and the English text can be written by hand', async ({ page }) => {
+    const { drawer, fb, issue } = await seeded(page, { translator: { state: null } });
+    await expect(drawer.getByTestId('ctx-unsupported')).toContainText('cannot translate on the computer');
+    await expect(drawer.getByTestId('ctx-translate')).toHaveCount(0);      // no button that cannot work
+    const href = await drawer.getByTestId('ctx-google').getAttribute('href');
+    expect(href).toMatch(/^https:\/\/translate\.google\.com\/\?sl=th&tl=en&op=translate&text=/);
+    expect(decodeURIComponent(href!.split('text=')[1])).toContain('ปุ่มบันทึกกดไม่ได้');
+    await expect(drawer.getByTestId('ctx-google')).toHaveAttribute('target', '_blank');
+    await expect(drawer.getByTestId('ctx-google')).toHaveAttribute('rel', /noopener/);
     await drawer.getByTestId('ctx-edit').click();
-    const editor = drawer.getByTestId('ctx-editor');
-    await expect(editor).toHaveValue(/## Issue Title\nNot provided[\s\S]*## Acceptance Criteria\nNot provided/);   // a template with all nine sections
-    await editor.fill('## Issue Title\nSave button does nothing\n\n## Problem Description\nWritten by staff');
+    await expect(drawer.getByTestId('ctx-editor')).toHaveValue('');
+    await drawer.getByTestId('ctx-editor').fill('Title: Save button does nothing\n\nWritten by staff');
     await drawer.getByTestId('ctx-save').click();
     await expect(drawer.getByTestId('ctx-status')).toHaveAttribute('data-status', 'completed');
     await expect(drawer.getByTestId('ctx-text')).toContainText('Written by hand');
     expect(fb.issue(issue.id)!.english_context_source).toBe('manual');
-    // regenerating would overwrite staff's text: it asks first, and Cancel keeps it
-    fb.ai = 'ok';
-    await drawer.getByTestId('ctx-regenerate').click();
+    expect(fb.rpcCalls.find((c) => c.fn === 'feedback_set_english_context')!.args).not.toHaveProperty('p_source');   // a hand-written text sends no source
+  });
+
+  test('translating again over text staff typed asks first; Cancel keeps it, Translate again replaces it', async ({ page }) => {
+    const { drawer, fb, issue } = await seeded(page, { english: 'manual', translator: { state: 'available' } });
+    await expect(drawer.getByTestId('ctx-text')).toContainText('Written by hand');
+    await expect(drawer.getByTestId('ctx-status')).toHaveAttribute('data-status', 'completed');   // an issue that has text is not auto-translated
+    expect((await tr(page)).calls).toEqual([]);
+    await drawer.getByTestId('ctx-translate').click();
     const dlg = page.locator('.modal');
-    await expect(dlg).toContainText('Replace the hand-written English text?');
+    await expect(dlg).toContainText('Replace the text staff wrote?');
     await dlg.getByRole('button', { name: 'Cancel' }).click();
     expect(fb.issue(issue.id)!.english_context_source).toBe('manual');
-    expect(fb.functionCalls.filter((c) => c.status === 200)).toHaveLength(0);
+    expect((await tr(page)).calls).toEqual([]);
+    await drawer.getByTestId('ctx-translate').click();
+    await page.locator('.modal').getByRole('button', { name: 'Translate again' }).click();
+    await expect.poll(() => fb.issue(issue.id)!.english_context_source).toBe('translation');
+    expect(fb.issue(issue.id)!.english_context).toContain('Title: The Save button cannot be pressed');
   });
 
   test('Copy English Context and Copy Context + Attachments put the right text on the clipboard, and it pastes back unchanged', async ({ page }) => {
-    const { drawer, fb, issue } = await seeded(page, { completed: true });
+    const { drawer, fb, issue } = await seeded(page, { english: true });
     await grantClipboard(page);
     await drawer.getByTestId('ctx-copy').click();
-    await expect(page.getByText('English context copied to the clipboard')).toBeVisible();
+    await expect(page.getByText('English text copied to the clipboard')).toBeVisible();
     const plain = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n');   // the Windows clipboard stores line breaks as CR LF
-    expect(plain).toBe(fb.issue(issue.id)!.english_context!.trim());
-    expect(plain.match(/^## /gm)).toHaveLength(9);
+    expect(plain).toBe(ENGLISH);
 
     fb.signed.length = 0;
     await drawer.getByTestId('ctx-copy-files').click();
-    await expect(page.getByText(/Copied the English context and 2 attachment link\(s\)/)).toBeVisible();
+    await expect(page.getByText(/Copied the English text and 2 attachment link\(s\)/)).toBeVisible();
     const withFiles = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n');
-    expect(withFiles.startsWith(plain)).toBe(true);                         // the context first, unchanged
+    expect(withFiles.startsWith(plain)).toBe(true);                         // the English text first, unchanged
     expect(withFiles).toContain('## Attachments (2)');
     expect(withFiles).toMatch(/1\. screenshot-1\.png \(image\/png, \d+ KB, uploaded \d{4}-\d{2}-\d{2}\) - https:\/\/hlvravynjalculvplrxc\.supabase\.co\/storage\/v1\/object\/sign\/feedback-attachments\/FB-/);
     expect(withFiles).toMatch(/2\. screenshot-2\.png/);
     expect(withFiles).toMatch(/They are NOT embedded in this text/);      // honest: links, not embedded images
     expect(withFiles).toMatch(/stop working after \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/);
     expect(fb.signed.filter((s) => s.expiresIn === 86400)).toHaveLength(2);   // 24 hours, for exactly the two files
+    expect(issue.id).toMatch(/^FB-/);
 
     // paste it somewhere else (the internal-note box stands in for Claude Code)
     await drawer.getByRole('tab', { name: /^Internal notes/ }).click();
@@ -412,21 +451,22 @@ test.describe('issue detail: original / English context / evidence', () => {
   });
 
   test('when the browser blocks the clipboard the text is shown so it can be copied by hand', async ({ page }) => {
-    const { drawer } = await seeded(page, { completed: true });
+    const { drawer } = await seeded(page, { english: true });
     await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('denied')) } }); document.execCommand = () => false; });
     await drawer.getByTestId('ctx-copy').click();
     await expect(page.getByText(/Could not copy automatically/)).toBeVisible();
-    await expect(drawer.getByTestId('ctx-manual-copy')).toHaveValue(/## Issue Title/);
+    await expect(drawer.getByTestId('ctx-manual-copy')).toHaveValue(/Title: Save button/);
   });
 
-  test('Thai staff see the new sections in Thai', async ({ page }) => {
-    const ctx = await boot(page, { path: '/feedback', lang: 'th' });
+  test('Thai staff see the English-version section in Thai', async ({ page }) => {
+    const ctx = await boot(page, { path: '/feedback', lang: 'th', translator: { state: 'downloadable' } });
     const issue = ctx.fb.seedLegacy({ title: 'ปุ่มบันทึกกดไม่ได้' });
-    await ctx.fb.generate(issue.id, true);
+    ctx.fb.seedEnglish(issue.id, ENGLISH);
     await page.reload();
     await page.getByRole('row', { name: /ปุ่มบันทึกกดไม่ได้/ }).click();
     const drawer = page.locator('aside.drawer');
-    for (const th of ['ข้อความต้นฉบับ', 'บริบททางเทคนิคภาษาอังกฤษ', 'หลักฐานและไฟล์แนบ', 'คัดลอกบริบทภาษาอังกฤษ', 'คัดลอกบริบท + ไฟล์แนบ', 'สร้างใหม่']) await expect(drawer).toContainText(th);
+    for (const th of ['ข้อความต้นฉบับ', 'ฉบับภาษาอังกฤษ', 'หลักฐานและไฟล์แนบ', 'คัดลอกบริบทภาษาอังกฤษ', 'คัดลอกบริบท + ไฟล์แนบ', 'แปลอีกครั้ง', 'แปลบนเครื่องนี้']) await expect(drawer).toContainText(th);
+    await expect(drawer).not.toContainText('Translate again');
   });
 });
 
@@ -438,7 +478,7 @@ test.describe('accessibility and layout', () => {
   };
   for (const lang of ['en', 'th'] as const) {
     test(`axe: the feedback form with pictures attached and the issue detail have no critical or serious violations (${lang})`, async ({ page }) => {
-      const { fb } = await boot(page, { lang, path: '/' });
+      const { fb } = await boot(page, { lang, path: '/', translator: { state: 'downloadable' } });
       const modal = await openWidget(page);
       await modal.getByTestId('attachment-input').setInputFiles([png('a.png'), png('b.png')]);
       await expect(thumbs(page)).toHaveCount(2);
@@ -447,7 +487,7 @@ test.describe('accessibility and layout', () => {
       await serious(page, '[data-testid="image-lightbox"]', 'preview');
       await page.keyboard.press('Escape');
       await page.keyboard.press('Escape');
-      const issue = fb.seedLegacy({ title: 'Axe issue' }); fb.seedAttachment(issue.id, 'one.png'); await fb.generate(issue.id, true);
+      const issue = fb.seedLegacy({ title: 'Axe issue' }); fb.seedAttachment(issue.id, 'one.png'); fb.seedEnglish(issue.id, ENGLISH);
       await page.goto('/#/feedback'); await page.reload();
       await page.getByRole('row', { name: /Axe issue/ }).click();
       await expect(page.locator('aside.drawer').getByTestId('attachment-item')).toHaveCount(1);
@@ -474,16 +514,11 @@ test.describe('who can see and do what', () => {
     await expect(page.getByText('Somebody else problem')).toHaveCount(0);
     await expect(page.getByTestId('ctx-status')).toHaveCount(0);
   });
-  test('the English-context actions are not offered to a non-staff user, and the server refuses them (fake of the SQL contract)', async ({ page }) => {
+  test('only staff can save the English text, and only as a hand-written text or a translation (fake of the SQL contract)', async ({ page }) => {
     const { fb } = await boot(page, { role: 'USER', path: '/' });
-    const other = fb.seedLegacy({ reporter_id: '33333333-3333-4333-8333-333333333333' });
-    const own = fb.seedLegacy({ reporter_id: '11111111-1111-4111-8111-111111111111' });
-    // calling the function for somebody else's issue: not found; own issue: allowed
-    expect((await fb.generate(other.id, true)).status).toBe(404);
-    expect((await fb.generate(own.id, true)).status).toBe(200);
-    expect((await fb.generate(own.id, false)).status).toBe(401);
-    // a customer cannot write the text by hand
-    await expect(page.evaluate(async () => { const r = await fetch('https://hlvravynjalculvplrxc.supabase.co/rest/v1/rpc/feedback_set_english_context', { method: 'POST', body: JSON.stringify({ p_issue: 'x', p_context: 'y' }) }); return (await r.json()).message; }))
-      .resolves.toBe('Only support staff can change the English context');
+    const call = (args: Record<string, unknown>) => page.evaluate(async (a) => { const r = await fetch('https://hlvravynjalculvplrxc.supabase.co/rest/v1/rpc/feedback_set_english_context', { method: 'POST', body: JSON.stringify(a) }); return (await r.json()).message as string; }, args);
+    expect(await call({ p_issue: 'x', p_context: 'y' })).toBe('Only support staff can change the English context');
+    expect(await call({ p_issue: 'x', p_context: 'y', p_source: 'translation' })).toBe('Only support staff can change the English context');
+    expect(fb.issues).toHaveLength(0);
   });
 });
