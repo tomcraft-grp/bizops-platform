@@ -22,6 +22,22 @@ do $guard$ begin
     raise exception 'Cash receipts are queued for the ledger: they cannot be rolled back.'; end if;
 end $guard$;
 
+-- ================================================================================================= 2 analysis (undo)
+-- the queue trigger first (it writes to the analysis table that section 1c drops below), then the functions, callers before the helpers they use.
+-- No data lives in these objects (the guard above has already refused if any analysis row exists), so nothing is lost.
+drop trigger if exists finance_evidence_queue_analysis on public.finance_payment_evidence;
+drop function if exists public.finance_evidence_queue_analysis();
+drop function if exists public.finance_request_analysis(uuid);
+drop function if exists public.finance_analysis_fail(uuid, text, text);
+drop function if exists public.finance_analysis_complete(uuid, jsonb, jsonb, numeric, jsonb, text, text);
+drop function if exists public.finance_analysis_begin(uuid, uuid, uuid);
+drop function if exists public.finance_classify_slip(uuid, jsonb, jsonb, numeric, jsonb);
+drop function if exists public.finance_slip_receivers();
+drop function if exists public.finance_slip_reason(text, text, text, jsonb, jsonb, text);
+drop function if exists public.finance_slip_name(text);
+drop function if exists public.finance_slip_ref(text);
+drop function if exists public.finance_can_as(uuid, text);
+
 -- ================================================================================================= 1 schema (undo)
 -- 1d ledger queue: the event types as they were (the original check had the generated name finance_gl_queue_event_type_check)
 alter table public.finance_gl_queue drop constraint if exists finance_gl_queue_event_type_chk;
