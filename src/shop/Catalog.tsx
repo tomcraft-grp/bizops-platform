@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { PackageSearch, Search, X } from 'lucide-react';
 import { Banner, Empty } from '../ui/kit';
 import { cx } from '../lib/util';
-import { CatalogPage, ShopItem, SortKey, shop } from './api';
+import { CatalogPage, NO_BRAND, ShopItem, SortKey, shop } from './api';
 import { EMPTY_FILTER, useShopNav } from './nav';
 import { useDebounced, useSettings } from './hooks';
 import { useShopLang, useT } from './i18n';
@@ -48,6 +48,7 @@ function CatalogList({ onOpen, preview }: { onOpen: (sku: string) => void; previ
   const label = useCategoryLabel(facets);
   const { items, total, loading, error, loadMore, reload } = useCatalog(filter);
   const filtered = !!(filter.q || filter.category || filter.brand);
+  const noBrand = facets?.no_brand_count ?? 0;      // 0 on a database without the "no brand" filter: the choice is not offered
   const closed = settings && !settings.shop_open;
 
   return (
@@ -65,10 +66,12 @@ function CatalogList({ onOpen, preview }: { onOpen: (sku: string) => void; previ
         </div>
       )}
       <div className="sp-filters">
-        {facets && facets.brands.length > 1 && (
+        {facets && (facets.brands.length > 1 || (noBrand > 0 && facets.brands.length > 0)) && (
           <select aria-label={t('cat.brand')} value={filter.brand} onChange={(e) => setFilter({ brand: e.target.value })}>
             <option value="">{t('cat.allBrands')}</option>
             {facets.brands.map((b) => <option key={b.brand} value={b.brand}>{b.brand} ({b.count})</option>)}
+            {/* products with no brand (e.g. the kratom drinks) could never be found through this list before (FB-001018) */}
+            {noBrand > 0 && <option value={NO_BRAND}>{t('cat.noBrand')} ({noBrand})</option>}
           </select>
         )}
         <select aria-label={t('cat.sort')} value={filter.sort} onChange={(e) => setFilter({ sort: e.target.value as SortKey })}>

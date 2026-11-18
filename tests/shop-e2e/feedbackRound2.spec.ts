@@ -98,6 +98,42 @@ test.describe('online shop orders on the Orders page (FB-001013)', () => {
   });
 });
 
+test.describe('brand filter: products with no brand (FB-001018)', () => {
+  const cards = (page: Page) => page.locator('.sp-card[data-sku]');
+  test('"No brand" is offered, with its count, and lists exactly the products that have no brand', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate();
+    const none = fake.items.filter((i) => !i.brand);
+    expect(none.length).toBeGreaterThan(0);                                              // the fixture, like the real shop, has products without a brand
+    await open(page, fake);
+    await tab(page, t('nav.shop')).click();
+    const brand = page.getByLabel(t('cat.brand'), { exact: true });          // exact: the search box's label also contains the word "brand"
+    await expect(brand.locator('option')).toContainText([t('cat.allBrands')]);
+    const choice = `${t('cat.noBrand')} (${none.length})`;
+    await expect(brand.locator('option', { hasText: t('cat.noBrand') })).toHaveText(choice);
+    await brand.selectOption({ label: choice });
+    await expect(cards(page)).toHaveCount(none.length);
+    const skus = await cards(page).evaluateAll((els) => els.map((e) => e.getAttribute('data-sku')));
+    expect(skus.sort()).toEqual(none.map((i) => i.sku_code).sort());
+    expect(fake.calls.filter((c) => c.fn === 'shop_catalog').pop()!.args.p_brand).toBe('__none__');
+    // a named brand still works, and "all brands" brings everything back
+    const relx = fake.items.filter((i) => i.brand === 'RELX').length;
+    await brand.selectOption({ label: `RELX (${relx})` });
+    await expect(cards(page)).toHaveCount(relx);
+    await brand.selectOption({ label: t('cat.allBrands') });
+    await expect(cards(page).first()).toBeVisible();
+    await page.screenshot({ path: `${process.env.SHOP_SHOTS ?? 'test-results/shop'}/brand-no-brand.png` });
+  });
+  test('a database without the migration offers no such choice, and nothing breaks', async ({ page }) => {
+    const old = new FakeShop(); old.decorate(); old.noBrandFilter = false;
+    await open(page, old);
+    await tab(page, t('nav.shop')).click();
+    const brand = page.getByLabel(t('cat.brand'), { exact: true });
+    await expect(brand).toBeVisible();                                                    // the named brands are still there
+    await expect(brand.locator('option', { hasText: t('cat.noBrand') })).toHaveCount(0);
+    await expect(cards(page).first()).toBeVisible();
+  });
+});
+
 test.describe('a stalled connection (FB-001019)', () => {
   test('a price check that never answers ends in a "try again" button, and the checkout works after it', async ({ page }) => {
     test.setTimeout(90_000);
