@@ -89,6 +89,8 @@ const D = {
   'od.title': ['รายละเอียดคำสั่งซื้อ', 'Order details'], 'od.progress': ['ความคืบหน้าของคำสั่งซื้อ', 'Order progress'], 'od.items': ['สินค้า', 'Items'], 'od.delivery': ['ข้อมูลการจัดส่ง', 'Delivery'],
   'od.pickup': ['รับสินค้าที่ร้าน', 'Pick up at the shop'], 'od.payment': ['การชำระเงิน', 'Payment'], 'od.shopNote': ['ข้อความจากร้าน', 'Message from the shop'], 'od.note': ['หมายเหตุของคุณ', 'Your note'],
   'od.cancel': ['ยกเลิกคำสั่งซื้อ', 'Cancel this order'], 'od.cancelTitle': ['ยกเลิกคำสั่งซื้อนี้?', 'Cancel this order?'],
+  'od.again': ['สั่งซื้อรายการนี้อีกครั้ง', 'Order these items again'], 'od.againDone': ['เพิ่มสินค้าลงตะกร้าแล้ว กรุณาตรวจสอบราคาและจำนวนก่อนสั่งซื้อ', 'Items added to your cart. Please check the prices and quantities before ordering.'],
+  'od.againNone': ['ไม่สามารถเพิ่มสินค้าลงตะกร้าได้ (ตะกร้าเต็ม)', 'The items could not be added (your cart is full).'],
   'od.cancelBody': ['หากคุณโอนเงินไปแล้ว กรุณาอย่ากดยกเลิก และติดต่อร้านแทน', 'If you have already paid, please do not cancel: contact the shop instead.'],
   'od.cancelled': ['ยกเลิกคำสั่งซื้อแล้ว', 'Order cancelled'], 'od.cancelReason': ['เหตุผลที่ยกเลิก', 'Why it was cancelled'], 'od.subtotal': ['ยอดสินค้า', 'Subtotal'],
   'od.refresh': ['รีเฟรชสถานะ', 'Refresh status'], 'od.notFound': ['ไม่พบคำสั่งซื้อนี้', 'This order was not found'], 'od.confirmYes': ['ยกเลิกคำสั่งซื้อ', 'Cancel order'],

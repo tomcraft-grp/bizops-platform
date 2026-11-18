@@ -27,6 +27,13 @@ export function useQuote(lines: CartLine[], fulfilment: Fulfilment) {
     return () => clearTimeout(h);
   }, [sig, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const refresh = useCallback(() => setTick((x) => x + 1), []);
+  // Coming back to the app (e.g. from the bank app after a transfer) on a phone often leaves the last price check half-finished: ask again, so the checkout
+  // button is never stuck on "checking…" (FB-001019).
+  useEffect(() => {
+    const back = () => { if (document.visibilityState === 'visible') setTick((x) => x + 1); };
+    document.addEventListener('visibilitychange', back);
+    return () => document.removeEventListener('visibilitychange', back);
+  }, []);
   return { ...st, refresh };
 }
 

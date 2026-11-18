@@ -21,6 +21,20 @@ export function addLine(lines: CartLine[], it: CartSource, qty = 1): CartLine[] 
   if (lines.length >= MAX_LINES) return lines;
   return [...lines, { sku: it.sku_code, qty: clampQty(qty, it.max_qty), name: it.name, price: it.price, image: it.image_url, max: it.max_qty }];
 }
+/**
+ * Put the items of an earlier order (e.g. one the shop cancelled) back into the cart: "order again" (FB-001002). The prices are only a display
+ * snapshot: the cart page re-quotes every line with the server, so an item that has since been hidden or repriced shows up there, never here.
+ * Returns how many order lines could be added (the cart holds at most MAX_LINES lines).
+ */
+export function addOrderItems(lines: CartLine[], items: Array<{ sku_code: string; name: string; unit_price: number; qty: number; image_url: string | null }>): { lines: CartLine[]; added: number } {
+  let next = lines; let added = 0;
+  for (const it of items) {
+    const before = next;
+    next = addLine(next, { sku_code: it.sku_code, name: it.name, price: it.unit_price, image_url: it.image_url, max_qty: null }, it.qty);
+    if (next !== before) added++;
+  }
+  return { lines: next, added };
+}
 /** Set a line's quantity; 0 (or less) removes it. */
 export function setLineQty(lines: CartLine[], sku: string, qty: number): CartLine[] {
   if (!(qty >= 1)) return lines.filter((l) => l.sku !== sku);
@@ -65,6 +79,8 @@ interface CartState {
   /** Load the cart of the signed-in user (call when the session is known). */
   hydrate: (uid: string | null) => void;
   add: (it: CartSource, qty?: number) => void;
+  /** Add the items of an earlier order; returns how many lines were added. */
+  reorder: (items: Parameters<typeof addOrderItems>[1]) => number;
   setQty: (sku: string, qty: number) => void;
   remove: (sku: string) => void;
   removeMany: (skus: string[]) => void;
@@ -76,6 +92,7 @@ export const useCart = create<CartState>((set, get) => {
     uid: null, lines: [],
     hydrate: (uid) => { if (get().uid === uid) return; set({ uid, lines: uid ? read(uid) : [] }); },
     add: (it, qty = 1) => commit(addLine(get().lines, it, qty)),
+    reorder: (items) => { const r = addOrderItems(get().lines, items); commit(r.lines); return r.added; },
     setQty: (sku, qty) => commit(setLineQty(get().lines, sku, qty)),
     remove: (sku) => commit(removeLine(get().lines, sku)),
     removeMany: (skus) => commit(get().lines.filter((l) => !skus.includes(l.sku))),

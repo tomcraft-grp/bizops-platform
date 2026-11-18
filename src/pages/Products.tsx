@@ -63,19 +63,11 @@ export default function Products() {
 }
 /** Status badge (always visible) + on/off switch (only for people who can edit the catalogue; others just see the badge). */
 function ProductStatus({ p }: { p: Product }) {
-  const lang = useLang();
   const run = useRun();
-  const confirm = useConfirm();
   const canEdit = useHas('catalog:edit');
-  const toggle = async (next: boolean) => {
-    if (!next) {
-      const x = await confirm({
-        title: tl(lang, 'Deactivate {name}?', { name: p.name }),
-        body: 'Hidden from POS, the LINE app and new orders and purchases. Past orders, stock movements and reports keep it, and you can reactivate it at any time.',
-        confirmLabel: 'Deactivate',
-      });
-      if (!x.ok) return;
-    }
+  // The switch takes effect at once (FB-001005): no confirmation dialog. It is fully reversible (nothing is deleted; past orders, stock and reports keep
+  // the product), and the toast says what happened, so a wrong tap is one tap to undo.
+  const toggle = (next: boolean) => {
     run((d, c) => setProductActive(d, c, p.id, next), { ok: next ? 'Product activated' : 'Product deactivated', perm: 'catalog:edit' });
   };
   return (
