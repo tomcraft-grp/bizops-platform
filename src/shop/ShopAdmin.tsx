@@ -18,6 +18,7 @@ const publicUrl = (path: string) => supabase.storage.from('shop-products').getPu
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const STATUSES: OrderStatus[] = ['new', 'confirmed', 'preparing', 'packed', 'ready', 'shipped', 'completed', 'cancelled', 'returned'];
 const TONE: Record<OrderStatus, 'good' | 'warn' | 'bad' | 'info' | ''> = { new: 'info', confirmed: 'info', preparing: 'info', packed: 'info', ready: 'good', shipped: 'good', completed: 'good', cancelled: '', returned: 'bad' };
+export const ORDER_TONE = TONE;   // the Orders page shows the same colours for the same statuses
 
 /** The moves the database allows (public.shop_admin_set_status); cancelling is separate. */
 const nextSteps = (o: Pick<AdminOrder, 'status' | 'fulfilment'>): OrderStatus[] => {

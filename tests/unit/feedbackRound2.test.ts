@@ -151,3 +151,22 @@ describe('product switch (FB-001005)', () => {
     expect(read('src/domain/master.ts')).toMatch(/audit\(d, ctx, 'product\.status'/);
   });
 });
+
+describe('online shop orders on the Orders page (FB-001013)', () => {
+  const card = read('src/shop/OnlineOrdersCard.tsx');
+  it('is mounted on the Orders page, and only reads', () => {
+    expect(read('src/pages/Orders.tsx')).toContain('<OnlineOrdersCard />');
+    for (const writer of ['setStatus', 'saveSettings', 'saveContent', 'cancelMyOrder', 'placeOrder']) expect(card, writer).not.toContain(writer);
+    expect(card).toContain('shopAdmin.orders({ limit: LATEST })');
+  });
+  it('is hidden in the demo business and for people who may not see the shop orders', () => {
+    expect(card).toContain('DEMO_SEED');
+    expect(card).toMatch(/e\.code === 'FORBIDDEN'\) setHidden\(true\)/);
+  });
+  it('every string it shows has a Thai translation in the dictionary the app really uses', async () => {
+    const { t: translate } = await import('../../src/lib/i18n');       // the merged dictionary (back office + shop + feedback)
+    const strings = [...card.matchAll(/T\('([^']+)'/g)].map((m) => m[1]);
+    expect(strings.length).toBeGreaterThan(8);
+    for (const s of strings) expect(translate('th', s), s).not.toBe(s);
+  });
+});

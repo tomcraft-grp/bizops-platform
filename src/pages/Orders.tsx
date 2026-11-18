@@ -8,6 +8,7 @@ import { advanceOrder, nextStatuses } from '../domain/orders';
 import { Badge, Button, Card, ChannelChip, DataTable, Kpi, PageHead, Select, Seg, StatusBadge, useHas, useRun, Tx } from '../ui/kit';
 import { useBranchIds } from '../ui/data';
 import { OrderDrawer } from './OrderDetail';
+import { OnlineOrdersCard } from '../shop/OnlineOrdersCard';
 import { dateTimeFmt, dayKey, download, money, money0, toCSV } from '../lib/util';
 import type { ChannelCode, Order, OrderStatus } from '../domain/types';
 
@@ -60,6 +61,8 @@ export default function Orders() {
         <Kpi label="Unpaid / part-paid" value={counts.unpaid} sub="customer-collected orders" />
         <Kpi label="Marketplace orders" value={db.orders.filter((o) => o.collectedBy === 'platform').length} sub="collected by platforms" />
       </div>
+      {/* orders from the online shop (LINE app) live in Supabase, so they get their own read-only card here (FB-001013) */}
+      <OnlineOrdersCard />
       <Card flush>
         <div className="row wrap" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
           <Seg value={group} onChange={setGroup} options={[{ v: 'all', label: 'All' }, { v: 'action', label: <Tx vars={{ n: counts.action }}>{'Needs action ({n})'}</Tx> }, { v: 'open', label: 'Open' }, { v: 'unpaid', label: <Tx vars={{ n: counts.unpaid }}>{'Unpaid ({n})'}</Tx> }, { v: 'done', label: 'Completed' }, { v: 'problem', label: 'Cancelled / returns' }]} />
