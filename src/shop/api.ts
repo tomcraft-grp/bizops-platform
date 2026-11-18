@@ -15,7 +15,10 @@ export interface ShopItem {
 export interface ShopProduct extends ShopItem { siblings: ShopItem[]; related: ShopItem[] }
 export interface CategoryFacet { code: string; name_th: string | null; name_en: string | null; count: number; image_url: string | null }
 export interface BrandFacet { brand: string; count: number }
-export interface Facets { categories: CategoryFacet[]; brands: BrandFacet[] }
+/** `no_brand_count` is only sent by a database that has migration 20261119100000 (the "no brand" filter): an older database leaves it out and the app then simply offers no such choice. */
+export interface Facets { categories: CategoryFacet[]; brands: BrandFacet[]; no_brand_count?: number }
+/** The brand filter value meaning "products that have no brand" (what shop_catalog's p_brand understands). No real brand uses this text. */
+export const NO_BRAND = '__none__';
 export interface ShopSettings {
   shop_open: boolean; closed_message: string | null; delivery_enabled: boolean; pickup_enabled: boolean; pickup_note: string | null;
   shipping_fee: number; free_shipping_min: number | null; require_payment_slip?: boolean;

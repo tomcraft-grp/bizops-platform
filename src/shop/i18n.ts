@@ -19,7 +19,7 @@ const D = {
   'common.loadError': ['โหลดข้อมูลไม่สำเร็จ', 'Could not load this'], 'common.loadMore': ['ดูเพิ่มเติม', 'Load more'], 'common.cancel': ['ไม่ใช่', 'No'],
   'common.refresh': ['รีเฟรช', 'Refresh'], 'common.currency': ['บาท', 'THB'],
   // catalogue
-  'cat.search': ['ค้นหาชื่อสินค้า แบรนด์ หรือรหัส SKU', 'Search name, brand or SKU'], 'cat.brand': ['แบรนด์', 'Brand'], 'cat.allBrands': ['ทุกแบรนด์', 'All brands'],
+  'cat.search': ['ค้นหาชื่อสินค้า แบรนด์ หรือรหัส SKU', 'Search name, brand or SKU'], 'cat.brand': ['แบรนด์', 'Brand'], 'cat.allBrands': ['ทุกแบรนด์', 'All brands'], 'cat.noBrand': ['ไม่ระบุแบรนด์', 'No brand'],
   'cat.sort': ['เรียงตาม', 'Sort by'], 'cat.count': ['พบ {n} รายการ', '{n} items'],
   'sort.recommended': ['แนะนำ', 'Recommended'], 'sort.newest': ['มาใหม่', 'Newest'], 'sort.price_asc': ['ราคาต่ำ → สูง', 'Price: low to high'],
   'sort.price_desc': ['ราคาสูง → ต่ำ', 'Price: high to low'], 'sort.name': ['ชื่อ ก–ฮ / A–Z', 'Name A–Z'],

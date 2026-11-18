@@ -28,6 +28,8 @@ export class FakeShop {
   orders: FOrder[] = [];
   calls: { fn: string; args: Record<string, unknown> }[] = [];
   layout: unknown = null;
+  /** false = a database that does not have migration 20261119100000 yet (no "no brand" count, and "__none__" matches nothing) */
+  noBrandFilter = true;
   /** wallet, deposits and bank accounts (fakeWallet.ts) */
   w = new FakeWallet(this);
   private fail = new Map<string, number>();
@@ -99,11 +101,13 @@ export class FakeShop {
         const cats = new Map<string, FItem[]>(); for (const i of this.items) cats.set(i.category, [...(cats.get(i.category) ?? []), i]);
         const brands = new Map<string, number>(); for (const i of this.items) if (i.brand) brands.set(i.brand, (brands.get(i.brand) ?? 0) + 1);
         return { categories: [...cats].map(([code, xs]) => ({ code, name_th: code === 'Puff' ? 'พอตใช้แล้วทิ้ง' : null, name_en: null, count: xs.length, image_url: xs.find((x) => x.image_urls[0])?.image_urls[0] ?? null })),
-          brands: [...brands].map(([brand, count]) => ({ brand, count })).sort((x, y) => y.count - x.count) };
+          brands: [...brands].map(([brand, count]) => ({ brand, count })).sort((x, y) => y.count - x.count),
+          // migration 20261119100000 (the "no brand" filter); an older database leaves the key out
+          ...(this.noBrandFilter ? { no_brand_count: this.items.filter((i) => !i.brand).length } : {}) };
       }
       case 'shop_catalog': {
         const q = String(a.p_search ?? '').trim().toLowerCase();
-        let xs = this.items.filter((i) => (!q || [i.sku_code, i.name, i.name_th, i.name_en, i.brand].some((f) => f?.toLowerCase().includes(q))) && (!a.p_category || i.category === a.p_category) && (!a.p_brand || i.brand === a.p_brand) && (!a.p_featured || i.featured));
+        let xs = this.items.filter((i) => (!q || [i.sku_code, i.name, i.name_th, i.name_en, i.brand].some((f) => f?.toLowerCase().includes(q))) && (!a.p_category || i.category === a.p_category) && (!a.p_brand || (this.noBrandFilter && a.p_brand === '__none__' ? !i.brand : i.brand === a.p_brand)) && (!a.p_featured || i.featured));
         const sort = String(a.p_sort ?? 'recommended');
         xs = [...xs].sort((p, r) => sort === 'price_asc' ? p.price - r.price : sort === 'price_desc' ? r.price - p.price : sort === 'newest' ? r.sku_seq - p.sku_seq : sort === 'name' ? p.name.localeCompare(r.name)
           : (Number(r.featured) - Number(p.featured)) || (Number(r.available) - Number(p.available)) || (p.sku_seq - r.sku_seq));

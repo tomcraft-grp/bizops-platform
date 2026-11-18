@@ -170,3 +170,43 @@ describe('online shop orders on the Orders page (FB-001013)', () => {
     for (const s of strings) expect(translate('th', s), s).not.toBe(s);
   });
 });
+
+describe('brand filter: products with no brand (FB-001018)', () => {
+  const orig = read('supabase/migrations/20261115100000_customer_shop.sql');
+  const mig = read('supabase/migrations/20261119100000_shop_no_brand_filter.sql');
+  const down = read('supabase/rollbacks/20261119100000_shop_no_brand_filter_down.sql');
+  const fns = (sql: string) => sql.slice(sql.indexOf('create or replace function public.shop_facets'), sql.indexOf('create or replace function public.shop_product')).replace(/\r/g, '').trim();
+  const code = (sql: string) => sql.replace(/\r/g, '').split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+
+  it('the migration only replaces shop_facets and shop_catalog: no table, column, policy, grant or data is touched', () => {
+    const body = code(mig);
+    expect([...body.matchAll(/create or replace function ([\w.]+)/g)].map((m) => m[1])).toEqual(['public.shop_facets', 'public.shop_catalog']);
+    expect(body).not.toMatch(/\b(alter|drop|truncate|grant|revoke)\b|create (table|index|policy|trigger|view)|insert into|update public\.|delete from/i);
+  });
+  it('it changes the two functions in exactly two places', () => {
+    const a = new Set(fns(orig).split('\n').map((l) => l.trimEnd())); const b = fns(mig).split('\n').map((l) => l.trimEnd());
+    const added = b.filter((l) => !a.has(l));
+    expect(added).toHaveLength(3);                                                      // the closing of 'brands', the new 'no_brand_count' key, the brand condition
+    expect(added.join('\n')).toContain("'no_brand_count'");
+    expect(added.join('\n')).toContain("case when p_brand = '__none__' then v.brand is null else v.brand = p_brand end");
+    expect(new Set(b).size).toBeGreaterThan(40);
+  });
+  it('its rollback puts back the two ORIGINAL functions, character for character', () => {
+    expect(fns(down)).toBe(fns(orig));
+    expect(code(down)).not.toMatch(/no_brand_count|__none__/);
+  });
+  it('the app and the database use the same marker, and the app copes with a database that does not send the count', () => {
+    expect(read('src/shop/api.ts')).toContain("export const NO_BRAND = '__none__'");
+    expect(mig).toContain("'__none__'");
+    expect(read('src/shop/Catalog.tsx')).toContain('facets?.no_brand_count ?? 0');
+  });
+  it('the SQL tests end in the forced rollback the runner insists on, and the runner scripts point at the right files', () => {
+    expect(read('supabase/tests/shop_no_brand.sql')).toMatch(/raise exception E'SHOP_NO_BRAND_TESTS/);
+    expect(read('supabase/tests/shop_brand_down_post.sql')).toMatch(/raise exception E'SHOP_NO_BRAND_DOWN_PROOF/);
+    expect(read('scripts/run-shop-no-brand-sql-tests.sh')).toContain('SHOP_NO_BRAND_TESTS supabase/migrations/20261119100000_shop_no_brand_filter.sql supabase/tests/shop_no_brand.sql');
+    expect(read('scripts/run-shop-no-brand-down-proof.sh')).toContain('supabase/rollbacks/20261119100000_shop_no_brand_filter_down.sql');
+  });
+  it('the new choice has Thai and English wording', () => {
+    expect(read('src/shop/i18n.ts')).toMatch(/'cat\.noBrand': \['ไม่ระบุแบรนด์', 'No brand'\]/);
+  });
+});
