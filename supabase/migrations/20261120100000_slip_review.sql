@@ -53,11 +53,13 @@ do $$ begin
 end $$;
 
 -- the statuses: submitted -> confirmed -> verified (= posted), plus more_evidence and rejected. The old check has a generated name that we do not
--- assume: every single-column check on "status" is looked up in pg_constraint and dropped before the wider one is added.
+-- assume: the single-column checks on "status" that list the statuses (they mention 'submitted') are looked up in pg_constraint and dropped before the wider
+-- one is added. (An unrelated check on the same column is left alone, so sending this file again can never drop something it did not create.)
 do $$ declare c record; begin
   for c in select con.conname from pg_constraint con
             where con.conrelid = 'public.finance_payment_evidence'::regclass and con.contype = 'c'
               and con.conkey = array[(select a.attnum from pg_attribute a where a.attrelid = con.conrelid and a.attname = 'status')]
+              and pg_get_constraintdef(con.oid) ilike '%submitted%'
   loop execute format('alter table public.finance_payment_evidence drop constraint %I', c.conname); end loop;
   alter table public.finance_payment_evidence add constraint finance_payment_evidence_status_chk
     check (status in ('submitted', 'confirmed', 'more_evidence', 'verified', 'rejected'));
@@ -112,11 +114,13 @@ create policy "finance analysis: staff" on public.finance_slip_analysis for sele
 revoke all on public.finance_slip_analysis from anon, authenticated;
 grant select on public.finance_slip_analysis to authenticated;
 
--- 1d ledger queue: a posted cash payment is Dr cash / Cr receivable (the ledger role "cash" is account 1100). Same lookup as the status check above.
+-- 1d ledger queue: a posted cash payment is Dr cash / Cr receivable (the ledger role "cash" is account 1100). Same lookup as the status check above (only the
+-- single-column check that lists the event types, which mentions 'BANK_RECEIPT').
 do $$ declare c record; begin
   for c in select con.conname from pg_constraint con
             where con.conrelid = 'public.finance_gl_queue'::regclass and con.contype = 'c'
               and con.conkey = array[(select a.attnum from pg_attribute a where a.attrelid = con.conrelid and a.attname = 'event_type')]
+              and pg_get_constraintdef(con.oid) ilike '%BANK_RECEIPT%'
   loop execute format('alter table public.finance_gl_queue drop constraint %I', c.conname); end loop;
   alter table public.finance_gl_queue add constraint finance_gl_queue_event_type_chk
     check (event_type in ('INVOICE_ISSUE', 'INVOICE_CANCEL', 'BANK_RECEIPT', 'RECEIPT_REAPPLY', 'RECEIPT_REVERSAL', 'WALLET_DEPOSIT', 'WALLET_PAYMENT',
@@ -255,6 +259,7 @@ begin
   end if;
 
   -- rule 2: the bank reference (printed on the slip and in its QR) was already seen: another finished analysis, a receipt, another slip, a wallet deposit.
+  -- (each source is looked up with "ref column is not null" next to the normalised comparison, so the planner can use the partial expression indexes of 2g)
   -- Exception: an EARLIER slip of the same customer on the same invoice that was sent back (rejected / more evidence) and has no receipt is the customer resending
   -- the same transfer: an info reason (RESUBMITTED_TRANSFER) and the other rules decide. Every other hit (another invoice or customer, a receipt, a wallet deposit,
   -- a slip that is still live: submitted, confirmed or posted) is a suspected duplicate, and one such hit is enough.
@@ -267,12 +272,12 @@ begin
         on a.status = 'done' and a.evidence_id <> e.id and (public.finance_slip_ref(a.extracted ->> 'trans_ref') = q.r or public.finance_slip_ref(a.qr ->> 'trans_ref') = q.r)
       union all
       select q.r, 'receipt', c.evidence_id from unnest(v_refs) as q(r) join public.finance_receipts c
-        on c.evidence_id is distinct from e.id and public.finance_slip_ref(c.bank_trans_ref) = q.r
+        on c.evidence_id is distinct from e.id and c.bank_trans_ref is not null and public.finance_slip_ref(c.bank_trans_ref) = q.r
       union all
       select q.r, 'evidence', x.id from unnest(v_refs) as q(r) join public.finance_payment_evidence x
-        on x.id <> e.id and (public.finance_slip_ref(x.bank_trans_ref) = q.r or public.finance_slip_ref(x.confirmed_bank_ref) = q.r)
+        on x.id <> e.id and ((x.bank_trans_ref is not null and public.finance_slip_ref(x.bank_trans_ref) = q.r) or (x.confirmed_bank_ref is not null and public.finance_slip_ref(x.confirmed_bank_ref) = q.r))
       union all
-      select q.r, 'deposit', null::uuid from unnest(v_refs) as q(r) join public.finance_wallet_deposits d on public.finance_slip_ref(d.bank_trans_ref) = q.r
+      select q.r, 'deposit', null::uuid from unnest(v_refs) as q(r) join public.finance_wallet_deposits d on d.bank_trans_ref is not null and public.finance_slip_ref(d.bank_trans_ref) = q.r
     loop
       if h.src in ('analysis', 'evidence') and exists (select 1 from public.finance_payment_evidence p
            where p.id = h.ev and p.invoice_id = e.invoice_id and p.customer_id = e.customer_id and p.status in ('rejected', 'more_evidence')
@@ -508,3 +513,443 @@ create index if not exists finance_evidence_confslipref_idx on public.finance_pa
 create index if not exists finance_deposits_slipref_idx on public.finance_wallet_deposits (public.finance_slip_ref(bank_trans_ref)) where bank_trans_ref is not null;
 create index if not exists finance_analysis_slipref_idx on public.finance_slip_analysis (public.finance_slip_ref(extracted ->> 'trans_ref')) where status = 'done';
 create index if not exists finance_analysis_qrslipref_idx on public.finance_slip_analysis (public.finance_slip_ref(qr ->> 'trans_ref')) where status = 'done';
+
+-- ================================================================================================= 3 workflow
+-- Confirm -> Post makes money officially received in two steps by two people (or the same person when post_requires_manager is off); Reject and Request more
+-- evidence send a slip back to the customer; Record payment lets staff enter a transfer or a cash payment at the back office. All the money arithmetic stays in ONE
+-- place, finance_verify_core: it is the body of the one-step finance_verify_evidence that is live today, moved here with the same checks, receipt, allocation, wallet
+-- credit of any excess and ledger row for a bank transfer, and the old function is now a thin wrapper around it (same signature, same answer). With the settings off
+-- nothing a customer or a staff member does today behaves differently.
+-- (the bodies below start from the definitions that are LIVE, i.e. the migrations of 2026-11-15 with the numbering swap of 20261115500000 applied: receipt numbers
+-- come from next_doc_no('PAYMENT'), not from the old sequence)
+
+-- 3a where is this bank reference already used? (internal; used by Confirm and Record payment). Compared as letters and digits only, so the same transfer typed with
+-- dashes, spaces or in lower case is found; sources are receipts, verified wallet deposits, and other confirmed / posted slips. Returns the kind of the first hit.
+create or replace function public.finance_ref_in_use(p_ref text, p_except uuid default null)
+returns text language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select 'receipt' from public.finance_receipts c
+      where c.bank_trans_ref is not null and public.finance_slip_ref(c.bank_trans_ref) = public.finance_slip_ref(p_ref) limit 1),
+    (select 'deposit' from public.finance_wallet_deposits d
+      where d.bank_trans_ref is not null and d.status = 'verified' and public.finance_slip_ref(d.bank_trans_ref) = public.finance_slip_ref(p_ref) limit 1),
+    (select 'evidence' from public.finance_payment_evidence x
+      where x.status in ('confirmed', 'verified') and x.id is distinct from p_except
+        and ((x.confirmed_bank_ref is not null and public.finance_slip_ref(x.confirmed_bank_ref) = public.finance_slip_ref(p_ref))
+          or (x.bank_trans_ref is not null and public.finance_slip_ref(x.bank_trans_ref) = public.finance_slip_ref(p_ref))) limit 1))
+$$;
+
+-- 3b the core: settles a slip. No role check (the callers check it); not callable from the API.
+--   p_from_status  'submitted' (the one-step verify: the values come from the caller) or 'confirmed' (Post: the values were confirmed earlier and are read back)
+--   p_method       'transfer' (as before) or 'cash': no reference or duplicate check, no bank account, receipt method 'cash', never a wallet credit (more cash than the
+--                  invoice owes is refused, CASH_OVERPAY), ledger row CASH_RECEIPT Dr cash / Cr receivable
+-- A post (from 'confirmed') also stamps who posted it and when.
+create or replace function public.finance_verify_core(p_evidence uuid, p_amount numeric, p_bank_trans_ref text, p_transfer_at timestamptz,
+  p_note text, p_via text, p_from_status text default 'submitted', p_method text default 'transfer')
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare e public.finance_payment_evidence; i public.finance_invoices; st jsonb; outstanding numeric; rc public.finance_receipts; result text; v_alloc numeric := 0;
+        v_rid uuid := gen_random_uuid(); v_rno text; v_excess numeric := 0; v_t public.finance_wallet_transactions;
+        v_cash boolean := p_method = 'cash'; v_ref text := case when p_method = 'cash' then null else trim(p_bank_trans_ref) end;
+begin
+  if p_via not in ('staff', 'provider', 'bank') then raise exception 'Unknown verification source'; end if;
+  if coalesce(p_from_status, '') not in ('submitted', 'confirmed') then raise exception 'Unknown starting status'; end if;
+  if coalesce(p_method, '') not in ('transfer', 'cash') then raise exception 'Unknown payment method'; end if;
+  if p_amount is null or p_amount <= 0 or p_amount <> round(p_amount, 2) then raise exception 'Enter the amount shown by the bank'; end if;
+  if not v_cash and coalesce(trim(p_bank_trans_ref), '') = '' then raise exception 'The bank transaction reference is required'; end if;
+  if p_transfer_at is null then raise exception 'The transfer date and time are required'; end if;
+  select * into e from public.finance_payment_evidence where id = p_evidence for update;
+  if not found then raise exception 'Evidence not found'; end if;
+  if e.status <> p_from_status then raise exception 'This slip is already %', e.status; end if;
+  select * into i from public.finance_invoices where id = e.invoice_id for update;   -- serialises settlement of one invoice
+  if i.status <> 'open' then raise exception 'The invoice is %', i.status; end if;
+  if not v_cash and (exists (select 1 from public.finance_receipts where bank_trans_ref = trim(p_bank_trans_ref)) or exists (select 1 from public.finance_wallet_deposits where bank_trans_ref = trim(p_bank_trans_ref) and status = 'verified')) then
+    raise exception 'Bank transaction % was already recorded (reused slip?)', trim(p_bank_trans_ref) using errcode = '23505'; end if;
+  if p_transfer_at < i.issue_date::timestamptz - interval '1 day' then raise exception 'The transfer is older than the invoice'; end if;
+
+  st := public.finance_invoice_state_raw(i.id);
+  outstanding := (st ->> 'outstanding')::numeric;
+  if v_cash and p_amount > outstanding then
+    raise exception 'CASH_OVERPAY: cash of % is more than the % this invoice still owes; cash never makes a wallet credit', p_amount, outstanding; end if;
+  v_alloc := least(p_amount, outstanding);
+  v_excess := p_amount - v_alloc;
+  v_rno := public.next_doc_no('PAYMENT');
+  update public.finance_payment_evidence set status = 'verified', verified_via = p_via, verified_amount = p_amount, bank_trans_ref = v_ref,
+    transfer_at = p_transfer_at, review_note = nullif(trim(p_note), ''), reviewed_by = auth.uid(), reviewed_at = now(),
+    posted_by = case when p_from_status = 'confirmed' then auth.uid() else posted_by end,
+    posted_at = case when p_from_status = 'confirmed' then now() else posted_at end where id = e.id;
+  -- the part above what the invoice owes is the customer's money: it goes to their wallet (one ledger row, same transaction)
+  if v_excess > 0 then
+    v_t := public.finance_wallet_apply(i.customer_id, 'DEPOSIT', 'credit', v_excess, 'OVR:' || v_rid::text, 'receipt', v_rid, v_rno, 'bank_transfer', e.bank_account_id, 'verified',
+                                       auth.uid(), auth.uid(), 'Paid above invoice ' || i.invoice_no || ' (receipt ' || v_rno || ')',
+                                       'โอนเกินยอดใบแจ้งหนี้ เข้ากระเป๋าเงิน / Paid above the invoice, credited to your wallet');
+  end if;
+  insert into public.finance_receipts (id, receipt_no, customer_id, invoice_id, evidence_id, amount, bank_trans_ref, received_at, needs_review, method, bank_account_id, credit_txn_id)
+    values (v_rid, v_rno, i.customer_id, i.id, e.id, p_amount, v_ref, p_transfer_at, false, case when v_cash then 'cash' else 'bank_transfer' end,
+            case when v_cash then null else e.bank_account_id end, v_t.id)
+    returning * into rc;
+  if v_alloc > 0 then
+    insert into public.finance_allocations (receipt_id, invoice_id, amount) values (rc.id, i.id, v_alloc);
+  end if;
+  result := case when v_excess > 0 then 'overpaid_credited' when p_amount = outstanding then 'fully_paid' else 'partially_paid' end;
+  if v_cash then
+    -- ledger: money in the cash box; it settles the receivable (there is never an overpayment)
+    perform public.finance_gl_enqueue('CASH_RECEIPT', 'receipt', rc.id, rc.receipt_no, i.customer_id, p_amount,
+      jsonb_build_array(jsonb_build_object('side', 'dr', 'role', 'cash', 'amount', p_amount), jsonb_build_object('side', 'cr', 'role', 'ar', 'amount', v_alloc)),
+      public.finance_gl_issue_dep(i.id));
+  else
+    -- ledger: money in the bank; the applied part settles the receivable, any overpayment is customer credit (wallet liability)
+    perform public.finance_gl_enqueue('BANK_RECEIPT', 'receipt', rc.id, rc.receipt_no, i.customer_id, p_amount,
+      jsonb_build_array(jsonb_build_object('side', 'dr', 'role', 'bank', 'amount', p_amount, 'bank_account_id', e.bank_account_id))
+        || case when v_alloc > 0 then jsonb_build_array(jsonb_build_object('side', 'cr', 'role', 'ar', 'amount', v_alloc)) else '[]'::jsonb end
+        || case when v_excess > 0 then jsonb_build_array(jsonb_build_object('side', 'cr', 'role', 'customer_credit', 'amount', v_excess, 'wallet', true)) else '[]'::jsonb end,
+      public.finance_gl_issue_dep(i.id));
+  end if;
+  perform public.finance_log('evidence', e.id, 'evidence.verify', jsonb_build_object('via', p_via, 'amount', p_amount, 'claimed', e.claimed_amount, 'trans_ref', v_ref, 'bank_account', e.bank_account_id)
+    || case when v_cash then jsonb_build_object('method', 'cash') else '{}'::jsonb end);
+  perform public.finance_log('receipt', rc.id, 'receipt.post', jsonb_build_object('invoice', i.id, 'amount', p_amount, 'outstanding_before', outstanding, 'result', result, 'credited_to_wallet', v_excess));
+  return jsonb_build_object('result', result, 'receipt_no', rc.receipt_no, 'credited_to_wallet', v_excess, 'state', public.finance_invoice_state_raw(i.id));
+end $$;
+
+-- 3c the one-step verify: the same signature and the same answer as before; the role check is the only thing that stays here (a verifier, or a manager when
+-- post_requires_manager is on: the one-step verify posts money, so it is subject to the same rule as Post)
+create or replace function public.finance_verify_evidence(p_evidence uuid, p_amount numeric, p_bank_trans_ref text, p_transfer_at timestamptz,
+  p_note text default null, p_via text default 'staff')
+returns jsonb language plpgsql security definer set search_path = public as $$
+begin
+  perform public.finance_require(case when coalesce((select s.post_requires_manager from public.finance_settings s where s.id), false) then 'manage' else 'verify' end, 'verify payments');
+  return public.finance_verify_core(p_evidence, p_amount, p_bank_trans_ref, p_transfer_at, p_note, p_via, 'submitted', 'transfer');
+end $$;
+
+-- 3d Confirm: a verifier records what the BANK shows (amount, reference, time) against a submitted slip. It touches no receipt, no allocation and no ledger row:
+-- the invoice still owes the money until somebody posts it. The reference must be new.
+create or replace function public.finance_confirm_evidence(p_evidence uuid, p_amount numeric, p_bank_trans_ref text, p_transfer_at timestamptz, p_note text default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare e public.finance_payment_evidence; i public.finance_invoices; v_ref text := trim(p_bank_trans_ref); v_note text := nullif(trim(p_note), '');
+begin
+  perform public.finance_require('verify', 'confirm payments');
+  if p_amount is null or p_amount <= 0 or p_amount <> round(p_amount, 2) then raise exception 'Enter the amount shown by the bank'; end if;
+  if coalesce(v_ref, '') = '' then raise exception 'The bank transaction reference is required'; end if;
+  if length(public.finance_slip_ref(v_ref)) < 4 or length(v_ref) > 80 then raise exception 'The bank transaction reference must have 4 to 80 letters or digits'; end if;
+  if p_transfer_at is null then raise exception 'The transfer date and time are required'; end if;
+  if length(v_note) > 500 then raise exception 'The note is too long (500 characters at most)'; end if;
+  select * into e from public.finance_payment_evidence where id = p_evidence for update;
+  if not found then raise exception 'Evidence not found'; end if;
+  if e.status <> 'submitted' then raise exception 'This slip is already %', e.status; end if;
+  select * into i from public.finance_invoices where id = e.invoice_id for update;   -- serialises with every other payment on the invoice
+  if i.status <> 'open' then raise exception 'The invoice is %', i.status; end if;
+  if public.finance_ref_in_use(v_ref, e.id) is not null then
+    raise exception 'Bank transaction % was already recorded (reused slip?)', v_ref using errcode = '23505'; end if;
+  if p_transfer_at < i.issue_date::timestamptz - interval '1 day' then raise exception 'The transfer is older than the invoice'; end if;
+  update public.finance_payment_evidence set status = 'confirmed', confirmed_by = auth.uid(), confirmed_at = now(), confirmed_amount = p_amount, confirmed_bank_ref = v_ref,
+    confirmed_transfer_at = p_transfer_at, confirm_note = v_note where id = e.id;
+  perform public.finance_log('evidence', e.id, 'evidence.confirm', jsonb_build_object('amount', p_amount, 'claimed', e.claimed_amount, 'trans_ref', v_ref, 'bank_account', e.bank_account_id));
+  return jsonb_build_object('status', 'confirmed', 'evidence_id', e.id, 'amount', p_amount);
+end $$;
+
+-- 3e Post: the confirmed payment becomes official: one receipt, its allocation and its ledger row, through the core, once. Pressing Post twice (or two people at the
+-- same time: the second waits for the lock) answers replay = true and creates nothing. Anything that is not confirmed is refused (NOT_CONFIRMED).
+create or replace function public.finance_post_evidence(p_evidence uuid, p_note text default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare e public.finance_payment_evidence; i public.finance_invoices; rc public.finance_receipts; v jsonb;
+begin
+  perform public.finance_require(case when coalesce((select s.post_requires_manager from public.finance_settings s where s.id), false) then 'manage' else 'verify' end, 'post payments');
+  select * into e from public.finance_payment_evidence where id = p_evidence for update;     -- the evidence first, then the invoice (the order the core uses)
+  if not found then raise exception 'Evidence not found'; end if;
+  select * into i from public.finance_invoices where id = e.invoice_id for update;
+  if e.status = 'verified' then
+    select * into rc from public.finance_receipts where evidence_id = e.id;
+    if found then
+      return jsonb_build_object('replay', true,
+        'result', coalesce((select ev.detail ->> 'result' from public.finance_events ev where ev.entity = 'receipt' and ev.entity_id = rc.id and ev.action = 'receipt.post' order by ev.id limit 1), 'already_posted'),
+        'receipt_no', rc.receipt_no, 'credited_to_wallet', coalesce((select t.amount from public.finance_wallet_transactions t where t.id = rc.credit_txn_id), 0),
+        'state', public.finance_invoice_state_raw(e.invoice_id));
+    end if;
+  end if;
+  if e.status <> 'confirmed' then raise exception 'NOT_CONFIRMED: this slip is % (it must be confirmed before it is posted)', e.status; end if;
+  v := public.finance_verify_core(e.id, e.confirmed_amount, case when e.method = 'cash' then null else e.confirmed_bank_ref end, e.confirmed_transfer_at, p_note, 'staff', 'confirmed', e.method);
+  perform public.finance_log('evidence', e.id, 'evidence.post', jsonb_build_object('receipt_no', v ->> 'receipt_no', 'amount', e.confirmed_amount, 'note', nullif(trim(p_note), '')));
+  return v || jsonb_build_object('replay', false);
+end $$;
+
+-- 3f Reject: a slip that is submitted, confirmed or waiting for more evidence (it used to be: submitted only). A rejected slip frees its bank reference.
+create or replace function public.finance_reject_evidence(p_evidence uuid, p_reason text)
+returns void language plpgsql security definer set search_path = public as $$
+declare e public.finance_payment_evidence;
+begin
+  perform public.finance_require('verify', 'reject payments');
+  if coalesce(trim(p_reason), '') = '' then raise exception 'A reason is required'; end if;
+  select * into e from public.finance_payment_evidence where id = p_evidence for update;
+  if not found then raise exception 'Evidence not found'; end if;
+  if e.status not in ('submitted', 'confirmed', 'more_evidence') then raise exception 'This slip is already %', e.status; end if;
+  update public.finance_payment_evidence set status = 'rejected', reject_reason = trim(p_reason), reviewed_by = auth.uid(), reviewed_at = now() where id = p_evidence;
+  perform public.finance_log('evidence', p_evidence, 'evidence.reject', jsonb_build_object('reason', trim(p_reason)));
+end $$;
+
+-- 3g Request more evidence: the customer sees the message and sends a new slip on the same invoice. Only for a slip a customer sent.
+create or replace function public.finance_request_more_evidence(p_evidence uuid, p_message text)
+returns void language plpgsql security definer set search_path = public as $$
+declare e public.finance_payment_evidence; v_msg text := btrim(coalesce(p_message, ''));
+begin
+  perform public.finance_require('verify', 'ask for more evidence');
+  if length(v_msg) not between 3 and 300 then raise exception 'MESSAGE_REQUIRED: tell the customer what is needed (3 to 300 characters)'; end if;
+  select * into e from public.finance_payment_evidence where id = p_evidence for update;
+  if not found then raise exception 'Evidence not found'; end if;
+  if e.status not in ('submitted', 'confirmed') then raise exception 'This slip is already %', e.status; end if;
+  if e.source = 'staff_entry' then raise exception 'NO_CUSTOMER_SLIP: a payment recorded by staff has no customer slip to ask for'; end if;
+  update public.finance_payment_evidence set status = 'more_evidence', request_message = v_msg, requested_by = auth.uid(), requested_at = now() where id = e.id;
+  perform public.finance_log('evidence', e.id, 'evidence.request_more', jsonb_build_object('message', v_msg, 'was', e.status));
+end $$;
+
+-- 3h Record payment: staff enter a payment at the back office (a bank transfer or cash) against an invoice. It is created already confirmed (by the person who
+-- typed it) and still has to be posted. It can never be more than the invoice still owes, counting what is confirmed but not posted yet.
+-- Cash needs a note (where it was received) and has no reference, bank or file; a transfer needs a bank reference that is new, may name the bank, and may carry
+-- the slip file (the rules of a customer's upload: own folder, no "..", a new file hash; the AI reader is queued for it when the review is on).
+create or replace function public.finance_record_payment(p_invoice uuid, p_method text, p_amount numeric, p_received_at timestamptz, p_bank_trans_ref text, p_bank_account uuid, p_note text,
+  p_file_path text default null, p_sha256 text default null, p_file_type text default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare i public.finance_invoices; st jsonb; v_ref text := nullif(trim(p_bank_trans_ref), ''); v_note text := nullif(trim(p_note), ''); v_limit numeric; v_id uuid;
+        v_cash boolean := p_method = 'cash'; v_bank uuid := p_bank_account;
+begin
+  perform public.finance_require('verify', 'record payments');
+  if p_method is null or p_method not in ('transfer', 'cash') then raise exception 'INVALID_METHOD: choose transfer or cash'; end if;
+  if p_amount is null or p_amount <= 0 or p_amount <> round(p_amount, 2) then raise exception 'INVALID_AMOUNT: enter the amount in baht and satang'; end if;
+  if p_received_at is null then raise exception 'The payment date and time are required'; end if;
+  if p_received_at > now() + interval '10 minutes' then raise exception 'The payment time is in the future'; end if;
+  if length(v_note) > 500 then raise exception 'The note is too long (500 characters at most)'; end if;
+  if v_cash then
+    if v_note is null or length(v_note) < 3 then raise exception 'NOTE_REQUIRED: say where the cash was received (at least 3 characters)'; end if;
+    if p_file_path is not null or p_sha256 is not null or p_file_type is not null then raise exception 'FILE_NOT_ALLOWED: a cash payment has no slip file'; end if;
+    v_ref := null; v_bank := null;                      -- cash has no bank reference and no bank account
+  else
+    if v_ref is null or length(public.finance_slip_ref(v_ref)) < 4 or length(v_ref) > 80 then
+      raise exception 'REFERENCE_REQUIRED: enter the bank transaction reference (4 to 80 letters or digits)'; end if;
+    if v_bank is not null and not exists (select 1 from public.finance_bank_accounts where id = v_bank and active) then raise exception 'BANK_NOT_AVAILABLE'; end if;
+    if p_file_path is not null or p_sha256 is not null or p_file_type is not null then
+      if p_file_path is null or p_sha256 is null or p_file_type is null or split_part(p_file_path, '/', 1) <> auth.uid()::text or p_file_path ~ '\.\.'
+         or p_file_type not in ('image/jpeg', 'image/png', 'application/pdf') or p_sha256 !~ '^[0-9a-fA-F]{64}$' then raise exception 'Invalid file' using errcode = '22023'; end if;
+    end if;
+  end if;
+  select * into i from public.finance_invoices where id = p_invoice for update;      -- serialises with every other payment on the invoice
+  if not found then raise exception 'Invoice not found'; end if;
+  if i.status <> 'open' then raise exception 'The invoice is %', i.status; end if;
+  if p_received_at < i.issue_date::timestamptz - interval '1 day' then raise exception 'The payment is older than the invoice'; end if;
+  st := public.finance_invoice_state_raw(i.id);
+  v_limit := (st ->> 'outstanding')::numeric - (st ->> 'confirmed_pending')::numeric;   -- what the invoice owes, less what is confirmed and waits to be posted
+  if p_amount > v_limit then
+    raise exception 'EXCEEDS_OUTSTANDING: % is more than the % that can still be added to this invoice', p_amount, greatest(v_limit, 0); end if;
+  if not v_cash then
+    if public.finance_ref_in_use(v_ref, null) is not null then raise exception 'Bank transaction % was already recorded (reused slip?)', v_ref using errcode = '23505'; end if;
+    if p_file_path is not null and (exists (select 1 from public.finance_payment_evidence where file_sha256 = lower(p_sha256) and status <> 'rejected')
+         or exists (select 1 from public.finance_wallet_deposits where file_sha256 = lower(p_sha256) and status not in ('rejected', 'cancelled'))) then
+      raise exception 'This slip was already submitted' using errcode = '23505'; end if;
+  end if;
+  insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, claimed_transfer_at, claimed_ref, bank_account_id,
+      status, source, method, recorded_by, confirmed_by, confirmed_at, confirmed_amount, confirmed_bank_ref, confirmed_transfer_at, confirm_note)
+    values (i.id, i.customer_id, p_file_path, lower(p_sha256), p_file_type, p_amount, p_received_at, v_ref, v_bank,
+      'confirmed', 'staff_entry', p_method, auth.uid(), auth.uid(), now(), p_amount, v_ref, p_received_at, v_note)
+    returning id into v_id;
+  perform public.finance_log('evidence', v_id, 'evidence.record', jsonb_build_object('invoice', i.id, 'method', p_method, 'amount', p_amount, 'trans_ref', v_ref, 'bank_account', v_bank,
+    'file', p_file_path is not null, 'note', v_note));
+  return jsonb_build_object('evidence_id', v_id, 'status', 'confirmed');
+end $$;
+
+-- 3i the state of an invoice: every key and every computation as before; added: confirmed_pending (the sum of what is confirmed and not yet posted), more_evidence_message
+-- (what staff asked the customer for), code 10 = more evidence requested. Pending now counts slips that are submitted OR confirmed (a confirmed payment is not money
+-- yet); code 10 comes after "pending" (a newer slip that waits wins) and before "partly paid".
+create or replace function public.finance_invoice_state_raw(p_invoice uuid)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare inv public.finance_invoices; paid numeric; outstanding numeric; review boolean; pending integer; req public.finance_payment_requests;
+        last_ev public.finance_payment_evidence; code integer; credit numeric; refunded numeric; v_confirmed numeric;
+begin
+  select * into inv from public.finance_invoices where id = p_invoice;
+  if not found then return null; end if;
+  select coalesce(sum(a.amount), 0) into paid from public.finance_allocations a join public.finance_receipts r on r.id = a.receipt_id
+    where a.invoice_id = p_invoice and a.active and r.status = 'posted';
+  outstanding := inv.amount - paid;
+  select exists (select 1 from public.finance_receipts where invoice_id = p_invoice and status = 'posted' and needs_review) into review;
+  select coalesce(sum(r.amount - coalesce((select sum(a.amount) from public.finance_allocations a where a.receipt_id = r.id and a.active), 0)), 0) into credit
+    from public.finance_receipts r where r.invoice_id = p_invoice and r.status = 'posted';
+  -- money given back to the customer's wallet: refunds of reversed bank receipts + wallet payments that were reversed
+  select coalesce((select sum(t.amount) from public.finance_wallet_transactions t join public.finance_receipts r on r.id = t.ref_id
+                    where t.txn_type = 'REFUND' and t.ref_type = 'receipt' and r.invoice_id = p_invoice), 0)
+       + coalesce((select sum(r.amount) from public.finance_receipts r where r.invoice_id = p_invoice and r.status = 'reversed' and r.wallet_txn_id is not null), 0)
+    into refunded;
+  select count(*) into pending from public.finance_payment_evidence where invoice_id = p_invoice and status in ('submitted', 'confirmed');
+  select coalesce(sum(confirmed_amount), 0) into v_confirmed from public.finance_payment_evidence where invoice_id = p_invoice and status = 'confirmed';
+  select * into req from public.finance_payment_requests where invoice_id = p_invoice and status = 'awaiting' order by created_at desc limit 1;
+  select * into last_ev from public.finance_payment_evidence where invoice_id = p_invoice order by created_at desc limit 1;
+  code := case
+    when inv.status = 'cancelled' then 8
+    when review then 6
+    when outstanding <= 0 then 5
+    when pending > 0 then 3
+    when last_ev.id is not null and last_ev.status = 'more_evidence' then 10
+    when paid > 0 then 4
+    when last_ev.id is not null and last_ev.status = 'rejected' and (req.id is null or req.created_at < last_ev.reviewed_at) then 7
+    when req.id is not null and req.expires_at > now() then 1
+    when req.id is not null then 9
+    else 0 end;
+  return jsonb_build_object('invoice_id', inv.id, 'amount', inv.amount, 'paid', paid, 'outstanding', greatest(outstanding, 0),
+    'unapplied', credit, 'refunded', refunded, 'status_code', code,
+    'status', (array['unpaid', 'awaiting_payment', 'payment_submitted', 'pending_verification', 'partially_paid', 'fully_paid', 'overpaid', 'rejected', 'cancelled', 'expired', 'more_evidence'])[code + 1],
+    'pending_evidence', pending,
+    'confirmed_pending', v_confirmed,
+    'more_evidence_message', case when code = 10 then last_ev.request_message end,
+    'request', case when req.id is null then null else jsonb_build_object('ref', req.ref, 'amount', req.amount, 'qr_payload', req.qr_payload, 'expires_at', req.expires_at, 'expired', req.expires_at <= now()) end);
+end $$;
+
+-- 3j a customer (or staff) cannot cancel an order while a slip of it is submitted, confirmed or waiting for more evidence
+create or replace function public.shop_cancel_order_internal(p_order uuid, p_reason text, p_by_customer boolean)
+returns void language plpgsql security definer set search_path = public as $$
+declare o public.shop_orders;
+begin
+  select * into o from public.shop_orders where id = p_order for update;
+  if not found then raise exception 'Order not found'; end if;
+  if o.status in ('cancelled', 'completed', 'returned') then raise exception 'This order is already %', o.status; end if;
+  if p_by_customer and o.status <> 'new' then raise exception 'ORDER_IN_PROGRESS'; end if;
+  perform 1 from public.finance_invoices where id = o.invoice_id for update;          -- serialises with payment verification
+  if exists (select 1 from public.finance_receipts where invoice_id = o.invoice_id and status = 'posted') then
+    raise exception 'PAYMENT_RECORDED'; end if;
+  if exists (select 1 from public.finance_payment_evidence where invoice_id = o.invoice_id and status in ('submitted', 'confirmed', 'more_evidence')) then
+    raise exception 'SLIP_PENDING'; end if;
+  update public.finance_invoices set status = 'cancelled', cancelled_by = auth.uid(), cancelled_at = now(), cancel_reason = 'Order cancelled: ' || left(p_reason, 200)
+    where id = o.invoice_id and status = 'open';
+  update public.finance_payment_requests set status = 'cancelled' where invoice_id = o.invoice_id and status = 'awaiting';
+  update public.shop_orders set status = 'cancelled', cancelled_by = auth.uid(), cancelled_at = now(), cancel_reason = left(p_reason, 200), updated_at = now() where id = o.id;
+  perform public.finance_log('invoice', o.invoice_id, 'invoice.cancel', jsonb_build_object('reason', left(p_reason, 200), 'order', o.order_no, 'source', 'shop'));
+  perform public.shop_log('order', o.id::text, 'order.cancel', jsonb_build_object('by', case when p_by_customer then 'customer' else 'staff' end, 'reason', left(p_reason, 200)));
+end $$;
+
+-- 3k reversing a receipt: a cash receipt is reversed against CASH (it never went through a bank); every other receipt is reversed exactly as before
+create or replace function public.finance_reverse_receipt(p_receipt uuid, p_reason text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare rc public.finance_receipts; v_alloc numeric; v_unapplied numeric; v_orig public.finance_wallet_transactions; v_t public.finance_wallet_transactions;
+begin
+  perform public.finance_require('manage', 'reverse receipts');
+  if coalesce(trim(p_reason), '') = '' then raise exception 'A reason is required'; end if;
+  select * into rc from public.finance_receipts where id = p_receipt for update;
+  if not found then raise exception 'Receipt not found'; end if;
+  if rc.status <> 'posted' then raise exception 'Receipt is already %', rc.status; end if;
+  perform 1 from public.finance_invoices where id = rc.invoice_id for update;
+  v_alloc := coalesce((select sum(amount) from public.finance_allocations where receipt_id = rc.id and active), 0);
+  v_unapplied := rc.amount - v_alloc;
+  update public.finance_allocations set active = false, deactivated_by = auth.uid(), deactivated_at = now(), deactivate_reason = 'receipt reversed: ' || trim(p_reason)
+    where receipt_id = rc.id and active;
+  update public.finance_receipts set status = 'reversed', needs_review = false, reversed_by = auth.uid(), reversed_at = now(), reverse_reason = trim(p_reason) where id = rc.id;
+  if rc.wallet_txn_id is not null then
+    select * into v_orig from public.finance_wallet_transactions where id = rc.wallet_txn_id;
+    v_t := public.finance_wallet_apply(rc.customer_id, 'REVERSAL', 'credit', rc.amount, 'REV:' || v_orig.id::text, 'wallet_txn', v_orig.id, v_orig.txn_no, 'wallet', null, 'not_required',
+                                       auth.uid(), auth.uid(), 'Receipt ' || rc.receipt_no || ' reversed: ' || trim(p_reason), 'ยกเลิกการชำระ / Payment reversed', v_orig.id);
+    perform public.finance_gl_enqueue('WALLET_REVERSAL', 'wallet_txn', v_t.id, v_t.txn_no, rc.customer_id, rc.amount,
+      jsonb_build_array(jsonb_build_object('side', 'dr', 'role', 'ar', 'amount', rc.amount), jsonb_build_object('side', 'cr', 'role', 'customer_credit', 'amount', rc.amount, 'wallet', true)));
+  else
+    if rc.credit_txn_id is not null then
+      select * into v_orig from public.finance_wallet_transactions where id = rc.credit_txn_id;
+      begin
+        v_t := public.finance_wallet_apply(rc.customer_id, 'REVERSAL', 'debit', v_orig.amount, 'REV:' || v_orig.id::text, 'wallet_txn', v_orig.id, v_orig.txn_no, 'wallet', null, 'not_required',
+                                           auth.uid(), auth.uid(), 'Receipt ' || rc.receipt_no || ' reversed: ' || trim(p_reason), 'ยกเลิกยอดเกินที่เข้ากระเป๋า / Overpayment credit reversed', v_orig.id);
+      exception when sqlstate '23514' then
+        raise exception 'CREDIT_ALREADY_USED: the customer already spent the wallet credit made from this receipt (%): correct the wallet first', v_orig.amount using errcode = '23514';
+      end;
+    end if;
+    perform public.finance_gl_enqueue('RECEIPT_REVERSAL', 'receipt', rc.id, rc.receipt_no, rc.customer_id, rc.amount,
+      jsonb_build_array(jsonb_build_object('side', 'cr', 'role', case when rc.method = 'cash' then 'cash' else 'bank' end, 'amount', rc.amount)
+                          || case when rc.method = 'cash' then '{}'::jsonb else jsonb_build_object('bank_account_id', rc.bank_account_id) end)
+        || case when v_alloc > 0 then jsonb_build_array(jsonb_build_object('side', 'dr', 'role', 'ar', 'amount', v_alloc)) else '[]'::jsonb end
+        || case when v_unapplied > 0 then jsonb_build_array(jsonb_build_object('side', 'dr', 'role', 'customer_credit', 'amount', v_unapplied) || case when rc.credit_txn_id is not null then jsonb_build_object('wallet', true) else '{}'::jsonb end) else '[]'::jsonb end);
+  end if;
+  perform public.finance_log('receipt', rc.id, 'receipt.reverse', jsonb_build_object('reason', trim(p_reason), 'amount', rc.amount));
+  return public.finance_invoice_state_raw(rc.invoice_id);
+end $$;
+
+-- 3l the five settings of the review, saved by a manager: only these keys, each checked for its type and range, all or nothing, one audit row
+create or replace function public.finance_save_review_settings(p_patch jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare k text; v jsonb; n numeric; s public.finance_settings;
+begin
+  perform public.finance_require('manage', 'change the slip review settings');
+  if p_patch is null or jsonb_typeof(p_patch) <> 'object' or p_patch = '{}'::jsonb then raise exception 'Nothing to save'; end if;
+  for k, v in select j.key, j.value from jsonb_each(p_patch) j loop
+    n := case when jsonb_typeof(v) = 'number' then (v #>> '{}')::numeric end;
+    if k not in ('ai_review_enabled', 'post_requires_manager', 'ai_min_confidence', 'slip_window_before_min', 'slip_future_tolerance_min') then
+      raise exception 'UNKNOWN_SETTING: % cannot be changed here', k; end if;
+    if k in ('ai_review_enabled', 'post_requires_manager') and jsonb_typeof(v) <> 'boolean' then raise exception 'INVALID_SETTING: % must be true or false', k; end if;
+    if k = 'ai_min_confidence' and (n is null or n not between 0 and 1) then raise exception 'INVALID_SETTING: ai_min_confidence must be a number from 0 to 1'; end if;
+    if k in ('slip_window_before_min', 'slip_future_tolerance_min') and (n is null or n <> trunc(n) or n not between 0 and 1440) then
+      raise exception 'INVALID_SETTING: % must be a whole number of minutes from 0 to 1440', k; end if;
+  end loop;
+  update public.finance_settings set
+    ai_review_enabled = case when p_patch ? 'ai_review_enabled' then (p_patch ->> 'ai_review_enabled')::boolean else ai_review_enabled end,
+    post_requires_manager = case when p_patch ? 'post_requires_manager' then (p_patch ->> 'post_requires_manager')::boolean else post_requires_manager end,
+    ai_min_confidence = case when p_patch ? 'ai_min_confidence' then round((p_patch ->> 'ai_min_confidence')::numeric, 2) else ai_min_confidence end,
+    slip_window_before_min = case when p_patch ? 'slip_window_before_min' then (p_patch ->> 'slip_window_before_min')::numeric::integer else slip_window_before_min end,
+    slip_future_tolerance_min = case when p_patch ? 'slip_future_tolerance_min' then (p_patch ->> 'slip_future_tolerance_min')::numeric::integer else slip_future_tolerance_min end,
+    updated_by = auth.uid(), updated_at = now() where id returning * into s;
+  perform public.finance_log('settings', gen_random_uuid(), 'settings.review', p_patch);
+  return jsonb_build_object('ai_review_enabled', s.ai_review_enabled, 'post_requires_manager', s.post_requires_manager, 'ai_min_confidence', s.ai_min_confidence,
+    'slip_window_before_min', s.slip_window_before_min, 'slip_future_tolerance_min', s.slip_future_tolerance_min);
+end $$;
+
+-- 3m reports. (1) The daily bank report put a receipt without a bank account on the "PROMPTPAY/OTHER" line and looked its ledger row up as a BANK_RECEIPT: a cash
+-- receipt now has its own CASH line and its CASH_RECEIPT row counts as posted when the accountant posts it. Everything else in the report is as before.
+create or replace function public.finance_bank_daily_report(p_from date, p_to date, p_bank uuid default null)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+begin
+  perform public.finance_require('view', 'see the bank report');
+  return coalesce((select jsonb_agg(r order by r ->> 'day' desc, r ->> 'bank_code') from (
+    select jsonb_build_object('day', (x.at at time zone 'Asia/Bangkok')::date, 'bank_code', case when x.cash then 'CASH' else coalesce(b.code, 'PROMPTPAY/OTHER') end, 'bank_account_id', x.bank,
+      'deposits', count(*) filter (where x.kind = 'deposit'), 'deposit_amount', coalesce(sum(x.amount) filter (where x.kind = 'deposit'), 0),
+      'invoice_transfers', count(*) filter (where x.kind = 'receipt'), 'invoice_amount', coalesce(sum(x.amount) filter (where x.kind = 'receipt'), 0),
+      'total', sum(x.amount), 'in_ledger', coalesce(sum(x.amount) filter (where x.posted), 0), 'waiting_for_ledger', coalesce(sum(x.amount) filter (where not x.posted), 0)) r
+    from (
+      select 'deposit' kind, d.transfer_at at, d.bank_account_id bank, d.verified_amount amount,
+             coalesce((select q.status = 'posted' from public.finance_gl_queue q where q.event_type = 'WALLET_DEPOSIT' and q.ref_id = d.wallet_txn_id), false) posted, false as cash
+        from public.finance_wallet_deposits d where d.status = 'verified'
+      union all
+      select 'receipt', rc.received_at, rc.bank_account_id, rc.amount,
+             coalesce((select q.status = 'posted' from public.finance_gl_queue q where q.event_type in ('BANK_RECEIPT', 'CASH_RECEIPT') and q.ref_id = rc.id), false), rc.method = 'cash'
+        from public.finance_receipts rc where rc.status = 'posted' and rc.wallet_txn_id is null) x
+    left join public.finance_bank_accounts b on b.id = x.bank
+    where (x.at at time zone 'Asia/Bangkok')::date between p_from and p_to and (p_bank is null or x.bank = p_bank)
+    group by (x.at at time zone 'Asia/Bangkok')::date, b.code, x.bank, x.cash) q), '[]'::jsonb);
+end $$;
+
+-- (2) the staff payments list showed every status other than submitted / verified as "rejected": a confirmed slip or one waiting for more evidence now shows as itself
+create or replace function public.finance_payments_overview(p_kind text default null, p_status text default null, p_bank uuid default null, p_search text default null,
+  p_limit integer default 50, p_offset integer default 0)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare v_lim integer := least(greatest(coalesce(p_limit, 50), 1), 200); v_off integer := greatest(coalesce(p_offset, 0), 0); v_q text := nullif(btrim(coalesce(p_search, '')), ''); v_pat text; v_res jsonb;
+begin
+  perform public.finance_require('view', 'see payments');
+  if v_q is not null then v_pat := '%' || replace(replace(replace(left(v_q, 80), '\', '\\'), '%', '\%'), '_', '\_') || '%'; end if;
+  with u as (
+    select 'deposit'::text kind, d.id, d.deposit_no no, d.customer_id, null::text invoice_no, d.amount, d.verified_amount, d.status, d.bank_account_id, d.created_at, d.file_path, d.bank_trans_ref
+      from public.finance_wallet_deposits d
+    union all
+    select 'invoice_slip', e.id, i.invoice_no, e.customer_id, i.invoice_no, e.claimed_amount, e.verified_amount,
+           case e.status when 'submitted' then 'submitted' when 'verified' then 'verified' when 'confirmed' then 'confirmed' when 'more_evidence' then 'more_evidence' else 'rejected' end, e.bank_account_id, e.created_at, e.file_path, e.bank_trans_ref
+      from public.finance_payment_evidence e join public.finance_invoices i on i.id = e.invoice_id
+    union all
+    select 'wallet_payment', r.id, r.receipt_no, r.customer_id, i.invoice_no, r.amount, r.amount, case r.status when 'posted' then 'verified' else 'cancelled' end, null, r.created_at, null, null
+      from public.finance_receipts r join public.finance_invoices i on i.id = r.invoice_id where r.wallet_txn_id is not null),
+  f as (
+    select u.*, c.name customer_name, c.code customer_code, b.code bank_code, b.bank_name_th, b.bank_name_en, count(*) over () total
+    from u join public.finance_customers c on c.id = u.customer_id left join public.finance_bank_accounts b on b.id = u.bank_account_id
+    where (nullif(p_kind, '') is null or u.kind = p_kind) and (nullif(p_status, '') is null or u.status = p_status) and (p_bank is null or u.bank_account_id = p_bank)
+      and (v_q is null or c.name ilike v_pat or c.code ilike v_pat or u.no ilike v_pat or u.invoice_no ilike v_pat or u.bank_trans_ref ilike v_pat)
+    order by u.created_at desc limit v_lim offset v_off)
+  select jsonb_build_object('total', coalesce((select max(total) from f), 0), 'items', coalesce(jsonb_agg(to_jsonb(f) - 'total' order by f.created_at desc), '[]'::jsonb)) into v_res from f;
+  return v_res;
+end $$;
+
+-- 3n who may call what. The core and the reference check are internal (not even the service role); the new actions are for signed-in users, and each checks the
+-- finance role itself. (The replaced functions keep the grants they already had.)
+revoke execute on function public.finance_verify_core(uuid, numeric, text, timestamptz, text, text, text, text), public.finance_ref_in_use(text, uuid) from public, anon, authenticated;
+revoke execute on function public.finance_confirm_evidence(uuid, numeric, text, timestamptz, text), public.finance_post_evidence(uuid, text), public.finance_request_more_evidence(uuid, text),
+  public.finance_record_payment(uuid, text, numeric, timestamptz, text, uuid, text, text, text, text), public.finance_save_review_settings(jsonb) from public, anon;
+grant execute on function public.finance_confirm_evidence(uuid, numeric, text, timestamptz, text), public.finance_post_evidence(uuid, text), public.finance_request_more_evidence(uuid, text),
+  public.finance_record_payment(uuid, text, numeric, timestamptz, text, uuid, text, text, text, text), public.finance_save_review_settings(jsonb) to authenticated;
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    revoke execute on function public.finance_verify_core(uuid, numeric, text, timestamptz, text, text, text, text), public.finance_ref_in_use(text, uuid) from service_role;
+  end if;
+end $$;
