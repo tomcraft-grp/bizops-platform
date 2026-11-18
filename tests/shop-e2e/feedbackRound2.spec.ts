@@ -51,6 +51,53 @@ test.describe('order again (FB-001002)', () => {
   });
 });
 
+test.describe('online shop orders on the Orders page (FB-001013)', () => {
+  test.use({ viewport: { width: 1440, height: 900 }, locale: 'en-US' });
+  const staff = async (page: Page, fake: FakeShop, lang: 'en' | 'th' = 'en') => {
+    fake.profile.role = 'SUPER_ADMIN'; fake.profile.display_name = 'Staff';
+    await fake.install(page);
+    await page.addInitScript((l) => { try { localStorage.setItem('bizops.lang', l); } catch { /* ignore */ } }, lang);
+    await page.goto('/#/orders');
+    await expect(page.getByRole('heading', { name: lang === 'en' ? 'Orders' : 'คำสั่งซื้อ' }).first()).toBeVisible();
+  };
+
+  test('the latest online orders are listed on /orders, read-only, with a link to manage them', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate();
+    const a = place(fake, 'order-key-0001', 2); const b = place(fake, 'order-key-0002', 1);
+    fake.setStatus(b, 'preparing');
+    await staff(page, fake);
+    const card = page.locator('section.card', { hasText: 'Online shop (LINE app)' });
+    await expect(card).toBeVisible();
+    await expect(card).toContainText(a); await expect(card).toContainText(b);
+    await expect(card).toContainText('1 new order(s) to look at');
+    await expect(card.getByRole('row', { name: new RegExp(a) })).toContainText('฿');
+    // read-only: no status buttons, rows do not open anything, one link to the page that manages them
+    await expect(card.getByRole('button', { name: /Mark as/ })).toHaveCount(0);
+    await expect(card.getByRole('link', { name: 'Open Online shop' })).toHaveAttribute('href', /#\/shop-admin$/);
+    // it asked the staff-only function for a short page, not for everything
+    expect(fake.calls.filter((c) => c.fn === 'shop_admin_orders').pop()!.args.p_limit).toBe(6);
+    await page.screenshot({ path: `${process.env.SHOP_SHOTS ?? 'test-results/shop'}/orders-online-card.png` });
+  });
+  test('Thai wording, and an empty shop says so', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate();
+    await staff(page, fake, 'th');
+    const card = page.locator('section.card', { hasText: 'ร้านออนไลน์ (แอป LINE)' });
+    await expect(card).toContainText('ยังไม่มีคำสั่งซื้อออนไลน์');
+    await expect(card.getByRole('link', { name: 'เปิดหน้าร้านออนไลน์' })).toBeVisible();
+  });
+  test('a failed load shows a retry button and the rest of the Orders page keeps working', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate(); const no = place(fake, 'order-key-0001', 1);
+    fake.failNext('shop_admin_orders', 1);
+    await staff(page, fake);
+    const card = page.locator('section.card', { hasText: 'Online shop (LINE app)' });
+    await expect(card).toContainText('Could not load the online shop orders.');
+    await expect(page.getByRole('heading', { name: 'Orders' }).first()).toBeVisible();
+    await card.getByRole('button', { name: 'Try again' }).click();
+    await expect(card).toContainText(no);
+    await expect(card).not.toContainText('Could not load the online shop orders.');
+  });
+});
+
 test.describe('a stalled connection (FB-001019)', () => {
   test('a price check that never answers ends in a "try again" button, and the checkout works after it', async ({ page }) => {
     test.setTimeout(90_000);

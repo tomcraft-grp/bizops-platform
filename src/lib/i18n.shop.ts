@@ -16,7 +16,11 @@ export const TH_SHOP: Record<string, string> = {
   // back office: Online shop page
   'Online shop': 'ร้านค้าออนไลน์',
   'Orders from the LINE app, the products customers see, and the shop settings. Payments are verified on the Payment review page.': 'คำสั่งซื้อจากแอป LINE สินค้าที่ลูกค้าเห็น และการตั้งค่าร้าน การตรวจสอบการชำระเงินทำที่หน้า Payment review',
-  'No online orders yet': 'ยังไม่มีคำสั่งซื้อออนไลน์', 'Orders placed in the customer app appear here.': 'คำสั่งซื้อที่ลูกค้าสั่งในแอปจะแสดงที่นี่',
+  // the read-only online-shop card on the Orders page (FB-001013)
+  'Online shop (LINE app)': 'ร้านออนไลน์ (แอป LINE)', '{n} new order(s) to look at': 'มีคำสั่งซื้อใหม่ {n} รายการที่ต้องดู', 'No new orders waiting': 'ไม่มีคำสั่งซื้อใหม่ที่รออยู่',
+  'Open Online shop': 'เปิดหน้าร้านออนไลน์', 'Could not load the online shop orders.': 'โหลดคำสั่งซื้อร้านออนไลน์ไม่ได้', 'Try again': 'ลองอีกครั้ง',
+  'Showing the latest {n} of {total} online orders.': 'แสดง {n} จากทั้งหมด {total} รายการล่าสุด',
+  'No online orders yet':'ยังไม่มีคำสั่งซื้อออนไลน์', 'Orders placed in the customer app appear here.': 'คำสั่งซื้อที่ลูกค้าสั่งในแอปจะแสดงที่นี่',
   'Showing {n} of {total}. Narrow the search to see the rest.': 'แสดง {n} จาก {total} รายการ ค้นหาเพื่อดูรายการที่เหลือ', 'Order no., name or phone': 'เลขที่ออเดอร์ ชื่อ หรือเบอร์โทร',
   'Payment has not been verified yet': 'ยังไม่ได้ตรวจสอบการชำระเงิน', 'Pick-up': 'รับที่ร้าน', 'Delivery': 'จัดส่ง', 'Shipping': 'ค่าจัดส่ง',
   "Not paid yet. Verify the customer's slip on the Payment review page: a slip alone never marks an order paid.": 'ยังไม่ชำระเงิน ตรวจสอบสลิปของลูกค้าที่หน้า Payment review (สลิปอย่างเดียวไม่ทำให้ออเดอร์เป็น "ชำระแล้ว")',
