@@ -7,6 +7,7 @@ import { buildLiveDB, LIVE_DB_VERSION } from './seedData';
 import { DEMO_SEED } from './demo';
 import { kvDel, kvGet, kvSet } from '../lib/idb';
 import { t, type Lang } from '../lib/i18n';
+import { errorToastText } from '../lib/errorText';
 
 // Structural sharing needs frozen state: with auto-freeze OFF immer re-walks the whole (multi-MB) ledger on every transaction.
 // Measured (qa/PERFORMANCE_TEST_REPORT.md): posting one POS sale ≈195 ms with freeze OFF vs ≈20 ms with freeze ON on the seeded dataset.
@@ -105,7 +106,9 @@ export const setUI = (patch: Partial<UIState>) => useStore.setState((s) => ({ ui
 let toastId = 1;
 export function toast(kind: 'success' | 'error' | 'info', text: string) {
   const id = toastId++;
-  const text2 = t(useStore.getState().ui.lang, text);
+  // errors show the Thai and the English message together, so staff can tell what went wrong in either language (FB-001004)
+  const lang = useStore.getState().ui.lang;
+  const text2 = kind === 'error' ? errorToastText(lang, text) : t(lang, text);
   setUI({ toasts: [...useStore.getState().ui.toasts, { id, kind, text: text2 }] });
   setTimeout(() => setUI({ toasts: useStore.getState().ui.toasts.filter((x) => x.id !== id) }), kind === 'error' ? 7000 : 3500);
 }

@@ -3,6 +3,7 @@
 // the totals, the order and its payment status. The app only ever sends "SKU + quantity" and contact details.
 import { supabase } from '../lib/supabase';
 import type { InvoiceRow } from '../finance/api';
+import { TimeoutError, withTimeout } from './timeout';
 
 // ---------------------------------------------------------------- types
 export interface ShopSpec { label: string; value: string }
@@ -83,9 +84,13 @@ function fail(e: { message?: string; details?: string | null; code?: string }): 
   if (e.code === '42501' || /sign in|not allowed|permission denied/i.test(m)) throw new ShopError(m, 'FORBIDDEN');
   throw new ShopError(m || 'Request failed', 'ERROR');
 }
-export async function rpc<T>(name: string, args?: Record<string, unknown>): Promise<T> {
+/** Reads give up after 25 s, placing an order after 45 s: a stalled phone connection becomes a retryable NETWORK error instead of a button that never comes back. */
+export const READ_TIMEOUT_MS = 25_000;
+export const WRITE_TIMEOUT_MS = 45_000;
+export async function rpc<T>(name: string, args?: Record<string, unknown>, timeoutMs = READ_TIMEOUT_MS): Promise<T> {
   let r;
-  try { r = await supabase.rpc(name, args); } catch (e) { throw new ShopError((e as Error).message || 'network', 'NETWORK'); }
+  try { r = await withTimeout((signal) => supabase.rpc(name, args).abortSignal(signal), timeoutMs); }
+  catch (e) { throw new ShopError(e instanceof TimeoutError ? 'timeout' : (e as Error).message || 'network', 'NETWORK'); }
   if (r.error) fail(r.error);
   return r.data as T;
 }
@@ -117,7 +122,7 @@ export const shop = {
       p_key: i.key, p_items: i.items, p_fulfilment: i.fulfilment, p_name: i.name, p_phone: i.phone, p_address: i.fulfilment === 'delivery' ? i.address : null,
       p_note: i.note || null, p_expected_total: i.expectedTotal, ...(i.paymentMethod ? { p_payment_method: i.paymentMethod } : {}),
       ...(i.slip ? { p_slip_path: i.slip.path, p_slip_sha256: i.slip.sha256, p_slip_type: i.slip.type, p_slip_transfer_at: i.slip.transferAt ?? null, p_slip_ref: i.slip.ref || null } : {}),
-    });
+    }, WRITE_TIMEOUT_MS);
     clearShopCache();
     return r;
   },

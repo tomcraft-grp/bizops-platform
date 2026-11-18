@@ -11,6 +11,7 @@ import { TransferAmount, WalletPayPanel } from '../wallet/PayInvoice';
 import { QR } from '../ui/shared';
 import { dateFmt, dateTimeFmt, money } from '../lib/util';
 import { Evidence, finance, InvoiceRow, QrRequest, Receipt, STATUS, StatusCode } from './api';
+import { withTimeout } from '../shop/timeout';
 import { downloadBlob, renderQrCard } from './qrImage';
 
 const MSG: Record<StatusCode, { th: string; en: string; tone: 'info' | 'warn' | 'bad' | 'good' }> = {
@@ -107,10 +108,11 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
     if (!(amount > 0)) return toast('error', tl(lang, 'Enter the amount you transferred'));
     setBusy('slip');
     try {
-      await finance.submitEvidence({ invoiceId: inv.id, file: f, claimedAmount: amount, transferAt: form.when ? new Date(form.when).toISOString() : null, bank: bankChoice ? bankChoice.code : form.bank, ref: form.ref, bankAccountId: bankChoice?.id ?? null });
+      // a stalled upload gives up after 60 s so the button comes back instead of waiting for ever (FB-001019)
+      await withTimeout(() => finance.submitEvidence({ invoiceId: inv.id, file: f, claimedAmount: amount, transferAt: form.when ? new Date(form.when).toISOString() : null, bank: bankChoice ? bankChoice.code : form.bank, ref: form.ref, bankAccountId: bankChoice?.id ?? null }), 60_000);
       toast('success', tl(lang, 'Slip sent. The shop will verify it shortly.'));
       pick(null); setForm((x) => ({ ...x, ref: '' })); onChanged(); void loadHistory();
-    } catch (e) { toast('error', (e as Error).message); } finally { setBusy(''); }
+    } catch (e) { toast('error', (e as Error).message); } finally { setBusy(''); }   // the toast shows a known message in Thai and English (lib/errorText.ts): duplicate slip, wrong date, …
   };
   const rejected = history?.ev.find((e) => e.status === 'rejected' && e.reject_reason);
 

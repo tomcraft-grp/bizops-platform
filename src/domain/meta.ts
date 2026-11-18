@@ -65,6 +65,12 @@ export const PAGE_META: Record<string, PageMeta> = {
   '/health': { page: 'System health', module: 'system' },
   '/blueprint': { page: 'Blueprint & scope', module: 'blueprint' },
   '/feedback': { page: 'Feedback & issues', module: 'feedback' },
+  // Added after FB-001001…FB-001022 showed up as "NOT AVAILABLE / unknown": these routes existed in App.tsx but had no entry here.
+  '/payment-review': { page: 'Payment review', module: 'receivables', feature: 'payment-review' },
+  '/payments': { page: 'Payments & wallet', module: 'receivables', feature: 'payments-wallet' },
+  '/shop-admin': { page: 'Online shop', module: 'orders', feature: 'online-shop' },
+  '/members': { page: 'LINE members', module: 'customers', feature: 'line-members' },
+  '/dev-app': { page: 'DEV APP Customer', module: 'devapp' },
   '/app': { page: 'Customer app (LIFF)', module: 'customer_app' },
 };
 /** Best-effort lookup: exact path, else the longest registered prefix, else NOT AVAILABLE. */

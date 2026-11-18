@@ -9,6 +9,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { toast } from '../domain/store';
 import { Fulfilment, Quote, shop, ShopError } from './api';
 import { attemptKey, forgetAttempt, MAX_QTY, toQuoteItems, useCart } from './cart';
+import { TimeoutError, withTimeout } from './timeout';
 import { baht, digits, packLabel, validPhone } from './format';
 import { useSettings, useQuote } from './hooks';
 import { K, useT } from './i18n';
@@ -144,7 +145,8 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       const fp = needsSlip && slip ? await slipFingerprint(slip.file) : null;
       const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? address.trim() : '', note: note.trim(), pm: methodPref, slip: fp?.sha256 ?? null });
       const key = attemptKey(sessionStorage, uid, payload);
-      if (fp && slip) uploaded = await uploadOrderSlip(slip.file, key, fp);        // the same key gives the same file: a retry never leaves a second one
+      // the same key gives the same file: a retry never leaves a second one. A stalled upload gives up after 60 s so the button comes back (FB-001019)
+      if (fp && slip) uploaded = await withTimeout(() => uploadOrderSlip(slip.file, key, fp), 60_000);
       const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: address.trim(), note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total,
         slip: fp && uploaded ? { path: uploaded, sha256: fp.sha256, type: fp.type, transferAt: slipWhen ? new Date(slipWhen).toISOString() : null, ref: slipRef.trim() || null } : null });
       try { localStorage.setItem(CONTACT_KEY(uid), JSON.stringify({ name: name.trim(), phone: digits(phone), address: address.trim() } satisfies Contact)); } catch { /* ignore */ }
@@ -158,7 +160,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       const code = e instanceof ShopError ? e.code : '';
       if (uploaded && e instanceof ShopError && code !== 'NETWORK' && code !== 'ERROR') removeOrderSlip(uploaded);   // refused for good: do not keep the file (a lost answer might still have created the order, so then it stays)
       if (code === 'PRICE_CHANGED' || code === 'CART_INVALID') refresh();   // show the new numbers / the unavailable items
-      setErr(errText(t, e));
+      setErr(e instanceof TimeoutError ? t('err.network') : errText(t, e));   // a stalled upload: the same "could not connect, safe to try again" message
     } finally { inflight.current = false; setBusy(false); }
   };
 
