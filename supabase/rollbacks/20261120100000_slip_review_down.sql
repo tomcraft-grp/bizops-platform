@@ -25,6 +25,13 @@ end $guard$;
 -- ================================================================================================= 2 analysis (undo)
 -- the queue trigger first (it writes to the analysis table that section 1c drops below), then the functions, callers before the helpers they use.
 -- No data lives in these objects (the guard above has already refused if any analysis row exists), so nothing is lost.
+-- (the duplicate-scan indexes use finance_slip_ref, so they go before it)
+drop index if exists public.finance_receipts_slipref_idx;
+drop index if exists public.finance_evidence_slipref_idx;
+drop index if exists public.finance_evidence_confslipref_idx;
+drop index if exists public.finance_deposits_slipref_idx;
+drop index if exists public.finance_analysis_slipref_idx;
+drop index if exists public.finance_analysis_qrslipref_idx;
 drop trigger if exists finance_evidence_queue_analysis on public.finance_payment_evidence;
 drop function if exists public.finance_evidence_queue_analysis();
 drop function if exists public.finance_request_analysis(uuid);

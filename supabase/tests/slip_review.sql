@@ -233,12 +233,12 @@ begin
   end;
 end $$;
 -- a synthetic slip row (carrying a printed or confirmed bank reference) on one of this section's invoices
-create or replace function pg_temp.mkev(p_key text, p_invoice text, p_bank_ref text default null, p_conf_ref text default null) returns void language plpgsql as $$
+create or replace function pg_temp.mkev(p_key text, p_invoice text, p_bank_ref text default null, p_conf_ref text default null, p_customer text default 'cust') returns void language plpgsql as $$
 declare v uuid;
 begin
   begin
     insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, bank_trans_ref, confirmed_bank_ref)
-      values (pg_temp.c(p_invoice)::uuid, pg_temp.c('cust')::uuid, 'S2/' || p_key, md5('s2-' || p_key) || md5('s2b-' || p_key), 'image/png', 10, p_bank_ref, p_conf_ref) returning id into v;
+      values (pg_temp.c(p_invoice)::uuid, pg_temp.c(p_customer)::uuid, 'S2/' || p_key, md5('s2-' || p_key) || md5('s2b-' || p_key), 'image/png', 10, p_bank_ref, p_conf_ref) returning id into v;
     insert into t_ctx values (p_key, v::text);
   exception when others then perform pg_temp.chk('S2 setup ' || p_key, false, sqlerrm);
   end;
@@ -486,6 +486,63 @@ select pg_temp.cl('S2 classify: the slip under test is not a duplicate of its ow
 select pg_temp.cl('S2 classify: ...nor of the receipt made from it', pg_temp.exr('S2SELFREF0002'), 'match', p_qr => pg_temp.qrr('S2SELFREF0002'), p_ev => 'evS', p_n => 0);
 select pg_temp.cl('S2 classify: but another slip with that reference is a duplicate of it', pg_temp.exr('S2SELFREF0001'), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], p_qr => pg_temp.qrr('S2SELFREF0001'));
 select pg_temp.cl('S2 classify: a reference of fewer than 4 characters is treated as absent (no duplicate scan, no QR comparison)', pg_temp.exr('ab1'), 'match', p_qr => pg_temp.qrr('XYZ99999'), p_n => 0);
+-- a customer who was sent back (rejected / more evidence requested) and resends the same transfer is not a suspected duplicate of their OWN earlier slip on the
+-- SAME invoice: an info reason (RESUBMITTED_TRANSFER) and the other rules decide. Anything else stays a duplicate: another invoice, another customer, a receipt,
+-- a wallet deposit, an earlier slip that is still live (submitted, confirmed, posted), or an earlier slip that already has a receipt.
+insert into public.finance_customers (code, name) values ('S2-OTHER', 'S2 other customer');
+insert into t_ctx select 'cust2', id::text from public.finance_customers where code = 'S2-OTHER';
+select pg_temp.mkev('evRs1', 'i3id', 'S2RESUB0001');
+select pg_temp.mkev('evRs2', 'i3id', null, 'S2RESUB0002');
+select pg_temp.mkev('evRs3', 'i3id');
+select pg_temp.mkev('evRs4', 'i3id');
+select pg_temp.mkev('evHd1', 'i4id', 'S2RESUB0005');
+select pg_temp.mkev('evHd2', 'i3id', 'S2RESUB0006', null, 'cust2');
+select pg_temp.mkev('evHd3', 'i3id', null, 'S2RESUB0007');
+select pg_temp.mkev('evHd4', 'i3id');
+select pg_temp.mkev('evHd5', 'i4id');
+select pg_temp.mkev('evLv', 'i3id', 'S2RESUB0011');
+select pg_temp.runs_ok('S2 setup: seven earlier slips are rejected', format($q$update public.finance_payment_evidence set status = 'rejected' where id in (%L, %L, %L, %L, %L, %L, %L)$q$,
+  pg_temp.c('evRs1'), pg_temp.c('evRs3'), pg_temp.c('evHd1'), pg_temp.c('evHd2'), pg_temp.c('evHd3'), pg_temp.c('evHd4'), pg_temp.c('evHd5')));
+select pg_temp.runs_ok('S2 setup: two earlier slips were sent back for more evidence', format($q$update public.finance_payment_evidence set status = 'more_evidence' where id in (%L, %L)$q$, pg_temp.c('evRs2'), pg_temp.c('evRs4')));
+select pg_temp.runs_ok('S2 setup: three earlier slips carry a finished analysis with a reference (printed / QR only / printed)',
+  format($q$update public.finance_slip_analysis a set status = 'done', result = 'match', finished_at = now(), extracted = v.ex, qr = v.qr
+    from (values (%L::uuid, '{"trans_ref": "S2RESUB0003"}'::jsonb, '{"found": false}'::jsonb),
+                 (%L::uuid, '{"trans_ref": null}'::jsonb, '{"found": true, "trans_ref": "S2RESUB0004"}'::jsonb),
+                 (%L::uuid, '{"trans_ref": "S2RESUB0010"}'::jsonb, '{"found": false}'::jsonb)) as v(ev, ex, qr)
+    where a.evidence_id = v.ev and a.attempt = 1$q$, pg_temp.c('evRs3'), pg_temp.c('evRs4'), pg_temp.c('evHd5')));
+select pg_temp.runs_ok('S2 setup: a rejected slip that nevertheless has a receipt (evHd3, no reference on it) and one whose receipt carries a reference (evHd4)',
+  format($q$insert into public.finance_receipts (receipt_no, customer_id, invoice_id, evidence_id, amount, bank_trans_ref, received_at)
+    values ('RC-S2-HD3', %L, %L, %L, 10, null, now()), ('RC-S2-HD4', %L, %L, %L, 10, 'S2RESUB0008', now())$q$,
+    pg_temp.c('cust'), pg_temp.c('i3id'), pg_temp.c('evHd3'), pg_temp.c('cust'), pg_temp.c('i3id'), pg_temp.c('evHd4')));
+select pg_temp.cl('S2 resubmit: the same transfer on a slip of mine that was rejected (same invoice, same customer) is RESUBMITTED_TRANSFER, not a duplicate',
+  pg_temp.exr('S2RESUB0001'), 'match', array['RESUBMITTED_TRANSFER'], array['DUPLICATE_REFERENCE'], p_qr => pg_temp.qrr('S2RESUB0001'), p_n => 1);
+select pg_temp.cl('S2 resubmit: ...also for a slip sent back for more evidence (a confirmed reference on it)', pg_temp.exr('S2RESUB0002'), 'match', array['RESUBMITTED_TRANSFER'], array['DUPLICATE_REFERENCE'], p_qr => pg_temp.qrr('S2RESUB0002'), p_n => 1);
+select pg_temp.cl('S2 resubmit: ...found through the earlier slip''s analysis (the printed reference)', pg_temp.exr('S2RESUB0003'), 'match', array['RESUBMITTED_TRANSFER'], array['DUPLICATE_REFERENCE'], p_qr => pg_temp.qrr('S2RESUB0003'), p_n => 1);
+select pg_temp.cl('S2 resubmit: ...found through the earlier analysis''s QR reference alone', pg_temp.exr(null), 'match', array['RESUBMITTED_TRANSFER'], array['DUPLICATE_REFERENCE'], p_qr => pg_temp.qrr('S2RESUB0004'), p_n => 1);
+select pg_temp.keep('clsRs', format($q$select public.finance_classify_slip(%L, %L::jsonb, %L::jsonb, 0.95, '[]'::jsonb)::text$q$, pg_temp.c('ev3'), pg_temp.exr('S2RESUB0001')::text, pg_temp.qrr('S2RESUB0001')::text));
+select pg_temp.q('S2 resubmit: the reason is info, names the transfer reference field and carries the earlier slip''s id',
+  $$select count(*) = 1 and bool_and(r ->> 'code' = 'RESUBMITTED_TRANSFER' and r ->> 'severity' = 'info' and r ->> 'field' = 'trans_ref' and r ->> 'found' = pg_temp.c('evRs1') and length(r ->> 'message') > 5
+         and r ?& array['code', 'severity', 'field', 'expected', 'found', 'message']) from t_ctx, jsonb_array_elements((v::jsonb) -> 'reasons') r where k = 'clsRs'$$);
+select pg_temp.cl('S2 resubmit: the other rules still decide (an amount mismatch on the resent slip)', pg_temp.exr('S2RESUB0001') || jsonb_build_object('amount', pg_temp.t3() + 5), 'amount_mismatch',
+  array['RESUBMITTED_TRANSFER', 'AMOUNT_OVER'], array['DUPLICATE_REFERENCE'], p_qr => pg_temp.qrr('S2RESUB0001'));
+select pg_temp.cl('S2 resubmit: an earlier rejected slip on ANOTHER invoice (same customer) is a duplicate', pg_temp.exr('S2RESUB0005'), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], array['RESUBMITTED_TRANSFER'], p_qr => pg_temp.qrr('S2RESUB0005'));
+select pg_temp.cl('S2 resubmit: an earlier rejected slip of ANOTHER customer (same invoice) is a duplicate', pg_temp.exr('S2RESUB0006'), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], array['RESUBMITTED_TRANSFER'], p_qr => pg_temp.qrr('S2RESUB0006'));
+select pg_temp.cl('S2 resubmit: an earlier rejected slip that has a receipt is a duplicate', pg_temp.exr('S2RESUB0007'), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], array['RESUBMITTED_TRANSFER'], p_qr => pg_temp.qrr('S2RESUB0007'));
+select pg_temp.cl('S2 resubmit: a reference on a RECEIPT is always a duplicate, even when it belongs to a rejected slip of mine', pg_temp.exr('S2RESUB0008'), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], array['RESUBMITTED_TRANSFER'], p_qr => pg_temp.qrr('S2RESUB0008'));
+select pg_temp.cl('S2 resubmit: an earlier rejected slip on another invoice, found through its analysis, is a duplicate', pg_temp.exr('S2RESUB0010'), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], array['RESUBMITTED_TRANSFER'], p_qr => pg_temp.qrr('S2RESUB0010'));
+select pg_temp.cl('S2 resubmit: a wallet deposit with the reference makes it a duplicate even when an earlier rejected slip of mine has it too',
+  pg_temp.exr('S2RESUB0001'), 'duplicate_suspected', array['DUPLICATE_REFERENCE', 'RESUBMITTED_TRANSFER'], p_qr => pg_temp.qrr('S2DUPWD0001'));
+select pg_temp.cl('S2 resubmit: ...and so does a receipt', pg_temp.exr('S2RESUB0001'), 'duplicate_suspected', array['DUPLICATE_REFERENCE', 'RESUBMITTED_TRANSFER'], p_qr => pg_temp.qrr('S2DUPREC0001'));
+-- the status of the earlier slip on the same invoice decides: live = duplicate, sent back = resubmitted
+select pg_temp.cl('S2 resubmit: an earlier slip that is still submitted is a duplicate', pg_temp.exr('S2RESUB0011'), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], array['RESUBMITTED_TRANSFER'], p_qr => pg_temp.qrr('S2RESUB0011'));
+select pg_temp.runs_ok('S2 setup: the earlier slip is confirmed', format($q$update public.finance_payment_evidence set status = 'confirmed' where id = %L$q$, pg_temp.c('evLv')));
+select pg_temp.cl('S2 resubmit: ...confirmed is still a duplicate', pg_temp.exr('S2RESUB0011'), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], array['RESUBMITTED_TRANSFER'], p_qr => pg_temp.qrr('S2RESUB0011'));
+select pg_temp.runs_ok('S2 setup: the earlier slip is posted (verified)', format($q$update public.finance_payment_evidence set status = 'verified' where id = %L$q$, pg_temp.c('evLv')));
+select pg_temp.cl('S2 resubmit: ...posted is still a duplicate', pg_temp.exr('S2RESUB0011'), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], array['RESUBMITTED_TRANSFER'], p_qr => pg_temp.qrr('S2RESUB0011'));
+select pg_temp.runs_ok('S2 setup: the earlier slip is sent back for more evidence', format($q$update public.finance_payment_evidence set status = 'more_evidence' where id = %L$q$, pg_temp.c('evLv')));
+select pg_temp.cl('S2 resubmit: ...sent back is a resubmission', pg_temp.exr('S2RESUB0011'), 'match', array['RESUBMITTED_TRANSFER'], array['DUPLICATE_REFERENCE'], p_qr => pg_temp.qrr('S2RESUB0011'), p_n => 1);
+select pg_temp.runs_ok('S2 setup: the earlier slip is rejected', format($q$update public.finance_payment_evidence set status = 'rejected' where id = %L$q$, pg_temp.c('evLv')));
+select pg_temp.cl('S2 resubmit: ...rejected is a resubmission', pg_temp.exr('S2RESUB0011'), 'match', array['RESUBMITTED_TRANSFER'], array['DUPLICATE_REFERENCE'], p_qr => pg_temp.qrr('S2RESUB0011'), p_n => 1);
 -- suspicious: QR, tamper, status
 select pg_temp.cl('S2 classify: a QR reference different from the printed one is suspicious (QR_REF_MISMATCH)', pg_temp.ex(), 'suspicious_slip', array['QR_REF_MISMATCH'], array['DUPLICATE_REFERENCE'], p_qr => pg_temp.qrr('S2REF000000B2'));
 select pg_temp.cl('S2 classify: a QR reference that differs only in case and dashes is the same reference', pg_temp.ex(), 'match', p_qr => pg_temp.qrr('s2-ref-000000-a1'), p_n => 0);
@@ -546,6 +603,38 @@ select pg_temp.q('S2 classify: no answer at all (null) is unreadable, manual rev
 select pg_temp.cl('S2 classify: confidence 0.79 with everything else right is manual review (LOW_CONFIDENCE)', pg_temp.ex(), 'manual_review', array['LOW_CONFIDENCE'], p_conf => 0.79);
 select pg_temp.cl('S2 classify: confidence exactly at the threshold (0.80) passes', pg_temp.ex(), 'match', p_conf => 0.80, p_n => 0);
 select pg_temp.cl('S2 classify: confidence 1 passes', pg_temp.ex(), 'match', p_conf => 1, p_n => 0);
+-- (E) the amount is read to the satang: a stray third decimal does not make a mismatch, but a whole satang does
+select pg_temp.cl('S2 amount: 0.004 over the expected amount rounds to the same amount (match)', pg_temp.ex(jsonb_build_object('amount', pg_temp.t3() + 0.004)), 'match', p_n => 0);
+select pg_temp.cl('S2 amount: 0.004 under rounds to the same amount (match)', pg_temp.ex(jsonb_build_object('amount', pg_temp.t3() - 0.004)), 'match', p_n => 0);
+select pg_temp.cl('S2 amount: 0.006 over rounds to one satang over (AMOUNT_OVER)', pg_temp.ex(jsonb_build_object('amount', pg_temp.t3() + 0.006)), 'amount_mismatch', array['AMOUNT_OVER'], array['AMOUNT_UNDER']);
+select pg_temp.cl('S2 amount: 0.006 under rounds to one satang under (AMOUNT_UNDER)', pg_temp.ex(jsonb_build_object('amount', pg_temp.t3() - 0.006)), 'amount_mismatch', array['AMOUNT_UNDER'], array['AMOUNT_OVER']);
+select pg_temp.cl('S2 amount: an amount that rounds to zero (0.004) is a missing amount', pg_temp.ex('{"amount": 0.004}'), 'manual_review', array['AMOUNT_MISSING']);
+-- (B) the threshold is applied to the confidence as the reader reported it; only the stored copy is rounded to 3 decimals
+select pg_temp.cl('S2 confidence: 0.7995 is below the minimum of 0.80 (not rounded up to it)', pg_temp.ex(), 'manual_review', array['LOW_CONFIDENCE'], p_conf => 0.7995);
+select pg_temp.cl('S2 confidence: 0.8004 passes', pg_temp.ex(), 'match', p_conf => 0.8004, p_n => 0);
+-- (C) a long visible-digit string cannot break or slow the receiver comparison
+select pg_temp.cl('S2 receiver: the full 10-digit account number shown is ours', pg_temp.rc(pg_temp.hint(null, pg_temp.c('scb_no'))), 'match', array[]::text[], array['RECEIVER_MISMATCH'], p_n => 0);
+select pg_temp.cl('S2 receiver: one digit more than the account has cannot be a subsequence (not ours)', pg_temp.rc(pg_temp.hint(null, pg_temp.c('scb_no') || '1')), 'suspicious_slip', array['RECEIVER_MISMATCH']);
+select pg_temp.cl('S2 receiver: a 200-digit account hint is no error and is not ours', pg_temp.rc(pg_temp.hint(null, repeat('1234567890', 20))), 'suspicious_slip', array['RECEIVER_MISMATCH']);
+select pg_temp.cl('S2 receiver: a 30000-digit account hint is no error and is not ours either', pg_temp.rc(pg_temp.hint(null, repeat('7', 30000))), 'suspicious_slip', array['RECEIVER_MISMATCH']);
+select pg_temp.cl('S2 receiver: a long digit string does not hide a matching name', pg_temp.rc(pg_temp.hint(pg_temp.c('nm_title'), repeat('7', 200))), 'match', array[]::text[], array['RECEIVER_MISMATCH'], p_n => 0);
+-- (D) text that comes from the reader is cut to 300 characters wherever it lands in a reason
+select pg_temp.keep('clsD', format($q$select public.finance_classify_slip(%L, %L::jsonb, %L::jsonb, 0.95, %L::jsonb)::text$q$, pg_temp.c('ev3'),
+  (pg_temp.ex(jsonb_build_object('status_text', repeat('x', 1000) || ' failed', 'amount', repeat('a', 1000), 'transfer_at', repeat('y', 1000), 'trans_ref', repeat('R', 1000),
+     'receiver', pg_temp.hint(repeat('ก', 1000), null))))::text,
+  pg_temp.qrok(jsonb_build_object('trans_ref', repeat('Q', 1000)))::text,
+  jsonb_build_array(jsonb_build_object('code', repeat('c', 1000), 'severity', 'high', 'detail', repeat('d', 1000)))::text));
+select pg_temp.q('S2 text caps: every reason the reader''s text lands in is present (tamper, status, receiver, missing amount and date, QR mismatch)',
+  $$select (select array_agg(r ->> 'code') from t_ctx, jsonb_array_elements((v::jsonb) -> 'reasons') r where k = 'clsD') @> array['TAMPER_SIGNAL', 'STATUS_NOT_SUCCESS', 'RECEIVER_MISMATCH', 'AMOUNT_MISSING', 'DATE_MISSING', 'QR_REF_MISMATCH']$$);
+select pg_temp.q('S2 text caps: no string in the reasons is longer than 300 characters, and the cut ones are exactly 300 (cut, not dropped)',
+  $$select max(length(x #>> '{}')) = 300 from t_ctx, jsonb_path_query((v::jsonb) -> 'reasons', '$.**') x where k = 'clsD' and jsonb_typeof(x) = 'string'$$);
+-- (F) the duplicate scan has an index on the normalised reference for every source
+select pg_temp.q('S2 indexes: every source of the duplicate scan has an expression index on finance_slip_ref',
+  $$select count(*) = 6 and bool_and(indexdef like '%finance_slip_ref%') from pg_indexes where schemaname = 'public'
+      and indexname in ('finance_receipts_slipref_idx', 'finance_evidence_slipref_idx', 'finance_evidence_confslipref_idx', 'finance_deposits_slipref_idx', 'finance_analysis_slipref_idx', 'finance_analysis_qrslipref_idx')$$);
+select pg_temp.q('S2 indexes: the analysis indexes cover finished analyses only, the others rows that have a reference',
+  $$select (select count(*) = 2 from pg_indexes where indexname in ('finance_analysis_slipref_idx', 'finance_analysis_qrslipref_idx') and indexdef like '%status = ''done''%')
+        and (select count(*) = 4 from pg_indexes where indexname in ('finance_receipts_slipref_idx', 'finance_evidence_slipref_idx', 'finance_evidence_confslipref_idx', 'finance_deposits_slipref_idx') and indexdef like '%IS NOT NULL%')$$);
 select pg_temp.q('S2 classify: no confidence reported is manual review too',
   format($$select public.finance_classify_slip(%L, %L::jsonb, %L::jsonb, null, '[]'::jsonb) ->> 'result' = 'manual_review'$$, pg_temp.c('ev3'), pg_temp.ex()::text, pg_temp.qrok()::text));
 select pg_temp.cl('S2 classify: a low confidence on the AMOUNT alone (0.79) is manual review, whatever the overall confidence', pg_temp.ex('{"field_confidence": {"amount": 0.79, "date": 0.95, "time": 0.95, "receiver": 0.95, "ref": 0.95}}'), 'manual_review', array['LOW_CONFIDENCE']);
@@ -621,6 +710,12 @@ select pg_temp.err_like('S2 begin: with no actor nothing is found', format($q$se
 select pg_temp.err_like('S2 begin: another customer cannot claim the slip (not found, not "forbidden")', format($q$select public.finance_analysis_begin(%L, null, %L)$q$, pg_temp.c('ev5'), pg_temp.c('B')), '%NOT_FOUND%');
 reset role;
 select pg_temp.q('S2 begin: ...and it did not claim anything', format($$select status = 'queued' and started_at is null from public.finance_slip_analysis where id = %L$$, pg_temp.aid('ev5', 1)));
+select pg_temp.runs_ok('S2 begin: customer A''s profile is disabled (inside this run)', format($q$update public.profiles set status = 'disabled' where id = %L$q$, pg_temp.c('A')));
+reset role; set local role service_role;
+select pg_temp.err_like('S2 begin: a customer whose profile is disabled cannot claim their own slip (not found)', format($q$select public.finance_analysis_begin(%L, null, %L)$q$, pg_temp.c('ev5'), pg_temp.c('A')), '%NOT_FOUND%');
+reset role;
+select pg_temp.runs_ok('S2 begin: customer A''s profile is active again', format($q$update public.profiles set status = 'active' where id = %L$q$, pg_temp.c('A')));
+select pg_temp.q('S2 begin: ...and the refused call claimed nothing', format($$select status = 'queued' and started_at is null from public.finance_slip_analysis where id = %L$$, pg_temp.aid('ev5', 1)));
 select pg_temp.runs_ok('S2 begin: the AI review is switched off while slips are waiting', $q$update public.finance_settings set ai_review_enabled = false$q$);
 reset role; set local role service_role;
 select pg_temp.err_like('S2 begin: with the AI review off nothing is started (AI_DISABLED), whoever asks', format($q$select public.finance_analysis_begin(%L, null, %L)$q$, pg_temp.c('ev6'), pg_temp.c('A')), '%AI_DISABLED%');
@@ -692,6 +787,13 @@ select pg_temp.err_like('S2 begin: a payment recorded by staff has no slip image
 reset role;
 select pg_temp.q('S2 complete: no QR, no signals and no confidence are stored as null / [] / null, and the slip is manual review (LOW_CONFIDENCE) - completing a waiting attempt directly is allowed',
   format($$select status = 'done' and result = 'manual_review' and qr is null and signals = '[]'::jsonb and overall_confidence is null and reasons @> '[{"code": "LOW_CONFIDENCE"}]'::jsonb from public.finance_slip_analysis where id = %L$$, pg_temp.aid('evNull', 1)));
+-- (B) complete judges the confidence as the reader reported it and stores it rounded to 3 decimals
+select pg_temp.mkev('evB', 'i3id');
+reset role; set local role service_role;
+select pg_temp.keep('cmB', format($q$select public.finance_analysis_complete(%L, %L::jsonb, %L::jsonb, 0.7995, '[]'::jsonb, 'claude-haiku-5-5', 'v1')::text$q$, pg_temp.aid('evB', 1), pg_temp.exr('S2REF000000B7')::text, pg_temp.qrr('S2REF000000B7')::text));
+reset role;
+select pg_temp.q('S2 complete: a confidence of 0.7995 is judged as reported (below 0.80: manual review, LOW_CONFIDENCE) and stored rounded to 0.800',
+  format($$select status = 'done' and result = 'manual_review' and overall_confidence = 0.800 and reasons @> '[{"code": "LOW_CONFIDENCE"}]'::jsonb from public.finance_slip_analysis where id = %L$$, pg_temp.aid('evB', 1)));
 -- duplicates against another slip's finished analysis
 select pg_temp.cl('S2 classify: a reference read on another slip''s finished analysis (printed) is a suspected duplicate', pg_temp.ex(), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], p_ev => 'ev5');
 select pg_temp.cl('S2 classify: ...also when only the QR reference matches it', pg_temp.exr(null), 'duplicate_suspected', array['DUPLICATE_REFERENCE'], p_ev => 'ev5');

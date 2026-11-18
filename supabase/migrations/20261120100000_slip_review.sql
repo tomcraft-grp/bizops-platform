@@ -185,7 +185,8 @@ returns table (label text, bank text, digits text, account_name text) language s
 $$;
 
 -- 2c the classifier (pure rules, first match wins, every applicable reason is recorded). Result precedence:
---   1 not a slip / unreadable / amount or date missing -> manual_review      2 reference already seen -> duplicate_suspected
+--   1 not a slip / unreadable / amount or date missing -> manual_review      2 reference already seen -> duplicate_suspected (a transfer the customer resent
+--     after a rejection / request for more evidence is only an info reason, see rule 2 below)
 --   3 tamper signal, QR reference or checksum, receiver not ours, status not success -> suspicious_slip     4 amount differs -> amount_mismatch
 --   5 date outside the window -> date_mismatch; time outside the window or unknown -> time_anomaly           6 low confidence -> manual_review     7 match
 -- p_extracted / p_qr / p_signals follow the contract of the Edge Function; the expected values come from the database, never from the reader.
@@ -195,7 +196,8 @@ declare
   e public.finance_payment_evidence; inv public.finance_invoices; s public.finance_settings;
   v_exp numeric; v_order_at timestamptz; v_from timestamptz; v_to timestamptz; v_expected jsonb; v_reasons jsonb := '[]'::jsonb; v_min numeric;
   v_is_slip boolean; v_amount numeric; v_ts text; v_at timestamptz; v_time_known boolean;
-  v_ref text; v_qref text; v_refs text[]; v_hit text[]; v_status text; sig jsonb;
+  v_ref text; v_qref text; v_refs text[]; v_status text; sig jsonb;
+  h record; v_dup_an text[] := '{}'; v_dup_rc text[] := '{}'; v_dup_ev text[] := '{}'; v_dup_wd text[] := '{}'; v_soft uuid[] := '{}'; v_ev uuid;
   v_digits text; v_name text; v_has_digits boolean; v_has_name boolean; v_ok boolean; rcv record;
   d_t date; d_from date; d_to date;
   f_manual boolean := false; f_dup boolean := false; f_susp boolean := false; f_amount boolean := false; f_date boolean := false; f_time boolean := false; f_conf boolean := false;
@@ -231,7 +233,7 @@ begin
   end if;
 
   -- what was read (a value of the wrong type counts as missing; the date is read as Bangkok time when it carries no offset)
-  if jsonb_typeof(p_extracted -> 'amount') = 'number' then v_amount := (p_extracted ->> 'amount')::numeric; if v_amount <= 0 then v_amount := null; end if; end if;
+  if jsonb_typeof(p_extracted -> 'amount') = 'number' then v_amount := round((p_extracted ->> 'amount')::numeric, 2); if v_amount <= 0 then v_amount := null; end if; end if;   -- read to the satang
   if jsonb_typeof(p_extracted -> 'time_known') = 'boolean' then v_time_known := (p_extracted ->> 'time_known')::boolean; end if;
   v_ts := nullif(btrim(p_extracted ->> 'transfer_at'), '');
   if v_ts ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' then
@@ -245,48 +247,75 @@ begin
   -- rule 1, part 2: a missing amount or date
   if v_amount is null then
     f_manual := true;
-    v_reasons := v_reasons || public.finance_slip_reason('AMOUNT_MISSING', 'warn', 'amount', to_jsonb(v_exp), p_extracted -> 'amount', 'The amount could not be read from the slip.');
+    v_reasons := v_reasons || public.finance_slip_reason('AMOUNT_MISSING', 'warn', 'amount', to_jsonb(v_exp), to_jsonb(left(p_extracted ->> 'amount', 300)), 'The amount could not be read from the slip.');
   end if;
   if v_at is null then
     f_manual := true;
-    v_reasons := v_reasons || public.finance_slip_reason('DATE_MISSING', 'warn', 'transfer_at', null, p_extracted -> 'transfer_at', 'The transfer date could not be read from the slip.');
+    v_reasons := v_reasons || public.finance_slip_reason('DATE_MISSING', 'warn', 'transfer_at', null, to_jsonb(left(p_extracted ->> 'transfer_at', 300)), 'The transfer date could not be read from the slip.');
   end if;
 
-  -- rule 2: the bank reference (printed on the slip and in its QR) was already seen: another finished analysis, a receipt, another slip, a wallet deposit
+  -- rule 2: the bank reference (printed on the slip and in its QR) was already seen: another finished analysis, a receipt, another slip, a wallet deposit.
+  -- Exception: an EARLIER slip of the same customer on the same invoice that was sent back (rejected / more evidence) and has no receipt is the customer resending
+  -- the same transfer: an info reason (RESUBMITTED_TRANSFER) and the other rules decide. Every other hit (another invoice or customer, a receipt, a wallet deposit,
+  -- a slip that is still live: submitted, confirmed or posted) is a suspected duplicate, and one such hit is enough.
   v_ref := public.finance_slip_ref(p_extracted ->> 'trans_ref');
   v_qref := public.finance_slip_ref(p_qr ->> 'trans_ref');
   v_refs := array(select distinct q.r from unnest(array[v_ref, v_qref]) as q(r) where length(q.r) >= 4);        -- a shorter one counts as absent
   if coalesce(array_length(v_refs, 1), 0) > 0 then
-    select array_agg(q.r) into v_hit from unnest(v_refs) as q(r) where exists (select 1 from public.finance_slip_analysis a where a.status = 'done' and a.evidence_id <> e.id
-      and (public.finance_slip_ref(a.extracted ->> 'trans_ref') = q.r or public.finance_slip_ref(a.qr ->> 'trans_ref') = q.r));
-    if v_hit is not null then
+    for h in
+      select q.r as ref, 'analysis'::text as src, a.evidence_id as ev from unnest(v_refs) as q(r) join public.finance_slip_analysis a
+        on a.status = 'done' and a.evidence_id <> e.id and (public.finance_slip_ref(a.extracted ->> 'trans_ref') = q.r or public.finance_slip_ref(a.qr ->> 'trans_ref') = q.r)
+      union all
+      select q.r, 'receipt', c.evidence_id from unnest(v_refs) as q(r) join public.finance_receipts c
+        on c.evidence_id is distinct from e.id and public.finance_slip_ref(c.bank_trans_ref) = q.r
+      union all
+      select q.r, 'evidence', x.id from unnest(v_refs) as q(r) join public.finance_payment_evidence x
+        on x.id <> e.id and (public.finance_slip_ref(x.bank_trans_ref) = q.r or public.finance_slip_ref(x.confirmed_bank_ref) = q.r)
+      union all
+      select q.r, 'deposit', null::uuid from unnest(v_refs) as q(r) join public.finance_wallet_deposits d on public.finance_slip_ref(d.bank_trans_ref) = q.r
+    loop
+      if h.src in ('analysis', 'evidence') and exists (select 1 from public.finance_payment_evidence p
+           where p.id = h.ev and p.invoice_id = e.invoice_id and p.customer_id = e.customer_id and p.status in ('rejected', 'more_evidence')
+             and not exists (select 1 from public.finance_receipts c where c.evidence_id = p.id)) then
+        v_soft := array_append(v_soft, h.ev);
+      elsif h.src = 'analysis' then v_dup_an := array_append(v_dup_an, h.ref);
+      elsif h.src = 'receipt' then v_dup_rc := array_append(v_dup_rc, h.ref);
+      elsif h.src = 'evidence' then v_dup_ev := array_append(v_dup_ev, h.ref);
+      else v_dup_wd := array_append(v_dup_wd, h.ref);
+      end if;
+    end loop;
+    if cardinality(v_dup_an) > 0 then
       f_dup := true;
-      v_reasons := v_reasons || public.finance_slip_reason('DUPLICATE_REFERENCE', 'high', 'trans_ref', null, to_jsonb(array_to_string(v_hit, ', ')), 'This bank reference was already read on another slip.');
+      v_reasons := v_reasons || public.finance_slip_reason('DUPLICATE_REFERENCE', 'high', 'trans_ref', null,
+        to_jsonb(left(array_to_string(array(select distinct u from unnest(v_dup_an) as u), ', '), 300)), 'This bank reference was already read on another slip.');
     end if;
-    select array_agg(q.r) into v_hit from unnest(v_refs) as q(r) where exists (select 1 from public.finance_receipts c where c.evidence_id is distinct from e.id and public.finance_slip_ref(c.bank_trans_ref) = q.r);
-    if v_hit is not null then
+    if cardinality(v_dup_rc) > 0 then
       f_dup := true;
-      v_reasons := v_reasons || public.finance_slip_reason('DUPLICATE_REFERENCE', 'high', 'trans_ref', null, to_jsonb(array_to_string(v_hit, ', ')), 'This bank reference is already on a receipt.');
+      v_reasons := v_reasons || public.finance_slip_reason('DUPLICATE_REFERENCE', 'high', 'trans_ref', null,
+        to_jsonb(left(array_to_string(array(select distinct u from unnest(v_dup_rc) as u), ', '), 300)), 'This bank reference is already on a receipt.');
     end if;
-    select array_agg(q.r) into v_hit from unnest(v_refs) as q(r) where exists (select 1 from public.finance_payment_evidence x where x.id <> e.id
-      and (public.finance_slip_ref(x.bank_trans_ref) = q.r or public.finance_slip_ref(x.confirmed_bank_ref) = q.r));
-    if v_hit is not null then
+    if cardinality(v_dup_ev) > 0 then
       f_dup := true;
-      v_reasons := v_reasons || public.finance_slip_reason('DUPLICATE_REFERENCE', 'high', 'trans_ref', null, to_jsonb(array_to_string(v_hit, ', ')), 'This bank reference is already on another payment slip.');
+      v_reasons := v_reasons || public.finance_slip_reason('DUPLICATE_REFERENCE', 'high', 'trans_ref', null,
+        to_jsonb(left(array_to_string(array(select distinct u from unnest(v_dup_ev) as u), ', '), 300)), 'This bank reference is already on another payment slip.');
     end if;
-    select array_agg(q.r) into v_hit from unnest(v_refs) as q(r) where exists (select 1 from public.finance_wallet_deposits d where public.finance_slip_ref(d.bank_trans_ref) = q.r);
-    if v_hit is not null then
+    if cardinality(v_dup_wd) > 0 then
       f_dup := true;
-      v_reasons := v_reasons || public.finance_slip_reason('DUPLICATE_REFERENCE', 'high', 'trans_ref', null, to_jsonb(array_to_string(v_hit, ', ')), 'This bank reference is already on a wallet deposit.');
+      v_reasons := v_reasons || public.finance_slip_reason('DUPLICATE_REFERENCE', 'high', 'trans_ref', null,
+        to_jsonb(left(array_to_string(array(select distinct u from unnest(v_dup_wd) as u), ', '), 300)), 'This bank reference is already on a wallet deposit.');
     end if;
+    for v_ev in select distinct u from unnest(v_soft) as u loop
+      v_reasons := v_reasons || public.finance_slip_reason('RESUBMITTED_TRANSFER', 'info', 'trans_ref', null, to_jsonb(v_ev::text),
+        'This transfer was already sent on an earlier slip of this order that was sent back or rejected: the customer resent it.');
+    end loop;
   end if;
 
   -- rule 3: signs of tampering, a QR that disagrees with the slip, a receiver that is not ours, a transfer that did not succeed
   if jsonb_typeof(p_signals) = 'array' then
     for sig in select j.value from jsonb_array_elements(p_signals) as j where j.value ->> 'severity' = 'high' loop
       f_susp := true;
-      v_reasons := v_reasons || public.finance_slip_reason('TAMPER_SIGNAL', 'high', 'image', null, to_jsonb(coalesce(sig ->> 'code', 'unknown')),
-        coalesce(nullif(btrim(sig ->> 'detail'), ''), 'The reader found a sign that the picture was edited.'));
+      v_reasons := v_reasons || public.finance_slip_reason('TAMPER_SIGNAL', 'high', 'image', null, to_jsonb(left(coalesce(sig ->> 'code', 'unknown'), 300)),
+        left(coalesce(nullif(btrim(sig ->> 'detail'), ''), 'The reader found a sign that the picture was edited.'), 300));
     end loop;
   end if;
   if jsonb_typeof(p_qr -> 'crc_ok') = 'boolean' and not (p_qr ->> 'crc_ok')::boolean then
@@ -295,24 +324,24 @@ begin
   end if;
   if length(v_ref) >= 4 and length(v_qref) >= 4 and v_ref <> v_qref then
     f_susp := true;
-    v_reasons := v_reasons || public.finance_slip_reason('QR_REF_MISMATCH', 'high', 'trans_ref', to_jsonb(v_ref), to_jsonb(v_qref), 'The reference in the QR code is not the reference printed on the slip.');
+    v_reasons := v_reasons || public.finance_slip_reason('QR_REF_MISMATCH', 'high', 'trans_ref', to_jsonb(left(v_ref, 300)), to_jsonb(left(v_qref, 300)), 'The reference in the QR code is not the reference printed on the slip.');
   end if;
   -- receiver: the visible account digits (3 or more) are an ordered subsequence of one of our accounts, or the name (titles stripped) is the start of an account name
-  v_digits := regexp_replace(coalesce(p_extracted -> 'receiver' ->> 'account_hint', ''), '[^0-9]', '', 'g');
+  v_digits := left(regexp_replace(coalesce(p_extracted -> 'receiver' ->> 'account_hint', ''), '[^0-9]', '', 'g'), 20);   -- more than any account has can match none
   v_name := public.finance_slip_name(p_extracted -> 'receiver' ->> 'name');
   v_has_digits := length(v_digits) >= 3;
   v_has_name := length(v_name) >= 3;
   if v_has_digits or v_has_name then
     v_ok := false;
     for rcv in select r.digits, r.account_name from public.finance_slip_receivers() r loop
-      if v_has_digits and rcv.digits is not null and rcv.digits ~ regexp_replace(v_digits, '(.)', '\1[0-9]*', 'g') then v_ok := true; end if;
+      if v_has_digits and rcv.digits is not null and length(v_digits) <= length(rcv.digits) and rcv.digits ~ regexp_replace(v_digits, '(.)', '\1[0-9]*', 'g') then v_ok := true; end if;
       if v_has_name and rcv.account_name is not null and position(v_name in public.finance_slip_name(rcv.account_name)) = 1 then v_ok := true; end if;
       exit when v_ok;
     end loop;
     if not v_ok then
       f_susp := true;
       v_reasons := v_reasons || public.finance_slip_reason('RECEIVER_MISMATCH', 'high', 'receiver', (select jsonb_agg(r.label order by r.label) from public.finance_slip_receivers() r),
-        jsonb_build_object('name', p_extracted -> 'receiver' ->> 'name', 'account_hint', p_extracted -> 'receiver' ->> 'account_hint'), 'The slip shows a receiver that is not one of the shop''s accounts.');
+        jsonb_build_object('name', left(p_extracted -> 'receiver' ->> 'name', 300), 'account_hint', left(p_extracted -> 'receiver' ->> 'account_hint', 300)), 'The slip shows a receiver that is not one of the shop''s accounts.');
     end if;
   else
     v_reasons := v_reasons || public.finance_slip_reason('RECEIVER_UNCLEAR', 'warn', 'receiver', null, null, 'The receiver could not be read well enough to compare with the shop''s accounts.');
@@ -320,7 +349,7 @@ begin
   v_status := nullif(btrim(p_extracted ->> 'status_text'), '');
   if v_status is not null and v_status ~* 'ไม่สำเร็จ|ล้มเหลว|ไม่ผ่าน|ยกเลิก|fail|unsuccess|reject|cancel|pending' then
     f_susp := true;
-    v_reasons := v_reasons || public.finance_slip_reason('STATUS_NOT_SUCCESS', 'high', 'status_text', null, to_jsonb(v_status), 'The slip does not say that the transfer succeeded.');
+    v_reasons := v_reasons || public.finance_slip_reason('STATUS_NOT_SUCCESS', 'high', 'status_text', null, to_jsonb(left(v_status, 300)), 'The slip does not say that the transfer succeeded.');
   end if;
 
   -- rule 4: the amount, exact to the satang
@@ -386,7 +415,8 @@ begin
   if not found then raise exception 'NOT_FOUND: slip not found'; end if;
   select * into inv from public.finance_invoices where id = e.invoice_id;
   -- the customer the invoice belongs to, or finance staff; anyone else is told "not found", not "forbidden"
-  if not (exists (select 1 from public.finance_customers c where c.id = inv.customer_id and c.profile_id = p_actor) or public.finance_can_as(p_actor, 'view')) then
+  if not (exists (select 1 from public.finance_customers c join public.profiles pr on pr.id = c.profile_id
+                   where c.id = inv.customer_id and c.profile_id = p_actor and pr.status = 'active') or public.finance_can_as(p_actor, 'view')) then
     raise exception 'NOT_FOUND: slip not found'; end if;
   if not coalesce((select s.ai_review_enabled from public.finance_settings s where s.id), false) then raise exception 'AI_DISABLED: the AI review is switched off'; end if;
   if e.file_path is null then raise exception 'NOTHING_TO_DO: this payment has no slip image'; end if;
@@ -411,7 +441,7 @@ begin
   if not found then raise exception 'NOT_FOUND: analysis not found'; end if;
   if a.status in ('done', 'failed') then raise exception 'ALREADY_DONE: this analysis is already finished'; end if;
   if v_conf is not null and v_conf not between 0 and 1 then raise exception 'INVALID_CONFIDENCE: the confidence must be between 0 and 1'; end if;
-  v := public.finance_classify_slip(a.evidence_id, p_extracted, p_qr, v_conf, coalesce(p_signals, '[]'::jsonb));
+  v := public.finance_classify_slip(a.evidence_id, p_extracted, p_qr, p_confidence, coalesce(p_signals, '[]'::jsonb));   -- judged as reported; only the stored copy is rounded
   update public.finance_slip_analysis set status = 'done', engine = nullif(btrim(p_engine), ''), prompt_version = nullif(btrim(p_prompt_version), ''),
     extracted = p_extracted, qr = p_qr, expected = v -> 'expected', overall_confidence = v_conf, signals = coalesce(p_signals, '[]'::jsonb),
     result = v ->> 'result', reasons = v -> 'reasons', error = null, finished_at = now() where id = a.id;
@@ -469,3 +499,12 @@ do $$ begin
     grant execute on function public.finance_analysis_fail(uuid, text, text) to service_role;
   end if;
 end $$;
+
+-- 2g indexes for the duplicate scan of the classifier: every source is looked up by the normalised reference (the immutable function finance_slip_ref), so each
+-- gets an expression index on exactly that expression (only rows that have a reference / a finished analysis). Plain CREATE INDEX: a brief lock on small tables.
+create index if not exists finance_receipts_slipref_idx on public.finance_receipts (public.finance_slip_ref(bank_trans_ref)) where bank_trans_ref is not null;
+create index if not exists finance_evidence_slipref_idx on public.finance_payment_evidence (public.finance_slip_ref(bank_trans_ref)) where bank_trans_ref is not null;
+create index if not exists finance_evidence_confslipref_idx on public.finance_payment_evidence (public.finance_slip_ref(confirmed_bank_ref)) where confirmed_bank_ref is not null;
+create index if not exists finance_deposits_slipref_idx on public.finance_wallet_deposits (public.finance_slip_ref(bank_trans_ref)) where bank_trans_ref is not null;
+create index if not exists finance_analysis_slipref_idx on public.finance_slip_analysis (public.finance_slip_ref(extracted ->> 'trans_ref')) where status = 'done';
+create index if not exists finance_analysis_qrslipref_idx on public.finance_slip_analysis (public.finance_slip_ref(qr ->> 'trans_ref')) where status = 'done';
