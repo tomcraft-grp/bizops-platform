@@ -531,6 +531,16 @@ function craftPng(o: { w: number; h: number; bitDepth?: number; colorType?: numb
   return new Uint8Array(head);
 }
 const NO_QR_RESULT = { found: false, crc_ok: null, sending_bank: null, trans_ref: null };
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const ihdrData = (o: { w: number; h: number; bitDepth?: number; colorType?: number; interlace?: number }) =>
+  Buffer.concat([be32(o.w), be32(o.h), Buffer.from([o.bitDepth ?? 8, o.colorType ?? 6, 0, 0, o.interlace ?? 0])]);
+/** A PNG made of exactly the chunks given, in that order (each with a correct CRC), after the signature. */
+const pngFromChunks = (chunks: [string, Buffer][], trailing: Buffer = Buffer.alloc(0)) =>
+  new Uint8Array(Buffer.concat([PNG_SIGNATURE, ...chunks.map(([type, data]) => pngChunk(type, data)), trailing]));
+const deflated = (zeros: number) => zlib.deflateSync(Buffer.alloc(zeros));
+/** A benign first IHDR (8 x 8, not interlaced) followed by a second one that says something else: the duplicate-IHDR trick. */
+const withSecondIhdr = (second: Parameters<typeof ihdrData>[0], zeros: number) =>
+  pngFromChunks([['IHDR', ihdrData({ w: 8, h: 8 })], ['IHDR', ihdrData(second)], ['IDAT', deflated(zeros)], ['IEND', Buffer.alloc(0)]]);
 
 describe('decodeSlipQr: pictures that could exhaust the worker', () => {
   // pngjs inflates an INTERLACED picture with no output limit: a few KB of deflated zeros becomes gigabytes. So an interlaced PNG must never reach it.
@@ -569,6 +579,85 @@ describe('decodeSlipQr: pictures that could exhaust the worker', () => {
     expect(inspectPng(new Uint8Array(64))).toEqual({ ok: false, reason: 'not a PNG' });
     expect(inspectPng(craftPng({ w: 1080, h: 2400, zeros: 16 }))).toEqual({ ok: true, width: 1080, height: 2400, decodedBytes: 1080 * 2400 * 4 });
     expect(inspectPng(craftPng({ w: 1000, h: 1000, bitDepth: 1, colorType: 0, zeros: 16 }))).toEqual({ ok: true, width: 1000, height: 1000, decodedBytes: 125000 });
+  });
+  // pngjs does not reject a second IHDR: it only needs the FIRST chunk to be an IHDR, and then uses the LAST one it saw for the interlace flag and the image size.
+  // So reading only the first IHDR is not a guard: the chunk list has to be walked.
+  it('a second IHDR that says "interlaced" behind a harmless first one is refused before anything is inflated', () => {
+    const bomb = withSecondIhdr({ w: 2000, h: 2000, interlace: 1 }, 40 * 1024 * 1024);          // a harmless 8 x 8 first header, then 40 MB of deflated zeros
+    expect(bomb.length).toBeLessThan(200 * 1024);
+    expect(inspectPng(bomb)).toEqual({ ok: false, reason: 'duplicate IHDR' });
+    const before = process.memoryUsage().arrayBuffers;
+    const t0 = Date.now();
+    expect(decodeSlipQr(bomb, 'image/png')).toEqual(NO_QR_RESULT);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(process.memoryUsage().arrayBuffers - before).toBeLessThan(16 * 1024 * 1024);          // nothing of the 40 MB was allocated
+  });
+  it('a second IHDR that declares a huge picture (6000 x 6000 RGBA, not interlaced) is refused: the pixel and byte limits cannot be bypassed that way', () => {
+    const big = withSecondIhdr({ w: 6000, h: 6000 }, 1024);                                      // a tiny file that makes pngjs reserve 144 MB
+    expect(big.length).toBeLessThan(1024);
+    expect(inspectPng(big)).toEqual({ ok: false, reason: 'duplicate IHDR' });
+    const before = process.memoryUsage().arrayBuffers;
+    const t0 = Date.now();
+    expect(decodeSlipQr(big, 'image/png')).toEqual(NO_QR_RESULT);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(process.memoryUsage().arrayBuffers - before).toBeLessThan(16 * 1024 * 1024);
+  });
+  it('a second IHDR is refused wherever it hides: after the data, after other chunks, even if it repeats the first one', () => {
+    const empty = Buffer.alloc(0), one = ihdrData({ w: 8, h: 8 });
+    const cases: [string, [string, Buffer][]][] = [
+      ['an identical second header', [['IHDR', one], ['IHDR', one], ['IDAT', deflated(0)], ['IEND', empty]]],
+      ['after a text chunk', [['IHDR', one], ['tEXt', Buffer.from('a\0b')], ['IHDR', ihdrData({ w: 3000, h: 3000, interlace: 1 })], ['IDAT', deflated(0)], ['IEND', empty]]],
+      ['between the data chunks', [['IHDR', one], ['IDAT', deflated(0)], ['IHDR', ihdrData({ w: 6000, h: 6000 })], ['IDAT', deflated(0)], ['IEND', empty]]],
+      ['after the data', [['IHDR', one], ['IDAT', deflated(0)], ['IHDR', ihdrData({ w: 6000, h: 6000 })], ['IEND', empty]]],
+    ];
+    for (const [name, chunks] of cases) {
+      expect(inspectPng(pngFromChunks(chunks)), name).toEqual({ ok: false, reason: 'duplicate IHDR' });
+      expect(decodeSlipQr(pngFromChunks(chunks), 'image/png'), name).toEqual(NO_QR_RESULT);
+    }
+  });
+  it('the chunk list must be well formed: IHDR first, one IHDR, a length that stays inside the file, an IEND', () => {
+    const empty = Buffer.alloc(0), one = ihdrData({ w: 8, h: 8 }), idat = deflated(0);
+    const reason = (b: Uint8Array) => { const r = inspectPng(b); return r.ok ? 'ok' : r.reason; };
+    expect(reason(pngFromChunks([['IHDR', one], ['IDAT', idat], ['IEND', empty]]))).toBe('ok');
+    expect(reason(pngFromChunks([['tEXt', Buffer.from('a\0b')], ['IHDR', one], ['IDAT', idat], ['IEND', empty]]))).toBe('no IHDR');      // IHDR must be the first chunk
+    expect(reason(pngFromChunks([['IDAT', idat], ['IHDR', one], ['IEND', empty]]))).toBe('no IHDR');
+    expect(reason(pngFromChunks([['IEND', empty]]))).toBe('too short');
+    expect(reason(pngFromChunks([['IHDR', one], ['IDAT', idat]]))).toBe('no IEND');                                                      // the data just stops
+    expect(reason(pngFromChunks([['IHDR', one], ['IDAT', idat], ['IEND', empty]]).slice(0, 60))).toBe('chunk runs past the end');       // cut in the middle of a chunk
+    const lying = Buffer.from(pngFromChunks([['IHDR', one], ['IDAT', idat], ['IEND', empty]]));
+    lying.writeUInt32BE(0xfffffff0, 33);                                                                                                // the IDAT claims 4 GB
+    expect(reason(new Uint8Array(lying))).toBe('chunk runs past the end');
+    expect(reason(pngFromChunks([['IHDR', Buffer.concat([one, Buffer.from([0])])], ['IDAT', idat], ['IEND', empty]]))).toBe('no IHDR');   // an IHDR that is not 13 bytes
+  });
+  it('the chunk walk stops at IEND: what follows it is never parsed by the decoder, so it is not judged (a normal PNG with extra chunks before IEND still decodes)', async () => {
+    const empty = Buffer.alloc(0), one = ihdrData({ w: 8, h: 8 });
+    // a hostile second IHDR placed AFTER the IEND: pngjs stops parsing at IEND and then refuses the file ("unrecognised content at end of stream"),
+    // so it is never used; the walk does not look past IEND, and the picture ends as "no QR" without anything being allocated
+    const trailing = Buffer.concat([pngChunk('IHDR', ihdrData({ w: 6000, h: 6000, interlace: 1 })), Buffer.from('garbage')]);
+    const afterEnd = pngFromChunks([['IHDR', one], ['IDAT', deflated(0)], ['IEND', empty]], trailing);
+    expect(inspectPng(afterEnd)).toMatchObject({ ok: true, width: 8, height: 8 });
+    const before = process.memoryUsage().arrayBuffers;
+    expect(decodeSlipQr(afterEnd, 'image/png')).toEqual(NO_QR_RESULT);
+    expect(process.memoryUsage().arrayBuffers - before).toBeLessThan(16 * 1024 * 1024);
+    // a real slip picture with ancillary chunks (pHYs, tEXt) after the IHDR still decodes
+    const page = Buffer.from(asPng(place(await qrPng(slipPayload(), 380), 1080, 2400, 350, 1500)));
+    const spliced = new Uint8Array(Buffer.concat([page.subarray(0, 33), pngChunk('pHYs', Buffer.from([0, 0, 0x0b, 0x13, 0, 0, 0x0b, 0x13, 1])), pngChunk('tEXt', Buffer.from('Comment\0hello')), page.subarray(33)]));
+    expect(inspectPng(spliced)).toMatchObject({ ok: true, width: 1080, height: 2400 });
+    expect(decodeSlipQr(spliced, 'image/png')).toMatchObject({ found: true, crc_ok: true, sending_bank: '014' });
+  });
+  it('the walk is bounded by the file: 100,000 tiny chunks are walked in well under a second', () => {
+    const empty = Buffer.alloc(0), tiny = pngChunk('tEXt', empty);
+    const png = new Uint8Array(Buffer.concat([PNG_SIGNATURE, pngChunk('IHDR', ihdrData({ w: 8, h: 8 })), ...Array.from({ length: 100_000 }, () => tiny), pngChunk('IDAT', deflated(0)), pngChunk('IEND', empty)]));
+    const t0 = Date.now();
+    expect(inspectPng(png)).toMatchObject({ ok: true });
+    expect(Date.now() - t0).toBeLessThan(500);
+  });
+  it('palette pictures (colour type 3) are accepted at 1, 2, 4 and 8 bits and refused at 16', () => {
+    for (const bitDepth of [1, 2, 4, 8]) {
+      expect(inspectPng(craftPng({ w: 100, h: 100, colorType: 3, bitDepth, zeros: 16 })), String(bitDepth)).toEqual({ ok: true, width: 100, height: 100, decodedBytes: Math.ceil((100 * 100 * bitDepth) / 8) });
+    }
+    expect(inspectPng(craftPng({ w: 100, h: 100, colorType: 3, bitDepth: 16, zeros: 16 }))).toEqual({ ok: false, reason: 'unknown colour type or bit depth' });
+    expect(inspectPng(craftPng({ w: 1080, h: 2400, colorType: 3, bitDepth: 8, zeros: 16 }))).toMatchObject({ ok: true, decodedBytes: 1080 * 2400 });
   });
   it('a refused header gives found:false without a decode (the data after it is not even read)', () => {
     for (const o of [{ w: 4000, h: 3000 }, { w: 2800, h: 2800, bitDepth: 16, colorType: 6 }, { w: 100, h: 100, ihdrName: 'IHDX' }, { w: 100, h: 100, colorType: 5 }]) {

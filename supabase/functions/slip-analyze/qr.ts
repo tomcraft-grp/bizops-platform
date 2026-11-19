@@ -79,16 +79,34 @@ const CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };      
 const BIT_DEPTHS: Record<number, number[]> = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
 
 /**
- * Reads the 13-byte IHDR of a PNG and says whether it is safe to hand to the decoder. pngjs inflates an INTERLACED picture with no output limit (a few KB of
+ * Reads the IHDR of a PNG and says whether it is safe to hand to the decoder. pngjs inflates an INTERLACED picture with no output limit (a few KB of
  * deflated zeros becomes gigabytes and kills the worker, leaving the attempt "running"), so an interlaced picture is never decoded; for the rest the size is
  * limited in pixels and in the bytes the picture takes once inflated.
+ *
+ * The header is only a guard if it is the header pngjs will use. pngjs requires the FIRST chunk to be an IHDR but does not reject a second one: it then
+ * takes the interlace flag and the size from the LAST one it saw. So the whole chunk list is walked here (type and length of each chunk, skipping the data
+ * and the CRC, never past the end of the file) and the picture is refused unless the first chunk is the IHDR, there is exactly one IHDR, every chunk
+ * length stays inside the file, and an IEND ends the list. pngjs stops parsing at IEND too (and then refuses a file that has anything after it), so what
+ * follows IEND is never used and is not judged here.
  */
 export function inspectPng(bytes: Uint8Array): { ok: true; width: number; height: number; decodedBytes: number } | { ok: false; reason: string } {
   if (!bytes || bytes.length < 33) return { ok: false, reason: 'too short' };
   const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
   for (let i = 0; i < 8; i++) if (bytes[i] !== sig[i]) return { ok: false, reason: 'not a PNG' };
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (dv.getUint32(8) !== 13 || bytes[12] !== 0x49 || bytes[13] !== 0x48 || bytes[14] !== 0x44 || bytes[15] !== 0x52) return { ok: false, reason: 'no IHDR' };
+  const is = (at: number, a: number, b: number, c: number, d: number) => bytes[at] === a && bytes[at + 1] === b && bytes[at + 2] === c && bytes[at + 3] === d;
+  let pos = 8, ihdrs = 0, sawEnd = false;
+  while (pos + 12 <= bytes.length) {                                              // a chunk is length (4) + type (4) + data + CRC (4)
+    const length = dv.getUint32(pos), end = pos + 12 + length;
+    if (end > bytes.length) return { ok: false, reason: 'chunk runs past the end' };
+    const isIhdr = is(pos + 4, 0x49, 0x48, 0x44, 0x52);
+    if (pos === 8 && (!isIhdr || length !== 13)) return { ok: false, reason: 'no IHDR' };
+    if (isIhdr && ++ihdrs > 1) return { ok: false, reason: 'duplicate IHDR' };
+    if (is(pos + 4, 0x49, 0x45, 0x4e, 0x44)) { sawEnd = true; break; }              // IEND
+    pos = end;
+  }
+  if (ihdrs !== 1) return { ok: false, reason: 'no IHDR' };
+  if (!sawEnd) return { ok: false, reason: pos < bytes.length ? 'chunk runs past the end' : 'no IEND' };
   const width = dv.getUint32(16), height = dv.getUint32(20), depth = bytes[24], colorType = bytes[25], compression = bytes[26], filter = bytes[27], interlace = bytes[28];
   if (width === 0 || height === 0) return { ok: false, reason: 'empty picture' };
   if (width * height > MAX_PIXELS) return { ok: false, reason: 'too many pixels' };
