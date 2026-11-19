@@ -52,6 +52,18 @@ export interface Evidence {
   confirmed_amount?: number | null; confirmed_bank_ref?: string | null; confirmed_transfer_at?: string | null; confirmed_at?: string | null; confirm_note?: string | null;
   posted_at?: string | null; request_message?: string | null; requested_at?: string | null;
 }
+/**
+ * The columns a customer reads of their OWN payment events. Never `*`: a customer can read the whole row through RLS, so the staff-only columns (the shop's notes, who
+ * confirmed / posted / requested, what staff confirmed, the file path and its hash, how it was verified) are simply not asked for.
+ */
+export const CUSTOMER_EVIDENCE_COLUMNS = 'id, invoice_id, status, created_at, claimed_amount, claimed_transfer_at, claimed_bank, claimed_ref, file_type, reject_reason, request_message, verified_amount, transfer_at, bank_trans_ref, reviewed_at, source, method';
+/** A payment event as a customer sees it (see CUSTOMER_EVIDENCE_COLUMNS). A narrower type than Evidence on purpose: a customer screen cannot reach a staff-only field. */
+export interface CustomerEvidence {
+  id: string; invoice_id: string; status: Evidence['status']; created_at: string; claimed_amount: number; claimed_transfer_at: string | null; claimed_bank: string | null; claimed_ref: string | null;
+  file_type: string | null; reject_reason: string | null; verified_amount: number | null; transfer_at: string | null; bank_trans_ref: string | null; reviewed_at: string | null;
+  // added by the slip-review migration (absent on a database that does not have it yet)
+  request_message?: string | null; source?: 'customer_slip' | 'staff_entry'; method?: 'transfer' | 'cash';
+}
 export interface Receipt { id: string; receipt_no: string; invoice_id: string; amount: number; bank_trans_ref: string | null; received_at: string; needs_review: boolean; status: 'posted' | 'reversed'; created_at: string }
 export interface VerifyResult { result: 'fully_paid' | 'partially_paid' | 'overpaid_credited' | 'overpaid_review'; receipt_no: string; credited_to_wallet?: number; state: InvoiceState }
 
@@ -82,8 +94,8 @@ export const finance = {
   async myReceipts(invoiceId: string): Promise<Receipt[]> {
     return must(await supabase.from('finance_receipts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: false }), 'Load receipts');
   },
-  async myEvidence(invoiceId: string): Promise<Evidence[]> {
-    return must(await supabase.from('finance_payment_evidence').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: false }), 'Load slips');
+  async myEvidence(invoiceId: string): Promise<CustomerEvidence[]> {
+    return must(await supabase.from('finance_payment_evidence').select(CUSTOMER_EVIDENCE_COLUMNS).eq('invoice_id', invoiceId).order('created_at', { ascending: false }), 'Load slips') as unknown as CustomerEvidence[];
   },
   /** Upload the slip into the caller's own folder of the private bucket, then record it. Settles nothing by itself. */
   async submitEvidence(p: { invoiceId: string; file: File; claimedAmount: number; transferAt: string | null; bank: string; ref: string; bankAccountId?: string | null }): Promise<string> {

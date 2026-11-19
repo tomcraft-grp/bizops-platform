@@ -10,7 +10,9 @@ import { Choice, MethodCards, useMethods } from '../wallet/ui';
 import { TransferAmount, WalletPayPanel } from '../wallet/PayInvoice';
 import { QR } from '../ui/shared';
 import { dateFmt, dateTimeFmt, money } from '../lib/util';
-import { Evidence, finance, InvoiceRow, QrRequest, Receipt, STATUS, StatusCode } from './api';
+import { CustomerEvidence, finance, InvoiceRow, QrRequest, Receipt, STATUS, StatusCode } from './api';
+import { review } from './review';
+import { payNotes } from '../shop/pay';
 import { withTimeout } from '../shop/timeout';
 import { downloadBlob, renderQrCard } from './qrImage';
 
@@ -25,6 +27,11 @@ const MSG: Record<StatusCode, { th: string; en: string; tone: 'info' | 'warn' | 
   8: { th: 'ใบแจ้งหนี้นี้ถูกยกเลิก', en: 'This invoice was cancelled.', tone: 'warn' },
   9: { th: 'QR หมดอายุ กรุณาสร้างใหม่ หากโอนไปแล้วให้อัปโหลดสลิป', en: 'The QR expired. Create a new one. If you already paid, upload your slip.', tone: 'warn' },
   10: { th: 'ทางร้านขอหลักฐานการชำระเพิ่มเติม กรุณาส่งสลิปใหม่', en: 'The shop asked for more evidence of your payment. Please send a new slip.', tone: 'warn' },
+};
+
+/** One line of the payment history per slip that is not posted: a slip the shop CONFIRMED is waiting to be recorded, never "rejected". An unknown status reads as waiting. */
+const EVIDENCE_NOTE: Partial<Record<CustomerEvidence['status'], string>> = {
+  submitted: 'waiting for the shop to check', confirmed: 'the shop confirmed it; being recorded', more_evidence: 'the shop asked for more evidence', rejected: 'rejected',
 };
 
 export function CustomerInvoices({ lang: langProp, hide }: { lang?: Lang; hide?: (r: InvoiceRow) => boolean } = {}) {
@@ -49,7 +56,8 @@ export function CustomerInvoices({ lang: langProp, hide }: { lang?: Lang; hide?:
 export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, preferred }: { inv: InvoiceRow; onChanged: () => void; lang?: Lang; defaultOpen?: boolean; preferred?: string | null }) {
   const storeLang = useLang();
   const lang = langProp ?? storeLang;
-  const [open, setOpen] = useState(defaultOpen ?? (inv.status_code === 1 || inv.status_code === 9));
+  // the panel opens by itself when there is something to do: pay (1), pay again after the QR expired (9), or send another slip because the shop asked for more evidence (10)
+  const [open, setOpen] = useState(defaultOpen ?? (inv.status_code === 1 || inv.status_code === 9 || inv.status_code === 10));
   // the picked slip is shown as a preview first: nothing is sent until the customer confirms it
   const [picked, setPicked] = useState<{ file: File; url: string | null } | null>(null);
   const pickedUrl = useRef<string | null>(null);
@@ -72,11 +80,12 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   const showQr = !hasMethods || choice?.kind === 'qr';
   const [busy, setBusy] = useState('');
   const [img, setImg] = useState<string | null>(null);
-  const [history, setHistory] = useState<{ ev: Evidence[]; rc: Receipt[] } | null>(null);
+  const [history, setHistory] = useState<{ ev: CustomerEvidence[]; rc: Receipt[] } | null>(null);
   const [form, setForm] = useState({ amount: '', when: '', bank: '', ref: '' });
   const file = useRef<HTMLInputElement>(null);
-  const st = STATUS[inv.status_code];
-  const msg = MSG[inv.status_code];
+  const st = STATUS[inv.status_code] ?? STATUS[0];
+  const msg = MSG[inv.status_code] ?? MSG[0];   // a state this build does not know (a newer database) reads as "not paid yet" instead of crashing
+  const notes = payNotes(inv, lang);
   const live = qr ?? (inv.request && !inv.request.expired ? { ...inv.request, account_label: '', merchant_name: null } : null);
   const payable = inv.status_code !== 8 && inv.status_code !== 5 && inv.status_code !== 6 && inv.outstanding > 0;
 
@@ -110,7 +119,8 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
     setBusy('slip');
     try {
       // a stalled upload gives up after 60 s so the button comes back instead of waiting for ever (FB-001019)
-      await withTimeout(() => finance.submitEvidence({ invoiceId: inv.id, file: f, claimedAmount: amount, transferAt: form.when ? new Date(form.when).toISOString() : null, bank: bankChoice ? bankChoice.code : form.bank, ref: form.ref, bankAccountId: bankChoice?.id ?? null }), 60_000);
+      const evidenceId = await withTimeout(() => finance.submitEvidence({ invoiceId: inv.id, file: f, claimedAmount: amount, transferAt: form.when ? new Date(form.when).toISOString() : null, bank: bankChoice ? bankChoice.code : form.bank, ref: form.ref, bankAccountId: bankChoice?.id ?? null }), 60_000);
+      void review.analyze({ evidenceId });   // best effort and never awaited: the slip is saved, and the shop checks it by hand whatever happens to the reader (analyze never throws)
       toast('success', tl(lang, 'Slip sent. The shop will verify it shortly.'));
       pick(null); setForm((x) => ({ ...x, ref: '' })); onChanged(); void loadHistory();
     } catch (e) { toast('error', (e as Error).message); } finally { setBusy(''); }   // the toast shows a known message in Thai and English (lib/errorText.ts): duplicate slip, wrong date, …
@@ -131,6 +141,9 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
         <div className="row between"><b>{tl(lang, 'Remaining')}</b><b style={{ fontSize: 18 }}>{money(inv.outstanding)}</b></div>
       </div>
       <div style={{ marginTop: 8 }}><Banner tone={msg.tone}>{lang === 'th' ? msg.th : msg.en}</Banner></div>
+      {/* the shop asked for more evidence: its own words, as plain text (React escapes them), above the upload below */}
+      {inv.status_code === 10 && inv.more_evidence_message && <div style={{ marginTop: 6 }}><Banner tone="warn"><span data-testid="more-evidence-message" style={{ whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{inv.more_evidence_message}</span></Banner></div>}
+      {(notes.remaining || notes.confirmed) && <div className="col gap-4" style={{ marginTop: 6, fontSize: 12.5 }}>{notes.remaining && <span data-testid="pay-remaining">{notes.remaining}</span>}{notes.confirmed && <span data-testid="pay-confirmed" className="muted">{notes.confirmed}</span>}</div>}
       {(inv.refunded ?? 0) > 0 && <div style={{ marginTop: 6 }}><Badge tone="info" dot>{lang === 'th' ? `คืนเงินแล้ว ${money(inv.refunded ?? 0)} เข้ากระเป๋าเงิน` : `Refunded ${money(inv.refunded ?? 0)} to your wallet`}</Badge></div>}
       {rejected && inv.status_code === 7 && <div className="bad" style={{ fontSize: 12.5, marginTop: 6 }}>{tl(lang, 'Reason')}: {rejected.reject_reason}</div>}
 
@@ -184,7 +197,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
         <div className="col gap-4" style={{ marginTop: 10, fontSize: 12.5 }}>
           <div className="dev-sub">{tl(lang, 'Payment history')}</div>
           {history.rc.map((r) => <div key={r.id} className="row between"><span>{r.receipt_no} <span className="muted">{dateTimeFmt(r.received_at)}</span>{r.status === 'reversed' && <> <Badge tone="bad">{tl(lang, 'reversed')}</Badge></>}</span><b>{money(r.amount)}</b></div>)}
-          {history.ev.filter((e) => e.status !== 'verified').map((e) => <div key={e.id} className="row between"><span className="muted">{tl(lang, 'Slip')} {dateTimeFmt(e.created_at)}</span><span>{e.status === 'submitted' ? tl(lang, 'waiting for the shop to check') : tl(lang, 'rejected')} · {money(e.claimed_amount)}</span></div>)}
+          {history.ev.filter((e) => e.status !== 'verified').map((e) => <div key={e.id} className="row between"><span className="muted">{tl(lang, e.source === 'staff_entry' ? 'Payment recorded by the shop' : 'Slip')} {dateTimeFmt(e.created_at)}</span><span>{tl(lang, EVIDENCE_NOTE[e.status] ?? 'waiting for the shop to check')} · {money(e.claimed_amount)}</span></div>)}
         </div>
       )}
       {!open && (history == null) && (inv.status_code !== 0) && <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>{tl(lang, 'Details')}</Button>}

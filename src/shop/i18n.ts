@@ -84,8 +84,12 @@ const D = {
   'ord.no': ['เลขที่ออเดอร์', 'Order no.'], 'ord.date': ['วันที่สั่ง', 'Date'], 'ord.n': ['{n} ชิ้น', '{n} items'], 'ord.total': ['ยอดรวม', 'Total'], 'ord.view': ['ดูรายละเอียด', 'View details'],
   'st.new': ['รอร้านยืนยัน', 'Waiting for the shop'], 'st.confirmed': ['ร้านยืนยันแล้ว', 'Confirmed'], 'st.preparing': ['กำลังเตรียมสินค้า', 'Preparing'], 'st.packed': ['แพ็คสินค้าแล้ว', 'Packed'],
   'st.ready': ['พร้อมรับสินค้า', 'Ready for pick-up'], 'st.shipped': ['จัดส่งแล้ว', 'Shipped'], 'st.completed': ['สำเร็จ', 'Completed'], 'st.cancelled': ['ยกเลิก', 'Cancelled'], 'st.returned': ['คืนสินค้า', 'Returned'],
-  'pay.unpaid': ['ยังไม่ชำระ', 'Unpaid'], 'pay.pending': ['รอตรวจสอบการชำระเงิน', 'Awaiting payment verification'], 'pay.partial': ['ชำระบางส่วน', 'Partly paid'],
+  'pay.unpaid': ['ยังไม่ชำระ', 'Unpaid'], 'pay.pending': ['รอตรวจสอบการชำระเงิน – รอเจ้าหน้าที่ยืนยัน', 'Pending payment verification – awaiting staff confirmation'], 'pay.partial': ['ชำระบางส่วน', 'Partly paid'],
   'pay.paid': ['ชำระแล้ว', 'Paid'], 'pay.review': ['อยู่ระหว่างตรวจสอบยอดชำระ', 'Payment under review'], 'pay.rejected': ['หลักฐานการชำระถูกปฏิเสธ', 'Payment rejected'], 'pay.cancelled': ['ยกเลิก', 'Cancelled'],
+  // the shop checks a slip by hand at the end of the day: until staff POST it the order is never "paid". These texts never mention how a slip was read.
+  'pay.moreEvidence': ['ร้านขอหลักฐานการชำระเพิ่มเติม', 'The shop asked for more payment evidence'],
+  'pay.confirmedNote': ['ร้านยืนยันยอด {amount} แล้ว กำลังบันทึก', 'The shop confirmed {amount}; it is being recorded'],
+  'pay.remaining': ['ชำระแล้ว {paid} · คงเหลือ {left}', 'Paid {paid} · remaining {left}'],
   'od.title': ['รายละเอียดคำสั่งซื้อ', 'Order details'], 'od.progress': ['ความคืบหน้าของคำสั่งซื้อ', 'Order progress'], 'od.items': ['สินค้า', 'Items'], 'od.delivery': ['ข้อมูลการจัดส่ง', 'Delivery'],
   'od.pickup': ['รับสินค้าที่ร้าน', 'Pick up at the shop'], 'od.payment': ['การชำระเงิน', 'Payment'], 'od.shopNote': ['ข้อความจากร้าน', 'Message from the shop'], 'od.note': ['หมายเหตุของคุณ', 'Your note'],
   'od.cancel': ['ยกเลิกคำสั่งซื้อ', 'Cancel this order'], 'od.cancelTitle': ['ยกเลิกคำสั่งซื้อนี้?', 'Cancel this order?'],

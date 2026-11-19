@@ -5,11 +5,12 @@ import { ReactNode, useEffect, useState } from 'react';
 import { AlertTriangle, Minus, Package, Plus, RefreshCw } from 'lucide-react';
 import { toast } from '../domain/store';
 import { cx } from '../lib/util';
-import type { StatusCode } from '../finance/api';
+import type { InvoiceState, StatusCode } from '../finance/api';
 import { CategoryFacet, Facets, OrderStatus, shop, ShopError, ShopItem } from './api';
 import { MAX_QTY, useCart } from './cart';
 import { baht, packLabel } from './format';
 import { K, ShopLang, useShopLang, useT } from './i18n';
+import { payNotes } from './pay';
 
 export function ProductImage({ src, alt, className }: { src?: string | null; alt: string; className?: string }) {
   const [bad, setBad] = useState(false);
@@ -140,12 +141,20 @@ export const PAY_LABEL: Record<StatusCode, { k: K; tone: 'good' | 'warn' | 'bad'
   0: { k: 'pay.unpaid', tone: 'warn' }, 1: { k: 'pay.unpaid', tone: 'warn' }, 9: { k: 'pay.unpaid', tone: 'warn' },
   3: { k: 'pay.pending', tone: 'info' }, 4: { k: 'pay.partial', tone: 'warn' }, 5: { k: 'pay.paid', tone: 'good' },
   6: { k: 'pay.review', tone: 'info' }, 7: { k: 'pay.rejected', tone: 'bad' }, 8: { k: 'pay.cancelled', tone: '' },
-  10: { k: 'pay.pending', tone: 'warn' },   // more evidence requested: still awaiting verification until the customer sends another slip
+  10: { k: 'pay.moreEvidence', tone: 'warn' },   // the shop asked for more evidence: the customer sends another slip for the same order
 };
+/** An older app build meeting a state it does not know falls back to "unpaid" instead of crashing. */
 export function PayBadge({ code }: { code: StatusCode }) {
   const t = useT();
   const p = PAY_LABEL[code] ?? PAY_LABEL[0];
   return <span className={cx('sp-pill', p.tone)}>{t(p.k)}</span>;
+}
+/** "Paid ฿200 · remaining ฿150" and "The shop confirmed ฿320; it is being recorded" under a payment status (nothing when there is nothing to say). */
+export function PayNotes({ inv }: { inv: Pick<InvoiceState, 'paid' | 'outstanding' | 'status_code' | 'confirmed_pending'> }) {
+  const lang = useShopLang();
+  const n = payNotes(inv, lang);
+  if (!n.remaining && !n.confirmed) return null;
+  return <div className="sp-paynotes">{n.remaining && <small data-testid="pay-remaining">{n.remaining}</small>}{n.confirmed && <small data-testid="pay-confirmed">{n.confirmed}</small>}</div>;
 }
 export const ORDER_TONE: Record<OrderStatus, 'good' | 'warn' | 'bad' | 'info' | ''> = {
   new: 'info', confirmed: 'info', preparing: 'info', packed: 'info', ready: 'good', shipped: 'good', completed: 'good', cancelled: '', returned: 'bad',

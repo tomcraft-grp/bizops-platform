@@ -17,6 +17,7 @@ import { useShopHost, useShopNav } from './nav';
 import { ConfirmSheet, ErrorBox, errText, ProductImage, Stepper } from './ui';
 import { Choice, MethodCards, useMethods } from '../wallet/ui';
 import { removeOrderSlip, slipFingerprint, uploadOrderSlip } from '../wallet/api';
+import { review } from '../finance/review';
 
 export function CartCore() {
   const t = useT();
@@ -151,6 +152,9 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
         slip: fp && uploaded ? { path: uploaded, sha256: fp.sha256, type: fp.type, transferAt: slipWhen ? new Date(slipWhen).toISOString() : null, ref: slipRef.trim() || null } : null });
       try { localStorage.setItem(CONTACT_KEY(uid), JSON.stringify({ name: name.trim(), phone: digits(phone), address: address.trim() } satisfies Contact)); } catch { /* ignore */ }
       forgetAttempt(sessionStorage, uid);
+      // the order and its slip are saved: ask the AI reader to look at the slip, once, best effort. Never awaited and it never throws (analyze swallows every error),
+      // so a slow or broken reader cannot delay the order page or fail the order; the shop checks every slip by hand whatever the reader does.
+      if (fp && uploaded) void review.analyze({ invoiceId: r.order.invoice.id });
       useCart.getState().clear();
       useShopNav.getState().openOrder(r.order.id);
       toast('success', t('co.placed'));

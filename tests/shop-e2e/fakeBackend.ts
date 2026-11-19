@@ -18,7 +18,9 @@ export interface FItem {
   barcode: string | null; description_th: string | null; description_en: string | null; specs: { label: string; value: string }[]; family: string | null; badge: string | null;
   featured: boolean; available: boolean; max_qty: number | null; image_urls: string[]; sku_seq: number;
 }
-interface FInvoice { id: string; invoice_no: string; amount: number; paid: number; cancelled: boolean; evidence: { id: string; status: string; claimed_amount: number; created_at: string; reject_reason?: string | null; reviewed_at?: string }[]; req: null | { ref: string; amount: number; qr_payload: string; expires_at: string }; source_ref: string; created_at: string; refunded?: number }
+/** One payment event on an invoice, as the fake keeps it. `staffNote` is what staff wrote in the staff-only columns (review_note, confirm_note): it must never reach a customer's screen. */
+export interface FEvidence { id: string; status: 'submitted' | 'confirmed' | 'more_evidence' | 'verified' | 'rejected'; claimed_amount: number; created_at: string; reject_reason?: string | null; reviewed_at?: string; request_message?: string | null; confirmed_amount?: number | null; source?: 'customer_slip' | 'staff_entry'; method?: 'transfer' | 'cash'; staffNote?: string }
+interface FInvoice { id: string; invoice_no: string; amount: number; paid: number; cancelled: boolean; evidence: FEvidence[]; req: null | { ref: string; amount: number; qr_payload: string; expires_at: string }; source_ref: string; created_at: string; refunded?: number; /** test control: force a state code the fake cannot derive (6 = overpaid, under review) */ forceCode?: number }
 interface FOrder { id: string; order_no: string; status: string; fulfilment: string; contact_name: string; contact_phone: string; delivery_address: string | null; note: string | null; items: { line_no: number; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[]; subtotal: number; discount: number; shipping_fee: number; total: number; created_at: string; key: string; hash: string; invoice: FInvoice; status_note: string | null; cancel_reason: string | null; payment_pref: string | null }
 
 export const settingsDefault = { require_payment_slip: true, shop_open: true, closed_message: null as string | null, delivery_enabled: true, pickup_enabled: true, pickup_note: 'รับที่ร้าน 99 ถนนทดสอบ', shipping_fee: 50, free_shipping_min: 1000 as number | null };
@@ -53,6 +55,14 @@ export class FakeShop {
     Object.assign(this.item('FG-000003'), { max_qty: 2, featured: true });
     Object.assign(this.item('FG-000004'), { available: false });
   }
+  /** every Edge Function the browser called: its name and the body it sent (the slip reader, `slip-analyze`, is only recorded here, never run) */
+  invokes: { name: string; body: Record<string, unknown> }[] = [];
+  /** how the fake Edge Function answers: normally, with a server error, or never (until `openGate()`): the order flow must not wait for it */
+  invokeMode: 'ok' | 'fail' | 'hang' = 'ok';
+  openGate: () => void = () => undefined;
+  private gate = new Promise<void>((resolve) => { this.openGate = resolve; });
+  /** every direct table read the browser made (the table and the columns it asked for), so a test can see what a customer screen reads */
+  restReads: { table: string; select: string | null }[] = [];
   failNext(fn: string, times = 1) { this.fail.set(fn, times); }
   /** the server handles the call, but the answer never reaches the phone (dropped connection) */
   dropResponseOnce(fn: string) { this.drop.add(fn); }
@@ -61,15 +71,27 @@ export class FakeShop {
   // ------------------------------------------------------------ server logic (mirrors the SQL)
   private err(message: string, details?: string): never { throw Object.assign(new Error(message), { details }); }
   private state(inv: FInvoice) {
-    const pending = inv.evidence.filter((e) => e.status === 'submitted').length;
+    // like finance_invoice_state_raw after the slip-review migration: a slip the shop CONFIRMED but has not posted still counts as pending, and the newest "more evidence" request is state 10
+    const pending = inv.evidence.filter((e) => e.status === 'submitted' || e.status === 'confirmed').length;
     const last = inv.evidence[0];
     const reqLive = inv.req && new Date(inv.req.expires_at).getTime() > Date.now();
-    const code = inv.cancelled ? 8 : inv.paid >= inv.amount ? 5 : pending > 0 ? 3 : inv.paid > 0 ? 4 : last?.status === 'rejected' && !reqLive ? 7 : reqLive ? 1 : inv.req ? 9 : 0;
-    const names = ['unpaid', 'awaiting_payment', 'payment_submitted', 'pending_verification', 'partially_paid', 'fully_paid', 'overpaid', 'rejected', 'cancelled', 'expired'];
+    const code = inv.forceCode ?? (inv.cancelled ? 8 : inv.paid >= inv.amount ? 5 : pending > 0 ? 3 : last?.status === 'more_evidence' ? 10 : inv.paid > 0 ? 4 : last?.status === 'rejected' && !reqLive ? 7 : reqLive ? 1 : inv.req ? 9 : 0);
+    const names = ['unpaid', 'awaiting_payment', 'payment_submitted', 'pending_verification', 'partially_paid', 'fully_paid', 'overpaid', 'rejected', 'cancelled', 'expired', 'more_evidence'];
+    const confirmedPending = Math.round(inv.evidence.filter((e) => e.status === 'confirmed').reduce((s, e) => s + (e.confirmed_amount ?? 0), 0) * 100) / 100;
     return { invoice_id: inv.id, amount: inv.amount, paid: inv.paid, outstanding: Math.max(inv.amount - inv.paid, 0), unapplied: 0, refunded: inv.refunded ?? 0, status_code: code, status: names[code], pending_evidence: pending,
-      request: inv.req && !inv.cancelled ? { ...inv.req, expired: !reqLive } : null };
+      request: inv.req && !inv.cancelled ? { ...inv.req, expired: !reqLive } : null, confirmed_pending: confirmedPending, more_evidence_message: last?.status === 'more_evidence' ? last.request_message ?? null : null };
   }
   private invoiceRow(inv: FInvoice) { return { id: inv.id, invoice_no: inv.invoice_no, issue_date: inv.created_at.slice(0, 10), due_date: inv.created_at.slice(0, 10), description: `Online order ${inv.source_ref}`, customer_name: this.profile.display_name, source_ref: inv.source_ref, ...this.state(inv) }; }
+  /** one finance_payment_evidence row with EVERY column of the table (the staff-only ones too: PostgREST only returns the ones the browser asks for) */
+  private evidenceRow(e: FEvidence, invoiceId: string): Record<string, unknown> {
+    return {
+      id: e.id, invoice_id: invoiceId, customer_id: 'cust-secret', request_id: null, file_path: 'u/secret/slip.png', file_sha256: 'f'.repeat(64), file_type: 'image/jpeg', claimed_amount: e.claimed_amount, claimed_transfer_at: null,
+      claimed_bank: null, claimed_ref: null, status: e.status, verified_via: null, verified_amount: null, bank_trans_ref: null, transfer_at: null, sender_name: null, receiver_account: null, bank_account_id: null,
+      review_note: e.staffNote ?? null, reject_reason: e.reject_reason ?? null, reviewed_by: 'staff-secret', reviewed_at: e.reviewed_at ?? null, created_by: 'cust-secret', created_at: e.created_at,
+      source: e.source ?? 'customer_slip', method: e.method ?? 'transfer', recorded_by: null, confirmed_by: e.status === 'confirmed' ? 'staff-secret' : null, confirmed_at: null, confirmed_amount: e.confirmed_amount ?? null,
+      confirmed_bank_ref: e.status === 'confirmed' ? 'BANKREF-SECRET' : null, confirmed_transfer_at: null, confirm_note: e.staffNote ?? null, posted_by: null, posted_at: null, request_message: e.request_message ?? null, requested_by: null, requested_at: null,
+    };
+  }
   private orderJson(o: FOrder) {
     const { key: _k, hash: _h, invoice, ...rest } = o; void _k; void _h;
     return { ...rest, channel: 'LINE', updated_at: o.created_at, cancelled_at: null, invoice: this.invoiceRow(invoice) };
@@ -138,7 +160,7 @@ export class FakeShop {
       case 'shop_my_order': { const o = this.orders.find((x) => x.id === a.p_id); if (!o) this.err('Order not found'); return { ...this.orderJson(o), events: [] }; }
       case 'shop_cancel_my_order': {
         const o = this.orders.find((x) => x.id === a.p_id); if (!o) this.err('Order not found');
-        if (o.status !== 'new') this.err('ORDER_IN_PROGRESS'); if (o.invoice.paid > 0) this.err('PAYMENT_RECORDED'); if (o.invoice.evidence.some((e) => e.status === 'submitted')) this.err('SLIP_PENDING');
+        if (o.status !== 'new') this.err('ORDER_IN_PROGRESS'); if (o.invoice.paid > 0) this.err('PAYMENT_RECORDED'); if (o.invoice.evidence.some((e) => e.status === 'submitted' || e.status === 'confirmed')) this.err('SLIP_PENDING');   // a slip the shop confirmed (not yet posted) also blocks it
         o.status = 'cancelled'; o.invoice.cancelled = true; o.cancel_reason = String(a.p_reason ?? 'Cancelled by customer'); return this.orderJson(o);
       }
       case 'finance_my_invoices': return this.orders.map((o) => this.invoiceRow(o.invoice));
@@ -256,6 +278,38 @@ export class FakeShop {
     return { replay: false, order: this.orderJson(o) };
   }
   // test controls: what staff do in the back office
+  private order(orderNo: string) { return this.orders.find((x) => x.order_no === orderNo)!; }
+  /** an order created straight in the fake (no screen involved): FG-000001 for pick-up (฿320, or `total` when given), unpaid, no slip. Returns the order. */
+  seedOrder(total?: number): FOrder {
+    this.rpc('shop_place_order', { p_key: `seed-${this.orders.length + 1}-${Math.random().toString(36).slice(2, 10)}`, p_items: [{ sku_code: 'FG-000001', qty: 1 }], p_fulfilment: 'pickup', p_name: 'สมชาย ใจดี', p_phone: '0812345678', p_address: null, p_note: null });
+    const o = this.orders[this.orders.length - 1];
+    if (total != null) { o.total = total; o.invoice.amount = total; }
+    return o;
+  }
+  /** a payment event the customer or staff created (newest first, like the real list). `staffNote` is staff-only text that must stay off every customer screen. */
+  addEvidence(orderNo: string, status: FEvidence['status'], extra: Partial<FEvidence> = {}): FEvidence {
+    const o = this.order(orderNo); const n = ++this.seq;
+    const e: FEvidence = { id: `ev-${n}`, status, claimed_amount: Math.max(o.invoice.amount - o.invoice.paid, 1), created_at: new Date(Date.now() + n * 1000).toISOString(), ...extra };
+    o.invoice.evidence.unshift(e); return e;
+  }
+  /** staff posted a payment of this amount (partly or fully) */
+  setPaid(orderNo: string, amount: number) { this.order(orderNo).invoice.paid = amount; }
+  /** a payment QR that is still valid (state 1) or has expired (state 9) */
+  giveQr(orderNo: string, live = true) {
+    const o = this.order(orderNo);
+    o.invoice.req = { ref: 'PR' + (1000 + ++this.seq), amount: o.invoice.amount - o.invoice.paid, qr_payload: promptPayPayload('0812345678', o.invoice.amount), expires_at: new Date(Date.now() + (live ? 24 : -24) * 3600e3).toISOString() };
+  }
+  /** staff asked for more evidence: the open slip becomes `more_evidence` with the message they wrote (invoice state 10) */
+  requestMoreEvidence(orderNo: string, message: string) {
+    const o = this.order(orderNo);
+    for (const e of o.invoice.evidence) if (e.status === 'submitted' || e.status === 'confirmed') { e.status = 'more_evidence'; e.request_message = message; }
+  }
+  /** the shop CONFIRMED the amount the bank shows but has not posted it yet (the money is not received yet) */
+  confirmSlip(orderNo: string, amount: number) {
+    for (const e of this.order(orderNo).invoice.evidence) if (e.status === 'submitted') { e.status = 'confirmed'; e.confirmed_amount = amount; }
+  }
+  /** force a state code the fake cannot derive from the data */
+  forceCode(orderNo: string, code: number) { this.order(orderNo).invoice.forceCode = code; }
   verifyPayment(orderNo: string) { const o = this.orders.find((x) => x.order_no === orderNo)!; o.invoice.paid = o.invoice.amount; o.invoice.evidence.forEach((e) => { e.status = 'verified'; }); }
   /** staff reversed a payment and refunded it into the customer's wallet */
   refund(orderNo: string, amount: number) { const o = this.orders.find((x) => x.order_no === orderNo)!; o.invoice.refunded = (o.invoice.refunded ?? 0) + amount; }
@@ -273,10 +327,15 @@ export class FakeShop {
       if (p === '/auth/v1/user') return json(route, { id: USER_ID, aud: 'authenticated', role: 'authenticated', email: this.profile.email, user_metadata: {}, app_metadata: {} });
       if (p.startsWith('/auth/v1/')) return json(route, {});
       if (p === '/rest/v1/profiles') return json(route, this.profile);
-      if (p === '/functions/v1/slip-analyze') {                                       // the AI reader (Edge Function): only recorded, it is never run here
+      if (p.startsWith('/functions/v1/')) {                                           // an Edge Function: only recorded (name + body), it is never run here
         let body: Record<string, unknown> = {};
         try { body = JSON.parse(req.postData() || '{}') as Record<string, unknown>; } catch { /* no body */ }
-        return json(route, this.rv.analyze(body));
+        const name = p.slice('/functions/v1/'.length);
+        this.invokes.push({ name, body });
+        if (name !== 'slip-analyze') return json(route, { error: `Unknown function ${name}` }, 404);
+        const answer = this.rv.analyze(body);                                          // the staff dashboard specs read this record too
+        if (this.invokeMode === 'hang') await this.gate;                               // never answers (until the test opens the gate)
+        try { return await (this.invokeMode === 'fail' ? json(route, { error: 'the reader is down' }, 500) : json(route, answer)); } catch { return; }   // the page may be gone by now
       }
       if (p.startsWith('/rest/v1/rpc/')) {
         const fn = p.slice('/rest/v1/rpc/'.length);
@@ -291,10 +350,18 @@ export class FakeShop {
           return json(route, out);
         } catch (e) { const er = e as Error & { details?: string }; return json(route, { code: 'P0001', message: er.message, details: er.details ?? null, hint: null }, 400); }
       }
+      if (p.startsWith('/rest/v1/') && !p.startsWith('/rest/v1/rpc/')) this.restReads.push({ table: p.slice('/rest/v1/'.length), select: url.searchParams.get('select') });
       if (p === '/rest/v1/finance_payment_evidence') {
+        // like PostgREST: only the columns asked for come back, and a column the table does not have is an error
         const id = url.searchParams.get('invoice_id')?.replace('eq.', '');
         const inv = this.orders.find((o) => o.invoice.id === id)?.invoice;
-        return json(route, (inv?.evidence ?? []).map((e) => ({ ...e, invoice_id: id, customer_id: 'c', file_path: 'x', file_type: 'image/jpeg', claimed_transfer_at: null, claimed_bank: null, claimed_ref: null, verified_via: null, verified_amount: null, bank_trans_ref: null, reject_reason: e.reject_reason ?? null, reviewed_at: e.reviewed_at ?? null })));
+        const rows = (inv?.evidence ?? []).map((e) => this.evidenceRow(e, id ?? ''));
+        const select = url.searchParams.get('select') ?? '*';
+        if (select === '*') return json(route, rows);
+        const cols = select.split(',').map((c) => c.trim());
+        const unknown = cols.find((c) => !(c in this.evidenceRow({ id: '', status: 'submitted', claimed_amount: 0, created_at: '' }, '')));
+        if (unknown) return json(route, { code: '42703', message: `column finance_payment_evidence.${unknown} does not exist`, details: null, hint: null }, 400);
+        return json(route, rows.map((r) => Object.fromEntries(cols.map((c) => [c, (r as Record<string, unknown>)[c]]))));
       }
       if (p.startsWith('/storage/v1/object/sign/') && req.method() === 'POST') return json(route, { signedURL: `/object/sign/${p.slice('/storage/v1/object/sign/'.length)}?token=t` });   // staff open a slip
       if (p.startsWith('/storage/v1/object/sign/')) return route.fulfill({ status: 200, contentType: 'image/png', headers: cors, body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') });
