@@ -54,6 +54,7 @@ export default function Finance() {
           ...(canFinance(role, 'manage') ? [{ v: 'access' as const, label: 'Access' }] : []),
         ]} />
         <div style={{ padding: 14 }}>
+          {/* Not dark: this tab, and "Record payment" below, appear as soon as the app is deployed. The two settings only switch the AI reader and the manager-only Post of transfers (docs/slip-review.md, "What is dark and what is not"). */}
           {tab === 'slips' && <SlipReview role={role} onChanged={refreshCounts} />}
           {tab === 'review' && <OverpaymentQueue role={role} onChanged={refreshCounts} />}
           {tab === 'invoices' && <Invoices role={role} onChanged={refreshCounts} />}

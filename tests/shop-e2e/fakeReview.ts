@@ -1,6 +1,6 @@
 // The slip-review part of the fake backend (the end-of-day dashboard). It mirrors the CONTRACT of supabase/migrations/20261120100000_slip_review.sql (tested for real by
 // the SQL suites): the same role ladder (viewer < clerk < verifier < manager), the same stages, the same refusals with the same messages, Confirm moves no money, Post is
-// what makes a payment official (once), a staff-entered payment never exceeds what the invoice can still take, cash needs a note. The AI reader is a stub: the Edge
+// what makes a payment official (once), a staff-entered payment never exceeds what the invoice can still take, cash needs a note and only a manager posts cash. The AI reader is a stub: the Edge
 // Function `slip-analyze` is not run, its calls are only recorded (analyzeCalls) and each analysis is a row the test seeds. This file proves the SCREENS; it proves
 // nothing about the database.
 import type { FakeShop } from './fakeBackend';
@@ -289,6 +289,7 @@ export class FakeReview {
     if (!ref) this.err('The bank transaction reference is required');
     if (norm(ref).length < 4 || ref.length > 80) this.err('The bank transaction reference must have 4 to 80 letters or digits');
     if (!a.p_transfer_at) this.err('The transfer date and time are required');
+    if (new Date(String(a.p_transfer_at)).getTime() > Date.parse(this.clockIso) + 10 * 60e3) this.err('The payment time is in the future');         // the same limit and words as Record payment
     if ((note ?? '').length > 500) this.err('The note is too long (500 characters at most)');
     const e = this.ev(a.p_evidence);
     if (e.status !== 'submitted') this.err(`This slip is already ${e.status}`);
@@ -301,6 +302,7 @@ export class FakeReview {
   private post(a: Record<string, unknown>) {
     this.need(this.settings.post_requires_manager ? 'manage' : 'verify', 'post payments');
     const e = this.ev(a.p_evidence); const i = this.inv(e.invoice_id);
+    if (e.method === 'cash') this.need('manage', 'post cash payments');         // cash is a manager's, whatever the setting; before the replay answer, like the SQL
     if (e.status === 'verified') { const rc = this.receipts.find((r) => r.evidence_id === e.id); if (rc) return { replay: true, result: 'already_posted', receipt_no: rc.receipt_no, credited_to_wallet: 0, state: this.state(i) }; }
     if (e.status !== 'confirmed') this.err(`NOT_CONFIRMED: this slip is ${e.status} (it must be confirmed before it is posted)`);
     if (i.status !== 'open') this.err(`The invoice is ${i.status}`);

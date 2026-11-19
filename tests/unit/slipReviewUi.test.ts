@@ -96,6 +96,15 @@ describe('who may post', () => {
     expect(mayPost('clerk', s(false))).toBe(false); expect(mayPost('viewer', s(false))).toBe(false); expect(mayPost(null, s(false))).toBe(false);
   });
   it('settings that could not be read mean the stricter rule', () => { expect(mayPost('verifier', null)).toBe(false); expect(mayPost('verifier', undefined)).toBe(false); expect(mayPost('manager', null)).toBe(true); });
+  it('CASH is always a manager’s, with the setting off or on; a transfer follows the setting; the method is optional (a transfer)', () => {
+    for (const on of [false, true]) {
+      expect(mayPost('verifier', s(on), 'cash'), `verifier cash, setting ${on}`).toBe(false); expect(mayPost('manager', s(on), 'cash'), `manager cash, setting ${on}`).toBe(true);
+      expect(mayPost('clerk', s(on), 'cash')).toBe(false); expect(mayPost('viewer', s(on), 'cash')).toBe(false); expect(mayPost(null, s(on), 'cash')).toBe(false);
+    }
+    expect(mayPost('verifier', s(false), 'transfer')).toBe(true); expect(mayPost('verifier', s(true), 'transfer')).toBe(false); expect(mayPost('manager', s(true), 'transfer')).toBe(true);
+    expect(mayPost('verifier', s(false), null)).toBe(true); expect(mayPost('verifier', s(false), undefined)).toBe(true);                 // an older database row without a method is a transfer
+    expect(mayPost('verifier', null, 'cash')).toBe(false); expect(mayPost('manager', null, 'cash')).toBe(true);
+  });
 });
 
 describe('refusals from the database become sentences', () => {
@@ -187,17 +196,17 @@ describe('the KPI strip follows the date filter; with none, it means today', () 
 
 describe('the Confirm form is pre-filled only with what the AI really read', () => {
   const read = (over: Record<string, unknown> = {}) => ({ amount: 300, transfer_at: '2026-11-19T03:50:00Z', time_known: true, trans_ref: 'SCB777000222', ...over }) as unknown as Parameters<typeof confirmPrefill>[0];
-  it('a time that was read is filled in (Bangkok clock), with the amount and the reference', () => {
-    expect(confirmPrefill(read(), null)).toEqual({ amount: '300', ref: 'SCB777000222', when: '2026-11-19T10:50', unreadTimeDay: '', filled: ['amount', 'ref', 'when'] });
+  it('a time that was read is filled in (Bangkok clock), with the amount; the bank reference is NEVER filled in: what the AI read of it is only a hint', () => {
+    expect(confirmPrefill(read(), null)).toEqual({ amount: '300', ref: '', when: '2026-11-19T10:50', unreadTimeDay: '', aiRef: 'SCB777000222', filled: ['amount', 'when'] });
   });
   it('a time the AI did NOT read (it stored 12:00 of the date) is left empty; the date is only named as a hint', () => {
     const p = confirmPrefill(read({ time_known: false, transfer_at: '2026-11-19T05:00:00Z' }), null);
-    expect(p.when).toBe(''); expect(p.unreadTimeDay).toBe('19 Nov 2026'); expect(p.filled).toEqual(['amount', 'ref']);          // the note must not claim the time
+    expect(p.when).toBe(''); expect(p.unreadTimeDay).toBe('19 Nov 2026'); expect(p.filled).toEqual(['amount']);          // the note must not claim the time (nor the reference)
     expect(confirmPrefill(read({ time_known: false, transfer_at: null }), null)).toMatchObject({ when: '', unreadTimeDay: '' });
   });
-  it('nothing read gives an empty form; the reference falls back to the one in the QR code', () => {
-    expect(confirmPrefill(null, null)).toEqual({ amount: '', ref: '', when: '', unreadTimeDay: '', filled: [] });
-    expect(confirmPrefill(read({ amount: null, trans_ref: null, transfer_at: null }), 'QR-REF-1')).toMatchObject({ amount: '', ref: 'QR-REF-1', when: '', filled: ['ref'] });
+  it('nothing read gives an empty form; the hint falls back to the reference in the QR code, and the reference input is empty either way', () => {
+    expect(confirmPrefill(null, null)).toEqual({ amount: '', ref: '', when: '', unreadTimeDay: '', aiRef: '', filled: [] });
+    expect(confirmPrefill(read({ amount: null, trans_ref: null, transfer_at: null }), 'QR-REF-1')).toMatchObject({ amount: '', ref: '', aiRef: 'QR-REF-1', when: '', filled: [] });
   });
 });
 
@@ -207,6 +216,18 @@ describe('Thai for the refusals of "record payment"', () => {
     expect(thaiForError(older)).toMatch(/[ก-๿]/); expect(thaiForError(future)).toMatch(/[ก-๿]/);
     expect(errorToastText('en', future).split('\n')).toEqual([future, thaiForError(future)]); expect(errorToastText('th', older).split('\n')).toEqual([thaiForError(older), older]);
     expect(thaiForError(older)).not.toBe(thaiForError('Record payment: The transfer is older than the invoice'));          // its own sentence: it is a payment, not a transfer
+  });
+});
+
+describe('Thai for the refusal to post cash', () => {
+  it('a verifier who tries to post cash is told, in both languages, that a manager does it; the generic refusal is not used for it', () => {
+    const raw = 'Post payment: You are not allowed to post cash payments';
+    expect(thaiForError(raw)).toMatch(/[ก-๿]/); expect(thaiForError(raw)).toMatch(/ผู้จัดการ/); expect(thaiForError(raw)).not.toBe(thaiForError('Post payment: You are not allowed to post payments'));
+    expect(errorToastText('en', raw).split('\n')).toEqual([raw, thaiForError(raw)]);
+  });
+  it('the Confirm form says in Thai that a time in the future is wrong, and the database refusal for it has Thai too', () => {
+    expect(t('th', 'This time is in the future. Check the date and time.')).toMatch(/[ก-๿]/);
+    expect(thaiForError('Confirm payment: The payment time is in the future')).toMatch(/อนาคต/);
   });
 });
 
@@ -231,6 +252,7 @@ describe('every sentence on the dashboard has a Thai text', () => {
   // the tiles carry their tooltips in constants, and a few labels are built from tables of words
   const extra = ['The three AI tiles never overlap and need not add up to Awaiting: a slip that is still waiting for the AI, or was never analysed, is counted only in Awaiting.',
     'An invoice is counted once for every awaiting slip: an invoice with two awaiting slips is counted twice.', 'Queued', 'Running', 'Done', 'Failed', 'Amount', 'Date', 'Time', 'Receiver', 'Bank', 'Reference',
+    '{n} confirmed cash payments are not included: only a manager can post cash.', 'Replaced by a newer slip',
     'Bank transfer', 'Cash', 'Confirmed', 'Posted', 'Posted today', 'Posted (in range)', 'the amount', 'the bank reference', 'the transfer date and time', 'Rejected', 'Asked for more evidence', 'Recorded by staff', 'Verified in one step', 'Not analysed', 'Slips to check', 'Payment review', 'Unresolved payments'];
   for (const e of extra) found.add(e);
   it('finds the sentences it is meant to check', () => { expect(found.size).toBeGreaterThan(100); expect(found.has('Run AI check')).toBe(true); expect(found.has('Review settings')).toBe(true); });

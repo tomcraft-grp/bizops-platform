@@ -195,6 +195,9 @@ test.describe('more evidence requested (state 10)', () => {
     expect(fake.count('finance_submit_evidence')).toBe(1);
     expect(fake.calls.find((c) => c.fn === 'finance_submit_evidence')!.args.p_invoice).toBe(o.invoice.id);
     expect(fake.orders[0].invoice.evidence).toHaveLength(2);
+    expect(fake.orders[0].invoice.evidence[1]).toMatchObject({ status: 'rejected', reject_reason: 'Replaced by a newer slip' });   // the old request was closed by the new slip (the database trigger): it does not stay open
+    await expect(detail(page)).toContainText('ถูกแทนที่ด้วยสลิปที่คุณส่งมาใหม่');                          // the history says so, kindly: not "rejected", and not "asks for more evidence" any more
+    expect(await detail(page).innerText()).not.toContain('ร้านขอหลักฐานเพิ่ม'); expect(await detail(page).innerText()).not.toContain('ปฏิเสธ');
     await expect.poll(() => fake.invokes.length).toBe(1);                                             // one more reader call, for that slip
     expect(fake.invokes[0]).toEqual({ name: 'slip-analyze', body: { evidence_id: fake.orders[0].invoice.evidence[0].id } });
     await page.waitForTimeout(400); expect(fake.invokes).toHaveLength(1);

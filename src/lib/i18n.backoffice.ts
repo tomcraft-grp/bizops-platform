@@ -1061,6 +1061,10 @@ export const TH_BACKOFFICE: Record<string, string> = {
   'The AI read the date ({d}) but not the time of day. Type the time from your bank record.': 'AI อ่านวันที่ได้ ({d}) แต่อ่านเวลาไม่ได้ กรุณากรอกเวลาจากรายการเดินบัญชีของธนาคาร',
   'More than the invoice still owes ({n} over): the extra is credited to the customer’s wallet when the payment is posted.': 'มากกว่ายอดที่ใบแจ้งหนี้ยังค้าง (เกิน {n}): ส่วนที่เกินจะเข้ากระเป๋าเงินของลูกค้าเมื่อลงรายการ',
   'This time is in the future. Check the date and time.': 'เวลานี้อยู่ในอนาคต กรุณาตรวจสอบวันและเวลา',
+  'AI read from the slip: {r} — type the reference from your bank record.': 'AI อ่านจากสลิปได้: {r} — กรุณากรอกรหัสอ้างอิงจากรายการเดินบัญชีของธนาคาร',
+  '{n} confirmed cash payments are not included: only a manager can post cash.': 'ไม่รวมการรับเงินสดที่ยืนยันแล้ว {n} รายการ: เฉพาะผู้จัดการเท่านั้นที่ลงรายการเงินสดได้',
+  'A cash payment is posted by a manager. Ask a manager to post it.': 'การรับเงินสดต้องให้ผู้จัดการเป็นผู้ลงรายการ กรุณาให้ผู้จัดการลงรายการ',
+  'Replaced by a newer slip': 'ถูกแทนที่ด้วยสลิปที่ใหม่กว่า',
   'Loading the bank accounts…': 'กำลังโหลดบัญชีธนาคาร…',
   'Customer slips are evidence only. A payment settles an invoice after you verify it against the bank record.': 'สลิปของลูกค้าเป็นเพียงหลักฐาน ใบแจ้งหนี้จะถูกชำระก็ต่อเมื่อคุณตรวจสอบกับรายการเดินบัญชีของธนาคารแล้วเท่านั้น',
 };

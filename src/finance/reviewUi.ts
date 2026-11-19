@@ -8,10 +8,12 @@ import { reasonValueText, type AiResult, type Bilingual, type Reason, type Reaso
 
 // ------------------------------------------------------------------------------------------------ who may do what (a hint; the database enforces the same rules)
 /**
- * Post is for a manager while `post_requires_manager` is on, else for a verifier. If the settings could not be read the stricter rule is assumed: the buttons would only
- * mirror the database anyway, and the database decides.
+ * Post is for a manager while `post_requires_manager` is on, else for a verifier; and a CASH payment is always for a manager, whatever the setting (cash has no bank record to
+ * check against, so one verifier must not record cash and then post it alone). Pass the row's method; a transfer is the default. If the settings could not be read the
+ * stricter rule is assumed: the buttons would only mirror the database anyway, and the database decides.
  */
-export const mayPost = (role: FinanceRole | null, settings: ReviewSettings | null | undefined) => canFinance(role, (settings?.post_requires_manager ?? true) ? 'manage' : 'verify');
+export const mayPost = (role: FinanceRole | null, settings: ReviewSettings | null | undefined, method: 'transfer' | 'cash' | null | undefined = 'transfer') =>
+  canFinance(role, (method === 'cash' || (settings?.post_requires_manager ?? true)) ? 'manage' : 'verify');
 
 // ------------------------------------------------------------------------------------------------ dates in the shop's own time zone
 const BKK = 'Asia/Bangkok';
@@ -150,24 +152,30 @@ export const percent = (v: number | null | undefined) => (v == null ? '' : `${Ma
 
 // ------------------------------------------------------------------------------------------------ the Confirm form's starting values
 export interface ConfirmPrefill {
-  amount: string; ref: string; when: string;
+  amount: string;
+  /** Always '': the person types the bank reference from the bank record (a slip can be faked, and the AI's reading of it is not the bank's). */
+  ref: string;
+  when: string;
   /** The date the AI read when it could not read the time of day (shown as a hint, never as the value); '' otherwise. */
   unreadTimeDay: string;
-  /** Which of the three fields were filled in from the reading (what the note under the title may claim). */
-  filled: ('amount' | 'ref' | 'when')[];
+  /** The reference the AI read on the slip (or in its QR code): only a hint line, never a value of the form; '' when it read none. */
+  aiRef: string;
+  /** Which of the fields were filled in from the reading (what the note under the title may claim). */
+  filled: ('amount' | 'when')[];
 }
 /**
- * What the Confirm form starts with: only what the AI actually read. A slip whose time of day could not be read is stored at 12:00 of its date (`time_known` false): that is
- * not read data, so the time stays empty and the person types it from the bank record. Nothing here is a decision; every value is checked and sent by a person.
+ * What the Confirm form starts with: the amount and the time the AI actually read. A slip whose time of day could not be read is stored at 12:00 of its date (`time_known`
+ * false): that is not read data, so the time stays empty and the person types it from the bank record. The bank reference is never filled in: the AI's reading of it is
+ * returned as `aiRef`, for a hint line only. Nothing here is a decision; every value is checked and sent by a person.
  */
 export function confirmPrefill(x: SlipAnalysis['extracted'] | null | undefined, qrRef: string | null | undefined): ConfirmPrefill {
   const amount = x?.amount != null ? String(x.amount) : '';
-  const ref = x?.trans_ref ?? qrRef ?? '';
+  const aiRef = x?.trans_ref ?? qrRef ?? '';
   const when = x?.time_known && x.transfer_at ? localInput(x.transfer_at) : '';
   const unreadTimeDay = x && !x.time_known && x.transfer_at ? dayText(x.transfer_at) : '';
   const filled: ConfirmPrefill['filled'] = [];
-  if (amount) filled.push('amount'); if (ref) filled.push('ref'); if (when) filled.push('when');
-  return { amount, ref, when, unreadTimeDay, filled };
+  if (amount) filled.push('amount'); if (when) filled.push('when');
+  return { amount, ref: '', when, unreadTimeDay, aiRef, filled };
 }
 
 // ------------------------------------------------------------------------------------------------ refusals from the database, as sentences

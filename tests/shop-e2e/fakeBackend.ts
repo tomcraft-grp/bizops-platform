@@ -185,6 +185,8 @@ export class FakeShop {
       }
       case 'finance_submit_evidence': {
         const o = this.orders.find((x) => x.invoice.id === a.p_invoice); if (!o) this.err('Invoice not found');
+        // the trigger finance_evidence_supersede_old: a customer's new slip closes the older "more evidence" slips of the same invoice (rejected, with this reason)
+        for (const e of o.invoice.evidence) if (e.status === 'more_evidence') Object.assign(e, { status: 'rejected', reject_reason: 'Replaced by a newer slip', reviewed_at: new Date().toISOString() });
         const id = 'ev-' + ++this.seq; o.invoice.evidence.unshift({ id, status: 'submitted', claimed_amount: Number(a.p_claimed_amount), created_at: new Date().toISOString() }); this.w.noteSlip(id, (a.p_bank_account as string | null) ?? null); return id;
       }
       case 'finance_role': return this.w.role;

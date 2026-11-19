@@ -34,6 +34,7 @@ const RULES: Array<[RegExp, (m: RegExpExecArray) => string]> = [
   [/financial records are never deleted/i, () => 'ข้อมูลการเงินห้ามลบ ให้ใช้การกลับรายการแทน'],
   [/^a reason is required/i, () => 'ต้องระบุเหตุผล'],
   [/^please sign in/i, () => 'กรุณาเข้าสู่ระบบ'],
+  [/not allowed to post cash payments/i, () => 'การลงรายการรับเงินสดทำได้เฉพาะผู้จัดการ (ผู้ตรวจสอบบันทึกรับเงินสดได้ แต่ต้องให้ผู้จัดการเป็นผู้ลงรายการ)'],
   [/you are not allowed to|permission denied|not authorized/i, () => 'คุณไม่มีสิทธิ์ทำรายการนี้'],
   [/(?:invoice|evidence|receipt|deposit|customer|order|transaction) not found/i, () => 'ไม่พบรายการที่ต้องการ (อาจถูกยกเลิก หรือคุณไม่มีสิทธิ์เห็น)'],
   [/failed to fetch|network ?error|load failed|timed? ?out|connection/i, () => 'การเชื่อมต่ออินเทอร์เน็ตมีปัญหา กรุณาตรวจสอบสัญญาณแล้วลองใหม่อีกครั้ง'],

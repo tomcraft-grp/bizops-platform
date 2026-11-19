@@ -29,6 +29,8 @@ const MSG: Record<StatusCode, { th: string; en: string; tone: 'info' | 'warn' | 
   10: { th: 'ทางร้านขอหลักฐานการชำระเพิ่มเติม กรุณาส่งสลิปใหม่', en: 'The shop asked for more evidence of your payment. Please send a new slip.', tone: 'warn' },
 };
 
+/** The reason the database gives to a "more evidence" slip that the customer's newer slip closed (trigger finance_evidence_supersede_old): not a refusal, so the history does not call it one. */
+const REPLACED = 'Replaced by a newer slip';
 /** One line of the payment history per slip that is not posted: a slip the shop CONFIRMED is waiting to be recorded, never "rejected". An unknown status reads as waiting. */
 const EVIDENCE_NOTE: Partial<Record<CustomerEvidence['status'], string>> = {
   submitted: 'waiting for the shop to check', confirmed: 'the shop confirmed it; being recorded', more_evidence: 'the shop asked for more evidence', rejected: 'rejected',
@@ -199,7 +201,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
         <div className="col gap-4" style={{ marginTop: 10, fontSize: 12.5 }}>
           <div className="dev-sub">{tl(lang, 'Payment history')}</div>
           {history.rc.map((r) => <div key={r.id} className="row between"><span>{r.receipt_no} <span className="muted">{dateTimeFmt(r.received_at)}</span>{r.status === 'reversed' && <> <Badge tone="bad">{tl(lang, 'reversed')}</Badge></>}</span><b>{money(r.amount)}</b></div>)}
-          {history.ev.filter((e) => e.status !== 'verified').map((e) => <div key={e.id} className="row between"><span className="muted">{tl(lang, e.source === 'staff_entry' ? 'Payment recorded by the shop' : 'Slip')} {dateTimeFmt(e.created_at)}</span><span>{tl(lang, EVIDENCE_NOTE[e.status] ?? 'waiting for the shop to check')} · {money(e.claimed_amount)}</span></div>)}
+          {history.ev.filter((e) => e.status !== 'verified').map((e) => <div key={e.id} className="row between"><span className="muted">{tl(lang, e.source === 'staff_entry' ? 'Payment recorded by the shop' : 'Slip')} {dateTimeFmt(e.created_at)}</span><span>{tl(lang, e.status === 'rejected' && e.reject_reason === REPLACED ? 'replaced by the slip you sent after' : (EVIDENCE_NOTE[e.status] ?? 'waiting for the shop to check'))} · {money(e.claimed_amount)}</span></div>)}
         </div>
       )}
       {!open && (history == null) && (inv.status_code !== 0) && <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>{tl(lang, 'Details')}</Button>}
