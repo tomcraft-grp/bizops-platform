@@ -648,7 +648,7 @@ test.describe('the fake follows the contract', () => {
     expect(first).toMatchObject({ replay: false, result: 'fully_paid' });
     expect(fake.rpc('finance_post_evidence', { p_evidence: 'ev-5' })).toMatchObject({ replay: true });
     expect(fake.rv.receipts).toHaveLength(2);
-    const rec = (amount: number, note: string | null = 'Cash at the counter', invoice = 'inv-2') => fake.rpc('finance_record_payment', { p_invoice: invoice, p_method: 'cash', p_amount: amount, p_received_at: new Date().toISOString(), p_bank_trans_ref: null, p_bank_account: null, p_note: note });
+    const rec = (amount: number, note: string | null = 'Cash at the counter', invoice = 'inv-2') => fake.rpc('finance_record_payment', { p_invoice: invoice, p_method: 'cash', p_amount: amount, p_received_at: new Date(fake.rv.clockIso).toISOString(), p_bank_trans_ref: null, p_bank_account: null, p_note: note });
     expect(() => rec(100, null)).toThrow(/NOTE_REQUIRED/); expect(() => rec(351)).toThrow(/EXCEEDS_OUTSTANDING: 351 is more than the 350/);
     rec(200); expect(() => rec(151)).toThrow(/EXCEEDS_OUTSTANDING: 151 is more than the 150/);                                // 200 is confirmed and waits to be posted
     expect(rec(150)).toMatchObject({ status: 'confirmed' });
