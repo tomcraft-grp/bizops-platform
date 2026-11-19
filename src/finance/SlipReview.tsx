@@ -60,13 +60,17 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
   const [busy, setBusy] = useState('');
   const [bulk, setBulk] = useState<BulkRow[] | null>(null);
   const seq = useRef(0);
+  const cur = useRef({ f, offset });                                     // what is on screen right now: an action that finishes later still reloads THIS page, never the page it was started from
+  cur.current = { f, offset };
+  const appliedSearch = useRef('');
   const asking = useRef(false);
   const canPostNow = mayPost(role, settings);
 
   const loadList = useCallback(async () => {
     const id = ++seq.current;                                              // a slower, older answer never overwrites a newer one
+    const { f: now, offset: at } = cur.current;
     try {
-      const p = await review.list(toFilter(f), PAGE, offset);
+      const p = await review.list(toFilter(now), PAGE, at);
       if (id === seq.current) { setPage(p); setMissing(false); }
     } catch (e) {
       if (id !== seq.current) return;
@@ -78,7 +82,10 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
   const loadSummary = useCallback(async () => { try { setSummary(await review.summary(null, null)); } catch { /* the list says what is wrong */ } }, []);
   useEffect(() => { void loadList(); }, [loadList]);
   useEffect(() => { void loadSummary(); review.settings().then((s) => setSettings(s ?? null)).catch(() => setSettings(null)); }, [loadSummary]);
-  useEffect(() => { const h = setTimeout(() => { setF((x) => (x.search === box ? x : { ...x, search: box })); setOffset(0); }, 300); return () => clearTimeout(h); }, [box]);
+  useEffect(() => {                                                        // typing waits 300 ms; the page goes back to the first only when the text really changed (opening the screen must not undo a Next press)
+    const h = setTimeout(() => { if (appliedSearch.current === box) return; appliedSearch.current = box; setF((x) => ({ ...x, search: box })); setOffset(0); }, 300);
+    return () => clearTimeout(h);
+  }, [box]);
   // the last row of the last page was dealt with: the page is gone, so show the new last page instead of an empty one
   useEffect(() => { if (page && page.items.length === 0 && page.total > 0 && offset > 0) setOffset(Math.floor((page.total - 1) / PAGE) * PAGE); }, [page, offset]);
   const refresh = useCallback(async () => { await Promise.all([loadList(), loadSummary()]); onChanged(); }, [loadList, loadSummary, onChanged]);
