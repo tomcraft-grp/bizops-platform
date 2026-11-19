@@ -13,6 +13,10 @@
 # The wallet suite even aborts before its first section is over (three single-row subqueries on finance_gl_queue see the real rows): for it, a temporary copy
 # is used in which those three subqueries take the newest queue row of their event type (the row the test has just made); the copy is used for both runs and no
 # file under supabase/tests is changed.
+# A second temporary patch of that copy: check W9 asks the bank report for "yesterday .. tomorrow" (current_date - 1, current_date + 1) and expects ONE SCB row, but production
+# now has real SCB deposits on neighbouring days, so since the calendar moved on the window sees two rows. The copy asks for the one Bangkok day on which the test
+# makes its deposit instead (the report groups by Bangkok day, and the database clock is UTC: between 17:00 and 24:00 UTC "today" in UTC is yesterday in Bangkok,
+# so current_date would miss the test deposit). The expected numbers are not touched.
 cd "$(dirname "$0")/.." || exit 2
 NEW="supabase/migrations/20261120100000_slip_review.sql"
 RUNNER="$(pwd)/scripts/run-sql-tests.sh"
@@ -22,6 +26,10 @@ status=0
 
 sed -E "s/from public\.finance_gl_queue q where q\.event_type = '(WALLET_DEPOSIT|BANK_RECEIPT|WALLET_REFUND)'\), null;/from public.finance_gl_queue q where q.event_type = '\1' order by q.seq desc limit 1), null;/" supabase/tests/wallet_payments.sql > "$TMP/wallet_payments.sql"
 [ "$(grep -c 'order by q.seq desc limit 1' "$TMP/wallet_payments.sql")" = 3 ] || { echo "the wallet suite no longer has the three queue look-ups this script scopes; update the script" >&2; exit 2; }
+
+# W9 (see the header): the one Bangkok day of the test, not "yesterday .. tomorrow"
+sed -i -E "s/finance_bank_daily_report\(current_date - 1, current_date \+ 1\)/finance_bank_daily_report((now() at time zone 'Asia\/Bangkok')::date, (now() at time zone 'Asia\/Bangkok')::date)/" "$TMP/wallet_payments.sql"
+[ "$(grep -c "finance_bank_daily_report((now() at time zone 'Asia/Bangkok')::date, (now() at time zone 'Asia/Bangkok')::date)" "$TMP/wallet_payments.sql")" = 1 ] || { echo "the wallet suite no longer asks for the bank report window this script narrows (W9); update the script" >&2; exit 2; }
 
 names() { grep -E "^$2 " "$1" | sed -E "s/^(PASS|FAIL) \[[0-9]+\] //; s/ => .*//" | sort; }       # file, PASS|FAIL
 run_suite() {   # marker, test file, label
