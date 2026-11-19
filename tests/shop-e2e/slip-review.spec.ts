@@ -407,7 +407,7 @@ test.describe('only what the AI really read is pre-filled', () => {
 test.describe('the tiles follow the date filter', () => {
   test('Posted means today until a range is chosen; then it follows the range and says so', async ({ page }) => {
     const fake = new FakeShop(); await openReview(page, fake);
-    const sums = () => fake.calls.filter((c) => c.fn === 'finance_review_summary').map((c) => c.args);
+    const sums = () => fake.calls.filter((c) => c.fn === 'finance_review_summary' && (c.args.p_from || c.args.p_to)).map((c) => c.args);     // the tab's own count (no dates) is not the dashboard's
     await expect(kpi(page, 'posted')).toContainText('Posted today'); await expect(kpi(page, 'posted')).toContainText('฿180.00');
     expect(sums().at(-1)).toEqual({ p_from: '2026-11-19', p_to: '2026-11-19' });                                              // no date chosen: today, in Bangkok
     await page.getByLabel('From date').fill('2026-11-01'); await page.getByLabel('To date').fill('2026-11-18');
@@ -422,7 +422,7 @@ test.describe('the tiles follow the date filter', () => {
   test('on the next day yesterday’s posted payments are not "today"; the label is Thai in Thai', async ({ page }) => {
     const fake = new FakeShop(); fake.rv.clockIso = '2026-11-20T09:00:00+07:00'; await openReview(page, fake, 'manager', 'th');
     await expect(kpi(page, 'posted')).toContainText('ลงรายการวันนี้'); await expect(kpi(page, 'posted')).toContainText('฿0.00');
-    expect(fake.calls.filter((c) => c.fn === 'finance_review_summary').at(-1)!.args).toEqual({ p_from: '2026-11-20', p_to: '2026-11-20' });
+    await expect.poll(() => fake.calls.filter((c) => c.fn === 'finance_review_summary' && c.args.p_from).at(-1)?.args).toEqual({ p_from: '2026-11-20', p_to: '2026-11-20' });   // (the tab's own count asks without dates)
   });
 });
 
