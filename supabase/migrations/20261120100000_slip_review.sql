@@ -957,3 +957,276 @@ do $$ begin
     revoke execute on function public.finance_verify_core(uuid, numeric, text, timestamptz, text, text, text, text), public.finance_ref_in_use(text, uuid) from service_role;
   end if;
 end $$;
+
+-- ================================================================================================= 4 reads
+-- What the end-of-day dashboard reads: the list of payments, the KPI summary, the detail of one payment, the settings. All four are for STAFF only (finance_can('view'), the
+-- lowest staff role): a customer, even for their own slip, is told "not allowed" and anon has no execute right. Staff data is served through these functions and never
+-- through direct table reads (a customer can read the staff-only columns of their own evidence row through RLS, so the review detail must not be the only place a secret
+-- lives). They are STABLE (read-only). The stage of a payment is derived here, never stored.
+--
+-- Stage of a payment (one of seven ids): from the status of the evidence and the NEWEST analysis (the highest attempt):
+--   submitted: no analysis, or queued / running -> slip_submitted;  done with result match -> ai_completed;  done with any other result, or failed -> manual_review
+--   confirmed -> confirmed;  verified -> posted;  rejected -> rejected;  more_evidence -> more_evidence
+
+-- 4a the stage (pure: the status, the newest analysis' status and its result). Internal.
+create or replace function public.finance_evidence_stage(p_status text, p_analysis_status text, p_result text)
+returns text language sql immutable set search_path = public as $$
+  select case p_status
+    when 'submitted' then case when p_analysis_status = 'failed' then 'manual_review'
+                               when p_analysis_status = 'done' then case when p_result = 'match' then 'ai_completed' else 'manual_review' end
+                               else 'slip_submitted' end
+    when 'confirmed' then 'confirmed'
+    when 'verified' then 'posted'
+    when 'rejected' then 'rejected'
+    when 'more_evidence' then 'more_evidence'
+  end
+$$;
+
+-- 4b readers of the filter (internal): a text list (a single string counts as a list of one; null, "" and [] mean "no filter"; a value outside the allowed ones is an error)
+-- and a calendar date (YYYY-MM-DD only: Postgres would also take words such as 'yesterday').
+create or replace function public.finance_review_arr(p_val jsonb, p_name text, p_allowed text[])
+returns text[] language plpgsql immutable set search_path = public as $$
+declare v text[] := '{}'; x jsonb;
+begin
+  if p_val is null or jsonb_typeof(p_val) = 'null' then return null; end if;
+  if jsonb_typeof(p_val) = 'string' then v := array[p_val #>> '{}'];
+  elsif jsonb_typeof(p_val) = 'array' then
+    for x in select e.value from jsonb_array_elements(p_val) e loop
+      if jsonb_typeof(x) <> 'string' then raise exception 'INVALID_FILTER: % must be text or a list of text', p_name; end if;
+      v := v || (x #>> '{}');
+    end loop;
+  else raise exception 'INVALID_FILTER: % must be text or a list of text', p_name;
+  end if;
+  v := array(select distinct u from unnest(v) as u where btrim(u) <> '');
+  if cardinality(v) = 0 then return null; end if;
+  if exists (select 1 from unnest(v) as u where u <> all (p_allowed)) then raise exception 'INVALID_FILTER: % has a value that does not exist', p_name; end if;
+  return v;
+end $$;
+
+create or replace function public.finance_review_date(p_val jsonb, p_name text)
+returns date language plpgsql immutable set search_path = public as $$
+declare v text;
+begin
+  if p_val is null or jsonb_typeof(p_val) = 'null' then return null; end if;
+  if jsonb_typeof(p_val) <> 'string' then raise exception 'INVALID_FILTER: % must be a date written YYYY-MM-DD', p_name; end if;
+  v := btrim(p_val #>> '{}');
+  if v = '' then return null; end if;
+  if v !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then raise exception 'INVALID_FILTER: % must be a date written YYYY-MM-DD', p_name; end if;
+  begin return v::date;
+  exception when others then raise exception 'INVALID_FILTER: % must be a date written YYYY-MM-DD', p_name;
+  end;
+end $$;
+
+-- 4c what a payment is expected to be (internal; the same rule as the classifier): the amount the newest FINISHED analysis expected when it was decided (its snapshot),
+-- else the amount of the payment request the slip was made for, else what the invoice still owes (posted receipts only).
+create or replace function public.finance_review_expected(p_evidence uuid)
+returns numeric language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select case when jsonb_typeof(a.expected -> 'amount') = 'number' then (a.expected ->> 'amount')::numeric end
+       from public.finance_slip_analysis a where a.evidence_id = e.id and a.status = 'done' order by a.attempt desc limit 1),
+    (select r.amount from public.finance_payment_requests r where r.id = e.request_id),
+    (select greatest(i.amount - coalesce((select sum(al.amount) from public.finance_allocations al join public.finance_receipts rc on rc.id = al.receipt_id
+                                           where al.invoice_id = i.id and al.active and rc.status = 'posted'), 0), 0)
+       from public.finance_invoices i where i.id = e.invoice_id))
+  from public.finance_payment_evidence e where e.id = p_evidence
+$$;
+
+-- 4d the list. Filter keys (all optional; null, "" and [] mean no filter; any other key, or a value that does not exist, is INVALID_FILTER):
+--   stage[]  ai_result[]  source[]  method[]   values of the design (a single string works too)      reason   one reason code of the newest analysis
+--   from, to   calendar dates in Asia/Bangkok on the slip's created_at, both inclusive (YYYY-MM-DD)
+--   search     order number, invoice number, customer name (ilike; % and _ are plain characters), the confirmed / claimed / verified / AI-read (printed or QR) bank reference
+--              (also found when written with other spaces, dashes or case, from 4 letters or digits)
+-- Newest first (created_at desc, id). The limit is 1..200 (default 50), `total` counts everything the filter matches before paging. "Newest analysis" = the highest attempt;
+-- the AI amount, time and confidence come from the newest FINISHED analysis (so a re-run that is still waiting does not blank them).
+create or replace function public.finance_review_list(p_filter jsonb default '{}'::jsonb, p_limit integer default 50, p_offset integer default 0)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare
+  f jsonb := coalesce(p_filter, '{}'::jsonb); k text;
+  v_lim integer := least(greatest(coalesce(p_limit, 50), 1), 200); v_off integer := greatest(coalesce(p_offset, 0), 0);
+  v_stage text[]; v_result text[]; v_source text[]; v_method text[]; v_reason text; v_q text; v_pat text; v_qref text;
+  v_from date; v_to date; v_from_ts timestamptz; v_to_ts timestamptz; v_res jsonb;
+begin
+  perform public.finance_require('view', 'see the slip review');
+  if jsonb_typeof(f) = 'null' then f := '{}'::jsonb; end if;
+  if jsonb_typeof(f) <> 'object' then raise exception 'INVALID_FILTER: the filter must be an object'; end if;
+  for k in select jsonb_object_keys(f) loop
+    if k not in ('stage', 'ai_result', 'from', 'to', 'reason', 'source', 'method', 'search') then raise exception 'INVALID_FILTER: unknown filter %', k; end if;
+  end loop;
+  v_stage := public.finance_review_arr(f -> 'stage', 'stage', array['slip_submitted', 'ai_completed', 'manual_review', 'confirmed', 'posted', 'rejected', 'more_evidence']);
+  v_result := public.finance_review_arr(f -> 'ai_result', 'ai_result', array['match', 'amount_mismatch', 'date_mismatch', 'time_anomaly', 'duplicate_suspected', 'suspicious_slip', 'manual_review']);
+  v_source := public.finance_review_arr(f -> 'source', 'source', array['customer_slip', 'staff_entry']);
+  v_method := public.finance_review_arr(f -> 'method', 'method', array['transfer', 'cash']);
+  v_from := public.finance_review_date(f -> 'from', 'from');
+  v_to := public.finance_review_date(f -> 'to', 'to');
+  if jsonb_typeof(f -> 'reason') not in ('string', 'null') or jsonb_typeof(f -> 'search') not in ('string', 'null') then
+    raise exception 'INVALID_FILTER: reason and search must be text'; end if;
+  v_reason := nullif(btrim(f ->> 'reason'), '');
+  v_q := nullif(btrim(coalesce(f ->> 'search', '')), '');
+  if v_q is not null then
+    v_pat := '%' || replace(replace(replace(left(v_q, 80), '\', '\\'), '%', '\%'), '_', '\_') || '%';
+    if length(public.finance_slip_ref(left(v_q, 80))) >= 4 then v_qref := public.finance_slip_ref(left(v_q, 80)); end if;
+  end if;
+  v_from_ts := v_from::timestamp at time zone 'Asia/Bangkok';                  -- the start of the first day ...
+  v_to_ts := (v_to + 1)::timestamp at time zone 'Asia/Bangkok';                -- ... up to (not including) the start of the day after the last one
+
+  with base as (
+    select ev.id, ev.created_at, ev.source, ev.method, ev.status, ev.invoice_id, ev.claimed_amount, ev.claimed_ref, ev.bank_trans_ref, ev.confirmed_amount, ev.confirmed_bank_ref, ev.posted_at,
+           i.invoice_no, i.amount as invoice_amount, c.name as customer_name, c.profile_id,
+           o.id as order_id, o.order_no, o.created_at as order_created_at, o.total as order_total, nullif(btrim(o.contact_phone), '') as contact_phone,
+           na.status as a_status, na.result as a_result, na.reasons as a_reasons, dn.extracted as d_extracted, dn.qr as d_qr, dn.overall_confidence as d_conf,
+           public.finance_evidence_stage(ev.status, na.status, na.result) as stage
+      from public.finance_payment_evidence ev
+      join public.finance_invoices i on i.id = ev.invoice_id
+      join public.finance_customers c on c.id = ev.customer_id
+      left join public.shop_orders o on o.invoice_id = ev.invoice_id
+      left join lateral (select a.status, a.result, a.reasons from public.finance_slip_analysis a where a.evidence_id = ev.id order by a.attempt desc limit 1) na on true
+      left join lateral (select a.extracted, a.qr, a.overall_confidence from public.finance_slip_analysis a where a.evidence_id = ev.id and a.status = 'done' order by a.attempt desc limit 1) dn on true
+     where (v_from_ts is null or ev.created_at >= v_from_ts) and (v_to_ts is null or ev.created_at < v_to_ts)
+       and (v_source is null or ev.source = any (v_source)) and (v_method is null or ev.method = any (v_method))
+  ), flt as (
+    select b.* from base b
+     where (v_stage is null or b.stage = any (v_stage)) and (v_result is null or b.a_result = any (v_result))
+       and (v_reason is null or b.a_reasons @> jsonb_build_array(jsonb_build_object('code', v_reason)))
+       and (v_pat is null
+            or b.order_no ilike v_pat or b.invoice_no ilike v_pat or b.customer_name ilike v_pat
+            or b.confirmed_bank_ref ilike v_pat or b.claimed_ref ilike v_pat or b.bank_trans_ref ilike v_pat
+            or (b.d_extracted ->> 'trans_ref') ilike v_pat or (b.d_qr ->> 'trans_ref') ilike v_pat
+            or (v_qref is not null and (public.finance_slip_ref(b.confirmed_bank_ref) like '%' || v_qref || '%' or public.finance_slip_ref(b.claimed_ref) like '%' || v_qref || '%'
+                                        or public.finance_slip_ref(b.bank_trans_ref) like '%' || v_qref || '%' or public.finance_slip_ref(b.d_extracted ->> 'trans_ref') like '%' || v_qref || '%'
+                                        or public.finance_slip_ref(b.d_qr ->> 'trans_ref') like '%' || v_qref || '%')))
+  ), tot as (
+    select count(*) as n from flt
+  ), page as (
+    select * from flt order by created_at desc, id limit v_lim offset v_off
+  )
+  select jsonb_build_object('total', (select n from tot), 'items', coalesce(jsonb_agg(jsonb_build_object(
+      'evidence_id', page.id, 'created_at', page.created_at, 'source', page.source, 'method', page.method, 'status', page.status, 'stage', page.stage,
+      'order_id', page.order_id, 'order_no', page.order_no, 'order_created_at', page.order_created_at, 'order_total', page.order_total,
+      'invoice_id', page.invoice_id, 'invoice_no', page.invoice_no, 'invoice_amount', page.invoice_amount,
+      'paid', (s.st ->> 'paid')::numeric, 'outstanding', (s.st ->> 'outstanding')::numeric,
+      'customer_name', page.customer_name, 'customer_phone', coalesce(page.contact_phone, (select p.phone from public.profiles p where p.id = page.profile_id)),
+      'expected_amount', public.finance_review_expected(page.id), 'claimed_amount', page.claimed_amount,
+      'ai_amount', case when jsonb_typeof(page.d_extracted -> 'amount') = 'number' then (page.d_extracted ->> 'amount')::numeric end,
+      'ai_transfer_at', page.d_extracted ->> 'transfer_at', 'ai_result', page.a_result, 'ai_confidence', page.d_conf, 'ai_status', page.a_status,
+      'reasons', coalesce((select jsonb_agg(r.value ->> 'code' order by r.ord) from jsonb_array_elements(page.a_reasons) with ordinality as r(value, ord)), '[]'::jsonb),
+      'confirmed_amount', page.confirmed_amount, 'confirmed_bank_ref', page.confirmed_bank_ref, 'posted_at', page.posted_at) order by page.created_at desc, page.id), '[]'::jsonb))
+    into v_res
+    from page cross join lateral (select public.finance_invoice_state_raw(page.invoice_id) as st) s;
+  return v_res;
+end $$;
+
+-- 4e the KPI summary. The UNRESOLVED counts ignore the range (they are what is waiting today):
+--   awaiting      payments with status submitted or confirmed: how many, what they were expected to be (4c), what the AI read on them (newest finished analysis)
+--   ai_verified   submitted payments in stage ai_completed;  manual_review  submitted payments in stage manual_review (it includes the suspicious ones);
+--   suspicious    ... of which the newest analysis said duplicate_suspected or suspicious_slip
+--   confirmed     status confirmed: how many and the money (confirmed_amount, else the claimed amount);  more_evidence  status more_evidence (counted on its own)
+-- posted (status verified, on the day of posted_at, or of reviewed_at for a slip the old one-step verify settled) and rejected (on the day of reviewed_at) use the range;
+-- days are calendar days in Asia/Bangkok, both ends inclusive, either end may be null (no range at all: every posted and rejected slip counts, also one that has no date;
+-- with a range a slip without a date is outside it). posted.amount = the amount recorded on the receipt (verified_amount).
+create or replace function public.finance_review_summary(p_from date default null, p_to date default null)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare v_from timestamptz := p_from::timestamp at time zone 'Asia/Bangkok'; v_to timestamptz := (p_to + 1)::timestamp at time zone 'Asia/Bangkok'; v_res jsonb;
+begin
+  perform public.finance_require('view', 'see the slip review');
+  with r as (
+    select e.id, e.status, e.claimed_amount, e.confirmed_amount, e.verified_amount, e.status in ('submitted', 'confirmed') as awaiting,
+           public.finance_evidence_stage(e.status, na.status, na.result) as stage, na.result as a_result,
+           case when jsonb_typeof(dn.extracted -> 'amount') = 'number' then (dn.extracted ->> 'amount')::numeric end as ai_amount,
+           case when e.status in ('submitted', 'confirmed') then public.finance_review_expected(e.id) end as expected
+      from public.finance_payment_evidence e
+      left join lateral (select a.status, a.result from public.finance_slip_analysis a where a.evidence_id = e.id order by a.attempt desc limit 1) na on true
+      left join lateral (select a.extracted from public.finance_slip_analysis a where a.evidence_id = e.id and a.status = 'done' order by a.attempt desc limit 1) dn on true
+     where e.status in ('submitted', 'confirmed', 'more_evidence')
+        or (e.status = 'verified' and (coalesce(v_from, v_to) is null
+             or (coalesce(e.posted_at, e.reviewed_at) >= coalesce(v_from, '-infinity'::timestamptz) and coalesce(e.posted_at, e.reviewed_at) < coalesce(v_to, 'infinity'::timestamptz))))
+        or (e.status = 'rejected' and (coalesce(v_from, v_to) is null
+             or (e.reviewed_at >= coalesce(v_from, '-infinity'::timestamptz) and e.reviewed_at < coalesce(v_to, 'infinity'::timestamptz)))))
+  select jsonb_build_object(
+    'awaiting', jsonb_build_object('count', count(*) filter (where awaiting), 'expected_total', coalesce(sum(expected) filter (where awaiting), 0), 'ai_total', coalesce(sum(ai_amount) filter (where awaiting), 0)),
+    'ai_verified', count(*) filter (where stage = 'ai_completed'),
+    'manual_review', count(*) filter (where stage = 'manual_review'),
+    'suspicious', count(*) filter (where stage = 'manual_review' and a_result in ('duplicate_suspected', 'suspicious_slip')),
+    'confirmed', jsonb_build_object('count', count(*) filter (where status = 'confirmed'), 'amount', coalesce(sum(coalesce(confirmed_amount, claimed_amount)) filter (where status = 'confirmed'), 0)),
+    'posted', jsonb_build_object('count', count(*) filter (where status = 'verified'), 'amount', coalesce(sum(coalesce(verified_amount, confirmed_amount, claimed_amount)) filter (where status = 'verified'), 0)),
+    'rejected', count(*) filter (where status = 'rejected'),
+    'more_evidence', count(*) filter (where status = 'more_evidence')) into v_res from r;
+  return v_res;
+end $$;
+
+-- 4f the detail of one payment, for the screen that shows the slip beside its order: the evidence row in full (with the file path, for the signed URL) plus its stage and
+-- expected amount; every analysis attempt, newest first, with everything the reader found; the shop order with its items (null for an invoice that is not a shop order); the
+-- invoice with its state; the customer; the receipts of the invoice; the other payments of the invoice; the last 30 audit rows of this payment.
+create or replace function public.finance_review_detail(p_evidence uuid)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare e public.finance_payment_evidence; i public.finance_invoices; c public.finance_customers; o public.shop_orders; st jsonb; na record;
+begin
+  perform public.finance_require('view', 'see the slip review');
+  select * into e from public.finance_payment_evidence where id = p_evidence;
+  if not found then raise exception 'Evidence not found'; end if;
+  select * into i from public.finance_invoices where id = e.invoice_id;
+  select * into c from public.finance_customers where id = e.customer_id;
+  select * into o from public.shop_orders where invoice_id = e.invoice_id;
+  select a.status, a.result into na from public.finance_slip_analysis a where a.evidence_id = e.id order by a.attempt desc limit 1;
+  st := public.finance_invoice_state_raw(e.invoice_id);
+  return jsonb_build_object(
+    'evidence', to_jsonb(e) || jsonb_build_object('stage', public.finance_evidence_stage(e.status, na.status, na.result), 'expected_amount', public.finance_review_expected(e.id)),
+    'analyses', coalesce((select jsonb_agg(to_jsonb(a) - 'evidence_id' order by a.attempt desc) from public.finance_slip_analysis a where a.evidence_id = e.id), '[]'::jsonb),
+    'order', case when o.id is null then null else (to_jsonb(o) - 'idempotency_key' - 'request_hash')
+               || jsonb_build_object('items', coalesce((select jsonb_agg(to_jsonb(it) - 'order_id' order by it.line_no) from public.shop_order_items it where it.order_id = o.id), '[]'::jsonb)) end,
+    'invoice', jsonb_build_object('id', i.id, 'invoice_no', i.invoice_no, 'issue_date', i.issue_date, 'due_date', i.due_date, 'description', i.description, 'invoice_status', i.status,
+                                  'cancel_reason', i.cancel_reason, 'created_at', i.created_at) || coalesce(st, '{}'::jsonb),
+    'customer', jsonb_build_object('id', c.id, 'code', c.code, 'name', c.name,
+                                   'phone', coalesce(nullif(btrim(o.contact_phone), ''), (select p.phone from public.profiles p where p.id = c.profile_id))),
+    'receipts', coalesce((select jsonb_agg(to_jsonb(r) order by r.created_at desc, r.receipt_no desc) from public.finance_receipts r where r.invoice_id = e.invoice_id), '[]'::jsonb),
+    'other_evidence', coalesce((select jsonb_agg(jsonb_build_object('id', x.id, 'status', x.status, 'amount', coalesce(x.verified_amount, x.confirmed_amount, x.claimed_amount),
+                                                                    'created_at', x.created_at, 'source', x.source, 'method', x.method) order by x.created_at desc, x.id)
+                                  from public.finance_payment_evidence x where x.invoice_id = e.invoice_id and x.id <> e.id), '[]'::jsonb),
+    'events', coalesce((select jsonb_agg(jsonb_build_object('id', y.id, 'at', y.at, 'actor', y.actor, 'actor_email', y.actor_email, 'action', y.action, 'detail', y.detail) order by y.at desc, y.id desc)
+                          from (select * from public.finance_events v where v.entity = 'evidence' and v.entity_id = e.id order by v.at desc, v.id desc limit 30) y), '[]'::jsonb));
+end $$;
+
+-- 4g the five settings, for the screen (staff, any role; the manager's writer is finance_save_review_settings of section 3)
+create or replace function public.finance_review_settings()
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+begin
+  perform public.finance_require('view', 'see the slip review settings');
+  return (select jsonb_build_object('ai_review_enabled', s.ai_review_enabled, 'post_requires_manager', s.post_requires_manager, 'ai_min_confidence', s.ai_min_confidence,
+            'slip_window_before_min', s.slip_window_before_min, 'slip_future_tolerance_min', s.slip_future_tolerance_min) from public.finance_settings s where s.id);
+end $$;
+
+-- 4h a manager cannot cancel an invoice while one of its payments is CONFIRMED (the shop accepted the payment and nobody has posted it yet): post it or reject it first.
+-- The body is the live one (pg_get_functiondef of 2026-11-19) with this single guard added after the check for recorded payments; nothing else changes.
+create or replace function public.finance_cancel_invoice(p_invoice uuid, p_reason text)
+returns void language plpgsql security definer set search_path = public as $$
+declare i public.finance_invoices;
+begin
+  perform public.finance_require('manage', 'cancel invoices');
+  if coalesce(trim(p_reason), '') = '' then raise exception 'A reason is required'; end if;
+  select * into i from public.finance_invoices where id = p_invoice for update;
+  if not found then raise exception 'Invoice not found'; end if;
+  if i.status <> 'open' then raise exception 'Invoice is already %', i.status; end if;
+  if exists (select 1 from public.finance_allocations where invoice_id = p_invoice and active)
+     or exists (select 1 from public.finance_receipts where invoice_id = p_invoice and status = 'posted') then
+    raise exception 'Payments are recorded on this invoice: reverse them first'; end if;
+  if exists (select 1 from public.finance_payment_evidence where invoice_id = p_invoice and status = 'confirmed') then
+    raise exception 'SLIP_PENDING: a payment on this invoice is confirmed and waits to be posted: post it or reject it first'; end if;
+  update public.finance_invoices set status = 'cancelled', cancelled_by = auth.uid(), cancelled_at = now(), cancel_reason = trim(p_reason) where id = p_invoice;
+  update public.finance_payment_requests set status = 'cancelled' where invoice_id = p_invoice and status = 'awaiting';
+  perform public.finance_log('invoice', p_invoice, 'invoice.cancel', jsonb_build_object('reason', trim(p_reason)));
+end $$;
+
+-- 4i indexes: the list is ordered by created_at desc, id and filters by day; everything that looks a payment up by its invoice (the invoice state, the detail, the cancel
+-- guard, the list's paid / outstanding) had no index on finance_payment_evidence.invoice_id. (The (status, created_at) index of the baseline already serves the summary.)
+-- Plain CREATE INDEX: a brief lock on a small table.
+create index if not exists finance_evidence_created_idx on public.finance_payment_evidence (created_at desc, id);
+create index if not exists finance_evidence_invoice_idx on public.finance_payment_evidence (invoice_id, created_at desc);
+
+-- 4j who may call what: the four reads are for signed-in users (each checks the finance role itself, a customer is refused); the helpers are internal (not even the service role)
+revoke execute on function public.finance_review_list(jsonb, integer, integer), public.finance_review_summary(date, date), public.finance_review_detail(uuid), public.finance_review_settings() from public, anon;
+grant execute on function public.finance_review_list(jsonb, integer, integer), public.finance_review_summary(date, date), public.finance_review_detail(uuid), public.finance_review_settings() to authenticated;
+revoke execute on function public.finance_evidence_stage(text, text, text), public.finance_review_expected(uuid), public.finance_review_arr(jsonb, text, text[]), public.finance_review_date(jsonb, text) from public, anon, authenticated;
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    revoke execute on function public.finance_evidence_stage(text, text, text), public.finance_review_expected(uuid), public.finance_review_arr(jsonb, text, text[]), public.finance_review_date(jsonb, text) from service_role;
+  end if;
+end $$;

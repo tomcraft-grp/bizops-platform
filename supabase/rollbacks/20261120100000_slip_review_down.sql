@@ -22,6 +22,42 @@ do $guard$ begin
     raise exception 'Cash receipts are queued for the ledger: they cannot be rolled back.'; end if;
 end $guard$;
 
+-- ================================================================================================= 4 reads (undo)
+-- The cancel goes back to the definition that was LIVE before this migration (pg_get_functiondef of 2026-11-19: no check for a confirmed payment), then the four reads,
+-- the helpers they call (callers first) and the two indexes go. No data lives in any of these (the guard above has already refused if a confirmed payment exists, which
+-- is what the removed cancel check was about).
+CREATE OR REPLACE FUNCTION public.finance_cancel_invoice(p_invoice uuid, p_reason text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare i public.finance_invoices;
+begin
+  perform public.finance_require('manage', 'cancel invoices');
+  if coalesce(trim(p_reason), '') = '' then raise exception 'A reason is required'; end if;
+  select * into i from public.finance_invoices where id = p_invoice for update;
+  if not found then raise exception 'Invoice not found'; end if;
+  if i.status <> 'open' then raise exception 'Invoice is already %', i.status; end if;
+  if exists (select 1 from public.finance_allocations where invoice_id = p_invoice and active)
+     or exists (select 1 from public.finance_receipts where invoice_id = p_invoice and status = 'posted') then
+    raise exception 'Payments are recorded on this invoice: reverse them first'; end if;
+  update public.finance_invoices set status = 'cancelled', cancelled_by = auth.uid(), cancelled_at = now(), cancel_reason = trim(p_reason) where id = p_invoice;
+  update public.finance_payment_requests set status = 'cancelled' where invoice_id = p_invoice and status = 'awaiting';
+  perform public.finance_log('invoice', p_invoice, 'invoice.cancel', jsonb_build_object('reason', trim(p_reason)));
+end $function$;
+
+drop function if exists public.finance_review_settings();
+drop function if exists public.finance_review_detail(uuid);
+drop function if exists public.finance_review_summary(date, date);
+drop function if exists public.finance_review_list(jsonb, integer, integer);
+drop function if exists public.finance_review_expected(uuid);
+drop function if exists public.finance_review_date(jsonb, text);
+drop function if exists public.finance_review_arr(jsonb, text, text[]);
+drop function if exists public.finance_evidence_stage(text, text, text);
+drop index if exists public.finance_evidence_invoice_idx;
+drop index if exists public.finance_evidence_created_idx;
+
 -- ================================================================================================= 3 workflow (undo)
 -- The replaced functions go back to the definitions that were LIVE before this migration (pg_get_functiondef of 2026-11-19: the migrations of 2026-11-14/15 with the
 -- numbering swap of 20261115500000 applied, so the one-step verify takes its receipt number from next_doc_no('PAYMENT')), then the new functions are dropped, callers before
