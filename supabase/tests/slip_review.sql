@@ -10,7 +10,7 @@
 -- Later tasks append their sections above the result block at the bottom.
 create temp table t_res (n serial, test text, ok boolean, detail text);
 create temp table t_ctx (k text primary key, v text);
-grant all on t_res, t_ctx to authenticated, anon; grant usage on sequence t_res_n_seq to authenticated, anon;
+grant all on t_res, t_ctx to authenticated, anon, service_role; grant usage on sequence t_res_n_seq to authenticated, anon, service_role;
 create or replace function pg_temp.chk(p_test text, p_ok boolean, p_detail text default null) returns void language sql as $$
   insert into t_res (test, ok, detail) values (p_test, coalesce(p_ok, false), p_detail) $$;
 -- the statement must FAIL with a message that matches the pattern (an inner BEGIN/EXCEPTION block = a savepoint, so the run goes on)
@@ -20,6 +20,14 @@ begin
   begin execute p_sql; perform pg_temp.chk(p_test, false, 'no error (expected ' || p_pat || ')');
   exception when others then
     get stacked diagnostics d = pg_exception_detail; m := sqlerrm || coalesce(' | ' || d, ''); perform pg_temp.chk(p_test, m ilike p_pat, m);
+  end;
+end $$;
+-- the statement must fail with this SQLSTATE (the clients tell a reused reference 23505 from other refusals by it)
+create or replace function pg_temp.err_state(p_test text, p_sql text, p_state text) returns void language plpgsql as $$
+declare s text;
+begin
+  begin execute p_sql; perform pg_temp.chk(p_test, false, 'no error (expected SQLSTATE ' || p_state || ')');
+  exception when others then get stacked diagnostics s = returned_sqlstate; perform pg_temp.chk(p_test, s = p_state, s || ' ' || sqlerrm);
   end;
 end $$;
 -- the statement must SUCCEED (a failure, for instance a missing column, is recorded as a failed check instead of aborting the run)
@@ -132,9 +140,9 @@ select pg_temp.err_like('S1 evidence file: a bad file hash is still refused', fo
 select pg_temp.runs_ok('S1 bank ref: the first confirmed payment with a reference is accepted', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status, confirmed_amount, confirmed_bank_ref)
   values (%L, %L, 'S1/ref-first', %L, 'image/png', 100, 'confirmed', 100, 'SLIPREF-0001')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), repeat('8', 64)));
 select pg_temp.err_like('S1 bank ref: a second CONFIRMED payment with the same reference is refused', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status, confirmed_amount, confirmed_bank_ref)
-  values (%L, %L, 'S1/ref-second', %L, 'image/png', 100, 'confirmed', 100, 'SLIPREF-0001')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), repeat('9', 64)), '%finance_evidence_confirmed_ref_once%');
+  values (%L, %L, 'S1/ref-second', %L, 'image/png', 100, 'confirmed', 100, 'SLIPREF-0001')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), repeat('9', 64)), '%finance_evidence_confirmed_refnorm_once%');
 select pg_temp.err_like('S1 bank ref: a second VERIFIED (posted) payment with the same reference is refused', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status, confirmed_amount, confirmed_bank_ref)
-  values (%L, %L, 'S1/ref-verified', %L, 'image/png', 100, 'verified', 100, 'SLIPREF-0001')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), repeat('a', 64)), '%finance_evidence_confirmed_ref_once%');
+  values (%L, %L, 'S1/ref-verified', %L, 'image/png', 100, 'verified', 100, 'SLIPREF-0001')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), repeat('a', 64)), '%finance_evidence_confirmed_refnorm_once%');
 select pg_temp.runs_ok('S1 bank ref: the same reference on a REJECTED payment is allowed', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status, confirmed_amount, confirmed_bank_ref)
   values (%L, %L, 'S1/ref-rejected', %L, 'image/png', 100, 'rejected', 100, 'SLIPREF-0001')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), repeat('b', 64)));
 select pg_temp.runs_ok('S1 bank ref: the first payment can be rejected', $q$update public.finance_payment_evidence set status = 'rejected' where file_path = 'S1/ref-first'$q$);
@@ -146,6 +154,39 @@ select pg_temp.q('S1 bank ref: exactly one confirmed row holds the reference now
 select pg_temp.err_like('S1 bank ref: a reference shorter than 4 characters is refused', format($q$update public.finance_payment_evidence set confirmed_bank_ref = 'ab' where id = %L$q$, pg_temp.c('ev1')), '%violates check constraint "finance_payment_evidence_confirmed_bank_ref_chk"%');
 select pg_temp.runs_ok('S1 bank ref: cash needs no reference (two cash payments without one do not clash)', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, claimed_amount, status, source, method, confirmed_amount)
   values (%L, %L, 50, 'confirmed', 'staff_entry', 'cash', 50), (%L, %L, 50, 'confirmed', 'staff_entry', 'cash', 50)$q$, pg_temp.c('i1id'), pg_temp.c('cust'), pg_temp.c('i1id'), pg_temp.c('cust')));
+-- the same transfer typed differently is the same reference: the unique index is on the NORMALISED reference (letters and digits only, upper case), so two people
+-- recording one transfer at the same moment (each passes the look-up before the other commits) cannot both succeed: the second one meets this index (23505)
+select pg_temp.q('S1 bank ref (normalised): the unique index is on finance_slip_ref(confirmed_bank_ref), only for confirmed / verified rows that have a reference; the raw-text index is gone',
+  $$select (select count(*) = 1 and bool_and(indexdef like 'CREATE UNIQUE INDEX%' and indexdef like '%finance_slip_ref(confirmed_bank_ref)%' and indexdef like '%IS NOT NULL%' and indexdef like '%confirmed%' and indexdef like '%verified%')
+            from pg_indexes where schemaname = 'public' and indexname = 'finance_evidence_confirmed_refnorm_once')
+        and not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'finance_evidence_confirmed_ref_once')$$);
+select pg_temp.runs_ok('S1 bank ref (normalised): the first confirmed payment with ABC-123 is accepted', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status, confirmed_amount, confirmed_bank_ref)
+  values (%L, %L, 'S1/norm-first', %L, 'image/png', 100, 'confirmed', 100, 'ABC-123')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), md5('s1-norm-1') || md5('s1b-norm-1')));
+select pg_temp.err_like('S1 bank ref (normalised): abc123 (lower case, no dash) on another CONFIRMED payment is refused by the index (23505)', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status, confirmed_amount, confirmed_bank_ref)
+  values (%L, %L, 'S1/norm-second', %L, 'image/png', 100, 'confirmed', 100, 'abc123')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), md5('s1-norm-2') || md5('s1b-norm-2')), '%finance_evidence_confirmed_refnorm_once%');
+select pg_temp.err_state('S1 bank ref (normalised): ...with SQLSTATE 23505', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status, confirmed_amount, confirmed_bank_ref)
+  values (%L, %L, 'S1/norm-second', %L, 'image/png', 100, 'confirmed', 100, 'abc123')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), md5('s1-norm-2') || md5('s1b-norm-2')), '23505');
+select pg_temp.err_like('S1 bank ref (normalised): ` a b-c 1 2 3 ` on a VERIFIED (posted) payment is refused too', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status, confirmed_amount, confirmed_bank_ref)
+  values (%L, %L, 'S1/norm-third', %L, 'image/png', 100, 'verified', 100, 'a b-c 1 2 3')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), md5('s1-norm-3') || md5('s1b-norm-3')), '%finance_evidence_confirmed_refnorm_once%');
+-- the race itself: the second Confirm of a differently typed reference passes the look-up (the first is not committed yet) and then writes: its UPDATE meets the index
+select pg_temp.runs_ok('S1 bank ref (normalised): a submitted slip exists to be confirmed', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status)
+  values (%L, %L, 'S1/norm-submitted', %L, 'image/png', 100, 'submitted')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), md5('s1-norm-4') || md5('s1b-norm-4')));
+select pg_temp.err_state('S1 bank ref (normalised): confirming it with `Abc 123` (the confirm of the race) is refused with 23505', $q$update public.finance_payment_evidence set status = 'confirmed', confirmed_amount = 100, confirmed_bank_ref = 'Abc 123' where file_path = 'S1/norm-submitted'$q$, '23505');
+select pg_temp.runs_ok('S1 bank ref (normalised): the same reference on a REJECTED payment is allowed', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status, confirmed_amount, confirmed_bank_ref)
+  values (%L, %L, 'S1/norm-rejected', %L, 'image/png', 100, 'rejected', 100, 'abc-123')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), md5('s1-norm-5') || md5('s1b-norm-5')));
+select pg_temp.runs_ok('S1 bank ref (normalised): a cash payment (no reference) is not affected by the index', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, claimed_amount, status, source, method, confirmed_amount)
+  values (%L, %L, 50, 'confirmed', 'staff_entry', 'cash', 50)$q$, pg_temp.c('i1id'), pg_temp.c('cust')));
+select pg_temp.runs_ok('S1 bank ref (normalised): rejecting the first payment frees the reference for any spelling', $q$update public.finance_payment_evidence set status = 'rejected' where file_path = 'S1/norm-first'$q$);
+select pg_temp.runs_ok('S1 bank ref (normalised): ...so the submitted slip can now be confirmed with `Abc 123`', $q$update public.finance_payment_evidence set status = 'confirmed', confirmed_amount = 100, confirmed_bank_ref = 'Abc 123' where file_path = 'S1/norm-submitted'$q$);
+-- (the index expression is evaluated as the role that writes the row, so the service role, which may write the table directly, must be able to run finance_slip_ref)
+select pg_temp.q('S1 finance_slip_ref: the service role can run it (index expressions are computed as the writing role); anon, authenticated and public cannot',
+  $$select has_function_privilege('service_role', 'public.finance_slip_ref(text)', 'execute') and not has_function_privilege('anon', 'public.finance_slip_ref(text)', 'execute')
+        and not has_function_privilege('authenticated', 'public.finance_slip_ref(text)', 'execute')
+        and not exists (select 1 from pg_proc p, aclexplode(p.proacl) a where p.oid = 'public.finance_slip_ref(text)'::regprocedure and a.grantee = 0 and a.privilege_type = 'EXECUTE')$$);
+reset role; set local role service_role;
+select pg_temp.runs_ok('S1 finance_slip_ref: a direct write of the service role into a table with an index on it works (no "permission denied for function")', format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, status, confirmed_amount, confirmed_bank_ref, bank_trans_ref)
+  values (%L, %L, 'S1/svc-write', %L, 'image/png', 100, 'confirmed', 100, 'SVC-WRITE-0001', 'SVC-WRITE-0001')$q$, pg_temp.c('i1id'), pg_temp.c('cust'), md5('s1-svc-1') || md5('s1b-svc-1')));
+reset role;
 
 -- ---- slip analysis: append-only attempts per evidence
 select pg_temp.q('S1 analysis: the table exists with every column of the design',
@@ -973,14 +1014,6 @@ create or replace function pg_temp.recx(p_inv text, p_method text, p_amount text
   select format($q$public.finance_record_payment(%L, %L, %s, %s, %L, %L, %L, %L, %L, %L)$q$, pg_temp.c(p_inv), p_method, p_amount, p_at, p_ref, case when p_bank = 'scb' then pg_temp.c('scb') end, p_note, p_file, p_sha, p_type) $$;
 create or replace function pg_temp.rec(p_key text, p_inv text, p_method text, p_amount numeric, p_ref text default null, p_note text default 'S3 test entry', p_bank text default null) returns void language plpgsql as $$
 begin perform pg_temp.keep(p_key, 'select ' || pg_temp.recx(p_inv, p_method, p_amount::text, p_ref, p_note, 'now()', p_bank) || '::text'); end $$;
--- the statement must fail with this SQLSTATE (the clients tell a reused reference 23505 from other refusals by it)
-create or replace function pg_temp.err_state(p_test text, p_sql text, p_state text) returns void language plpgsql as $$
-declare s text;
-begin
-  begin execute p_sql; perform pg_temp.chk(p_test, false, 'no error (expected SQLSTATE ' || p_state || ')');
-  exception when others then get stacked diagnostics s = returned_sqlstate; perform pg_temp.chk(p_test, s = p_state, s || ' ' || sqlerrm);
-  end;
-end $$;
 create or replace function pg_temp.jb(p_key text, p_path text) returns text language sql as $$ select (select v::jsonb from t_ctx where k = p_key) ->> p_path $$;
 
 -- ---- fixtures
@@ -1299,6 +1332,7 @@ select pg_temp.q('S3g record: the 150 is confirmed but not posted: nothing more 
        and pg_temp.sv('ig', 'pending_evidence')::int = 1 and pg_temp.nrc('erg') = 0$$);
 select pg_temp.asu('C');
 select pg_temp.err_like('S3g record: the 150 that is confirmed but not posted counts: even 1 more is refused (EXCEEDS_OUTSTANDING)', 'select ' || pg_temp.recx('ig', 'cash', '1', null, 'cash at the counter'), '%EXCEEDS_OUTSTANDING%');
+select pg_temp.asu('S');                                                   -- cash is posted by a manager (S3q): the verifier who recorded it cannot post it
 select pg_temp.post('pg2', 'erg');
 select pg_temp.post('pg3', 'erg');
 reset role;
@@ -1309,8 +1343,8 @@ select pg_temp.q('S3g post cash: the receipt is a CASH receipt: no bank, no refe
 select pg_temp.q('S3g post cash: the ledger row is CASH_RECEIPT, Dr cash 150 / Cr receivable 150, and there is no BANK_RECEIPT for it',
   $$select pg_temp.nq('erg', 'CASH_RECEIPT') = 1 and pg_temp.nq('erg', 'BANK_RECEIPT') = 0
        and pg_temp.qplan('erg', 'CASH_RECEIPT') = jsonb_build_array(jsonb_build_object('side', 'dr', 'role', 'cash', 'amount', 150), jsonb_build_object('side', 'cr', 'role', 'ar', 'amount', 150))$$);
-select pg_temp.q('S3g post cash: the slip is verified (posted) by the verifier; its bank reference stays empty',
-  $$select pg_temp.ev('erg', 'status') = 'verified' and pg_temp.ev('erg', 'posted_by') = pg_temp.c('C') and pg_temp.ev('erg', 'posted_at') is not null and pg_temp.ev('erg', 'verified_amount')::numeric = 150
+select pg_temp.q('S3g post cash: the slip is verified (posted) by the manager, who is not the person who recorded it; its bank reference stays empty',
+  $$select pg_temp.ev('erg', 'status') = 'verified' and pg_temp.ev('erg', 'posted_by') = pg_temp.c('S') and pg_temp.ev('erg', 'posted_at') is not null and pg_temp.ev('erg', 'verified_amount')::numeric = 150
        and pg_temp.ev('erg', 'bank_trans_ref') is null and pg_temp.ev('erg', 'confirmed_by') = pg_temp.c('C')$$);
 select pg_temp.q('S3g post cash: a second Post is a replay and adds no receipt and no ledger row',
   $$select pg_temp.jb('pg3', 'replay') = 'true' and pg_temp.jb('pg3', 'receipt_no') = pg_temp.rcol('erg', 'receipt_no') and pg_temp.nrc('erg') = 1 and pg_temp.nq('erg', 'CASH_RECEIPT') = 1$$);
@@ -1334,7 +1368,8 @@ select pg_temp.q('S3g2 record: the transfer entry holds its reference, the chose
        and pg_temp.ev('erh2', 'bank_account_id') = pg_temp.c('scb') and pg_temp.ev('erh2', 'confirmed_amount')::numeric = 200 and pg_temp.ev('erh2', 'file_path') is null and pg_temp.ev('erh2', 'recorded_by') = pg_temp.c('C')$$);
 select pg_temp.q('S3g2 record: 300 is confirmed on the 300 invoice and nothing is posted yet (pending verification, 300 confirmed, 0 paid)',
   $$select pg_temp.sv('ih', 'status_code')::int = 3 and pg_temp.sv('ih', 'confirmed_pending')::numeric = 300 and pg_temp.sv('ih', 'paid')::numeric = 0 and pg_temp.sv('ih', 'pending_evidence')::int = 2$$);
-select pg_temp.asu('C'); select pg_temp.post('ph2', 'erh2'); select pg_temp.post('ph1', 'erh1'); reset role;
+select pg_temp.asu('C'); select pg_temp.post('ph2', 'erh2'); reset role;
+select pg_temp.asu('S'); select pg_temp.post('ph1', 'erh1'); reset role;                -- the cash entry is posted by a manager (S3q)
 select pg_temp.q('S3g2 post: the transfer posts as a BANK receipt (200 of 300), the cash then settles the rest (100): the invoice is fully paid',
   $$select pg_temp.jb('ph2', 'result') = 'partially_paid' and pg_temp.jb('ph1', 'result') = 'fully_paid' and pg_temp.sv('ih', 'status_code')::int = 5 and pg_temp.sv('ih', 'paid')::numeric = 300
        and pg_temp.rcol('erh2', 'method') = 'bank_transfer' and pg_temp.rcol('erh2', 'bank_account_id') = pg_temp.c('scb') and pg_temp.rcol('erh2', 'bank_trans_ref') = 'S3-REF-H0001' and pg_temp.rcol('erh1', 'method') = 'cash'$$);
@@ -1420,7 +1455,7 @@ select pg_temp.q('S3l reverse: the audit log has receipt.reverse with the manage
 -- ---- S3c2: money safety on Post: a cash entry can never create a wallet credit, and a reference taken in the meantime stops the post
 select pg_temp.keep('eov', format($q$with ins as (insert into public.finance_payment_evidence (invoice_id, customer_id, claimed_amount, status, source, method, recorded_by, confirmed_by, confirmed_at, confirmed_amount, confirmed_transfer_at, confirm_note)
   values (%L, %L, 500, 'confirmed', 'staff_entry', 'cash', %L, %L, now(), 500, now(), 'synthetic: more cash than the invoice owes') returning id) select id::text from ins$q$, pg_temp.c('ix'), pg_temp.c('cust'), pg_temp.c('S'), pg_temp.c('S')));
-select pg_temp.asu('C');
+select pg_temp.asu('S');                                                  -- (a manager: a verifier cannot post cash at all, S3q)
 select pg_temp.err_like('S3c2 post cash: 500 cash against 100 outstanding is refused (CASH_OVERPAY): cash never makes a wallet credit', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('eov')), '%CASH_OVERPAY%');
 reset role;
 select pg_temp.q('S3c2 post cash: the refused post left the entry confirmed, with no receipt, no wallet credit and no ledger row',
@@ -1488,6 +1523,14 @@ reset role;
 select pg_temp.q('S3i reject: the reference of the rejected slip was free again: the new slip confirmed with it and was posted (fully paid, 5)',
   $$select pg_temp.jb('cj2', 'status') = 'confirmed' and pg_temp.jb('pj2', 'result') = 'fully_paid' and pg_temp.sv('ij', 'status_code')::int = 5 and pg_temp.rcol('ej2', 'bank_trans_ref') = 'S3-REF-J0001'$$);
 
+-- two slips of their own invoice (ikm) are sent back and stay so: the customer sends nothing new there, so they are the standing "waiting for more evidence" cases (a NEW customer slip
+-- closes the older ones of its invoice, S3s, so the checks that need a slip that is still waiting for more evidence use these two)
+select pg_temp.asu('S'); select pg_temp.mkinv('ikm', 120); reset role;
+select pg_temp.asu('A'); select pg_temp.mkslip('ekm1', 'ikm', 60); select pg_temp.mkslip('ekm2', 'ikm', 60); reset role;
+select pg_temp.asu('C');
+select pg_temp.runs_ok('S3i request setup: the first slip of invoice ikm is sent back for more evidence', format($q$select public.finance_request_more_evidence(%L, 'Please send the whole slip')$q$, pg_temp.c('ekm1')));
+select pg_temp.runs_ok('S3i request setup: ...and the second', format($q$select public.finance_request_more_evidence(%L, 'Please send the whole slip')$q$, pg_temp.c('ekm2')));
+reset role;
 select pg_temp.asu('A'); select pg_temp.mkslip('ek', 'ik', 120); reset role;
 select pg_temp.asu('C');
 select pg_temp.err_like('S3i request: a message is required (nothing)', format($q$select public.finance_request_more_evidence(%L, null)$q$, pg_temp.c('ek')), '%MESSAGE_REQUIRED%');
@@ -1510,13 +1553,15 @@ select pg_temp.mkslip('ek2', 'ik', 120);
 reset role;
 select pg_temp.q('S3i request: the customer sends a new slip: the state returns to pending verification (3) and the message is gone',
   $$select pg_temp.sv('ik', 'status_code')::int = 3 and pg_temp.sv('ik', 'status') = 'pending_verification' and pg_temp.sv('ik', 'more_evidence_message') is null and pg_temp.sv('ik', 'pending_evidence')::int = 1$$);
+select pg_temp.q('S3s the old request was closed by the new slip: it is rejected ("Replaced by a newer slip"), the new one is submitted',
+  $$select pg_temp.ev('ek', 'status') = 'rejected' and pg_temp.ev('ek', 'reject_reason') = 'Replaced by a newer slip' and pg_temp.ev('ek2', 'status') = 'submitted'$$);
 select pg_temp.asu('C');
-select pg_temp.err_like('S3i request: a slip that is already waiting for more evidence is refused', format($q$select public.finance_request_more_evidence(%L, 'Please send a clearer slip')$q$, pg_temp.c('ek')), '%already more_evidence%');
+select pg_temp.err_like('S3i request: a slip that is already waiting for more evidence is refused', format($q$select public.finance_request_more_evidence(%L, 'Please send a clearer slip')$q$, pg_temp.c('ekm1')), '%already more_evidence%');
 select pg_temp.err_like('S3i request: a posted slip is refused', format($q$select public.finance_request_more_evidence(%L, 'Please send a clearer slip')$q$, pg_temp.c('ec')), '%already verified%');
 select pg_temp.err_like('S3i request: a rejected slip is refused', format($q$select public.finance_request_more_evidence(%L, 'Please send a clearer slip')$q$, pg_temp.c('ej')), '%already rejected%');
 select pg_temp.err_like('S3i request: a payment recorded by staff has no customer slip to ask for (NO_CUSTOMER_SLIP)', format($q$select public.finance_request_more_evidence(%L, 'Please send a clearer slip')$q$, pg_temp.c('ercb')), '%NO_CUSTOMER_SLIP%');
-select pg_temp.err_like('S3k post: a slip waiting for more evidence cannot be posted (NOT_CONFIRMED)', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('ek')), '%NOT_CONFIRMED%');
-select pg_temp.err_like('S3k confirm: a slip waiting for more evidence cannot be confirmed', format($q$select public.finance_confirm_evidence(%L, 120, 'S3-REF-K0001', now())$q$, pg_temp.c('ek')), '%already more_evidence%');
+select pg_temp.err_like('S3k post: a slip waiting for more evidence cannot be posted (NOT_CONFIRMED)', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('ekm1')), '%NOT_CONFIRMED%');
+select pg_temp.err_like('S3k confirm: a slip waiting for more evidence cannot be confirmed', format($q$select public.finance_confirm_evidence(%L, 60, 'S3-REF-K0001', now())$q$, pg_temp.c('ekm1')), '%already more_evidence%');
 select pg_temp.conf('ck2', 'ek2', 120, 'S3-REF-K0002');
 select pg_temp.runs_ok('S3i request: a CONFIRMED slip can be sent back for more evidence too', format($q$select public.finance_request_more_evidence(%L, 'abc')$q$, pg_temp.c('ek2')));
 reset role;
@@ -1535,10 +1580,10 @@ reset role;
 create or replace function pg_temp.ovs(p_ev text) returns text language sql as $$
   select i ->> 'status' from jsonb_array_elements((select v::jsonb from t_ctx where k = 'ov') -> 'items') i where i ->> 'id' = pg_temp.c(p_ev) $$;
 select pg_temp.q('S3 overview: the payments list says confirmed for a confirmed slip, more_evidence for a slip sent back, and still submitted / verified / rejected for the old statuses',
-  $$select pg_temp.ovs('ek3') = 'confirmed' and pg_temp.ovs('ek') = 'more_evidence' and pg_temp.ovs('ef1') = 'submitted' and pg_temp.ovs('ec') = 'verified' and pg_temp.ovs('ej') = 'rejected' and pg_temp.ovs('erf1') = 'confirmed'$$);
+  $$select pg_temp.ovs('ek3') = 'confirmed' and pg_temp.ovs('ekm1') = 'more_evidence' and pg_temp.ovs('ek') = 'rejected' and pg_temp.ovs('ef1') = 'submitted' and pg_temp.ovs('ec') = 'verified' and pg_temp.ovs('ej') = 'rejected' and pg_temp.ovs('erf1') = 'confirmed'$$);
 select pg_temp.asu('C');
-select pg_temp.runs_ok('S3k reject: a slip waiting for more evidence can be rejected', format($q$select public.finance_reject_evidence(%L, 'no answer from the customer')$q$, pg_temp.c('ek')));
-select pg_temp.runs_ok('S3k reject: ...and a second one', format($q$select public.finance_reject_evidence(%L, 'no answer from the customer')$q$, pg_temp.c('ek2')));
+select pg_temp.runs_ok('S3k reject: a slip waiting for more evidence can be rejected', format($q$select public.finance_reject_evidence(%L, 'no answer from the customer')$q$, pg_temp.c('ekm1')));
+select pg_temp.runs_ok('S3k reject: ...and a second one', format($q$select public.finance_reject_evidence(%L, 'no answer from the customer')$q$, pg_temp.c('ekm2')));
 select pg_temp.runs_ok('S3k reject: ...and a confirmed one', format($q$select public.finance_reject_evidence(%L, 'bank has no such transfer')$q$, pg_temp.c('ek3')));
 select pg_temp.runs_ok('S3k reject: a recorded payment is cancelled by rejecting it', format($q$select public.finance_reject_evidence(%L, 'typed on the wrong invoice')$q$, pg_temp.c('erm1')));
 select pg_temp.rec('rm2', 'im', 'cash', 100, null, 'cash for im again');
@@ -1615,6 +1660,126 @@ select pg_temp.q('S3r report: once the CASH_RECEIPT row is posted the CASH line 
   $$select pg_temp.rrow('rep2', 'CASH', 'in_ledger')::numeric = 100 and pg_temp.rrow('rep2', 'CASH', 'waiting_for_ledger')::numeric = pg_temp.cashsum() - 100$$);
 select pg_temp.q('S3r report: the bank transfer receipts of the same day are still reported on their bank line (SCB), as before',
   $$select pg_temp.rrow('rep2', 'SCB', 'invoice_transfers')::int >= 3$$);
+
+-- ---- S3q: cash is posted by a manager only. A verifier can record cash (and Confirm and Post transfers as before), but never Post a cash entry: nobody else has seen the money and
+-- there is no bank record behind it. The post_requires_manager setting does not matter for cash (a manager either way); a transfer follows the setting as before.
+select pg_temp.asu('S'); select pg_temp.mkinv('iqa', 100); select pg_temp.mkinv('iqb', 60); select pg_temp.mkinv('iqc', 80); select pg_temp.mkinv('iqd', 40); reset role;
+select pg_temp.asu('C');
+select pg_temp.rec('rqa', 'iqa', 'cash', 100, null, 'cash drawer'); select pg_temp.eid('erqa', 'rqa');
+select pg_temp.rec('rqb', 'iqb', 'cash', 60, null, 'cash drawer'); select pg_temp.eid('erqb', 'rqb');
+select pg_temp.rec('rqc', 'iqc', 'transfer', 80, 'S3-REF-QC0001', 'bank statement line 9', 'scb'); select pg_temp.eid('erqc', 'rqc');
+select pg_temp.rec('rqd', 'iqd', 'cash', 40, null, 'cash drawer'); select pg_temp.eid('erqd', 'rqd');
+reset role;
+select pg_temp.q('S3q setup: the setting is OFF (post_requires_manager) and the four entries are confirmed', $$select not (select post_requires_manager from public.finance_settings) and pg_temp.ev('erqa', 'status') = 'confirmed' and pg_temp.ev('erqb', 'status') = 'confirmed' and pg_temp.ev('erqc', 'status') = 'confirmed' and pg_temp.ev('erqd', 'status') = 'confirmed'$$);
+select pg_temp.asu('C');
+select pg_temp.err_like('S3q post cash: a verifier cannot Post a cash entry, even the one they recorded themselves, with the setting OFF', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('erqa')), '%not allowed to post cash payments%');
+select pg_temp.err_state('S3q post cash: ...with SQLSTATE 42501 (insufficient privilege)', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('erqa')), '42501');
+select pg_temp.asu('D');
+select pg_temp.err_like('S3q post cash: a clerk cannot either', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('erqa')), '%not allowed%');
+reset role;
+select pg_temp.q('S3q post cash: the refused posts changed nothing (still confirmed, no receipt, no ledger row, nothing paid)',
+  $$select pg_temp.ev('erqa', 'status') = 'confirmed' and pg_temp.ev('erqa', 'posted_by') is null and pg_temp.nrc('erqa') = 0
+       and not exists (select 1 from public.finance_gl_queue q where q.event_type = 'CASH_RECEIPT' and q.ref_id in (select id from public.finance_receipts where invoice_id = pg_temp.c('iqa')::uuid))
+       and pg_temp.sv('iqa', 'paid')::numeric = 0 and pg_temp.sv('iqa', 'confirmed_pending')::numeric = 100$$);
+-- a transfer that staff recorded is posted by a verifier as before (the cash rule is about cash only)
+select pg_temp.asu('C'); select pg_temp.post('pqc', 'erqc'); reset role;
+select pg_temp.q('S3q post transfer: a verifier still posts a staff-recorded TRANSFER with the setting off (unchanged): a bank receipt, fully paid',
+  $$select pg_temp.jb('pqc', 'result') = 'fully_paid' and pg_temp.rcol('erqc', 'method') = 'bank_transfer' and pg_temp.ev('erqc', 'posted_by') = pg_temp.c('C') and pg_temp.sv('iqc', 'status_code')::int = 5$$);
+-- a manager posts the cash: two different people have touched the money (the verifier recorded it, the manager posted it)
+select pg_temp.asu('S'); select pg_temp.post('pqa', 'erqa'); select pg_temp.post('pqa2', 'erqa'); reset role;
+select pg_temp.q('S3q post cash: a manager posts it (fully paid): a cash receipt, one allocation, the CASH_RECEIPT ledger row Dr cash / Cr receivable',
+  $$select pg_temp.jb('pqa', 'result') = 'fully_paid' and pg_temp.jb('pqa', 'replay') = 'false' and pg_temp.rcol('erqa', 'method') = 'cash' and pg_temp.nrc('erqa') = 1 and pg_temp.alloc('erqa') = 100 and pg_temp.sv('iqa', 'status_code')::int = 5
+       and pg_temp.qplan('erqa', 'CASH_RECEIPT') = jsonb_build_array(jsonb_build_object('side', 'dr', 'role', 'cash', 'amount', 100), jsonb_build_object('side', 'cr', 'role', 'ar', 'amount', 100))$$);
+select pg_temp.q('S3q post cash: the entry says who recorded it and who posted it (not the same person), and a second Post by the manager is a replay',
+  $$select pg_temp.ev('erqa', 'recorded_by') = pg_temp.c('C') and pg_temp.ev('erqa', 'confirmed_by') = pg_temp.c('C') and pg_temp.ev('erqa', 'posted_by') = pg_temp.c('S') and pg_temp.jb('pqa2', 'replay') = 'true' and pg_temp.nrc('erqa') = 1$$);
+select pg_temp.asu('C');
+select pg_temp.err_like('S3q post cash: a verifier cannot Post an already posted cash entry either (no replay answer: the refusal does not depend on its state)', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('erqa')), '%not allowed to post cash payments%');
+-- with post_requires_manager ON it is the same for cash (a manager); the manager's Post works
+select pg_temp.asu('S');
+select pg_temp.runs_ok('S3q setup: the manager switches post_requires_manager on', $q$select public.finance_save_review_settings('{"post_requires_manager": true}')$q$);
+select pg_temp.asu('C');
+select pg_temp.err_like('S3q post cash: with the setting ON a verifier cannot Post cash either', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('erqb')), '%not allowed%');
+select pg_temp.asu('S'); select pg_temp.post('pqb', 'erqb');
+select pg_temp.runs_ok('S3q setup: ...and off again', $q$select public.finance_save_review_settings('{"post_requires_manager": false}')$q$);
+reset role;
+select pg_temp.q('S3q post cash: with the setting ON the manager posted the second cash entry (fully paid); the setting is off again', $$select pg_temp.jb('pqb', 'result') = 'fully_paid' and pg_temp.ev('erqb', 'posted_by') = pg_temp.c('S') and not (select post_requires_manager from public.finance_settings)$$);
+select pg_temp.asu('C');
+select pg_temp.err_like('S3q post cash: switched off again, a verifier still cannot Post the third cash entry', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('erqd')), '%not allowed to post cash payments%');
+select pg_temp.asu('S'); select pg_temp.post('pqd', 'erqd'); reset role;
+select pg_temp.q('S3q post cash: the manager posts it (fully paid)', $$select pg_temp.jb('pqd', 'result') = 'fully_paid' and pg_temp.rcol('erqd', 'method') = 'cash' and pg_temp.sv('iqd', 'status_code')::int = 5$$);
+
+-- ---- S3s: a customer who sends a new slip after "more evidence" replaces the old request. Left open it would stay in the unresolved list for ever and block the order's cancel
+-- (SLIP_PENDING). So when a customer slip arrives, the older slips of the SAME invoice that are waiting for more evidence are closed as rejected ("Replaced by a newer slip").
+-- Nothing else is touched: other statuses, other invoices, and payments recorded by staff.
+select pg_temp.asu('S'); select pg_temp.mkinv('is1', 100); select pg_temp.mkinv('is2', 100); select pg_temp.mkinv('is3', 100); reset role;
+select pg_temp.asu('A'); select pg_temp.mkslip('es1a', 'is1', 100); select pg_temp.mkslip('es1b', 'is1', 100); select pg_temp.mkslip('es2a', 'is2', 100); select pg_temp.mkslip('es3a', 'is3', 100); select pg_temp.mkslip('es3b', 'is3', 100); reset role;
+select pg_temp.asu('C');
+select pg_temp.runs_ok('S3s setup: both slips of is1 are sent back for more evidence', format($q$select public.finance_request_more_evidence(%L, 'Please send the whole slip'), public.finance_request_more_evidence(%L, 'Please send the whole slip')$q$, pg_temp.c('es1a'), pg_temp.c('es1b')));
+select pg_temp.runs_ok('S3s setup: the slip of is2 is sent back for more evidence', format($q$select public.finance_request_more_evidence(%L, 'Please send the whole slip')$q$, pg_temp.c('es2a')));
+select pg_temp.conf('cs3a', 'es3a', 100, 'S3-REF-S3A0001');
+select pg_temp.runs_ok('S3s setup: the second slip of is3 is rejected', format($q$select public.finance_reject_evidence(%L, 'blurred')$q$, pg_temp.c('es3b')));
+reset role;
+select pg_temp.q('S3s setup: is1 waits for more evidence (code 10), is2 too, is3 has a confirmed and a rejected slip',
+  $$select pg_temp.sv('is1', 'status_code')::int = 10 and pg_temp.sv('is2', 'status_code')::int = 10 and pg_temp.ev('es3a', 'status') = 'confirmed' and pg_temp.ev('es3b', 'status') = 'rejected'$$);
+select pg_temp.asu('A'); select pg_temp.mkslip('es1c', 'is1', 100); select pg_temp.mkslip('es3c', 'is3', 100); reset role;
+select pg_temp.asu('C'); select pg_temp.rec('rs2', 'is2', 'cash', 50, null, 'cash drawer'); reset role;
+select pg_temp.q('S3s resend: both older "more evidence" slips of the invoice are rejected with the reason, a review time, no reviewer (nobody decided it) and the request kept as history',
+  $$select bool_and(pg_temp.ev(k, 'status') = 'rejected' and pg_temp.ev(k, 'reject_reason') = 'Replaced by a newer slip' and pg_temp.ev(k, 'reviewed_at') is not null and pg_temp.ev(k, 'reviewed_by') is null
+                    and pg_temp.ev(k, 'request_message') = 'Please send the whole slip' and pg_temp.ev(k, 'requested_by') = pg_temp.c('C')) from unnest(array['es1a', 'es1b']) k$$);
+select pg_temp.q('S3s resend: the new slip is submitted and untouched', $$select pg_temp.ev('es1c', 'status') = 'submitted' and pg_temp.ev('es1c', 'reject_reason') is null and pg_temp.ev('es1c', 'reviewed_at') is null$$);
+select pg_temp.q('S3s resend: each closed slip left one audit row (evidence.superseded) by the customer, naming the slip that replaced it',
+  $$select pg_temp.nev('es1a', 'evidence.superseded', 'A') = 1 and pg_temp.nev('es1b', 'evidence.superseded', 'A') = 1
+       and (select count(*) from public.finance_events where entity = 'evidence' and entity_id = pg_temp.c('es1a')::uuid and action = 'evidence.superseded' and detail ->> 'by' = pg_temp.c('es1c')) = 1$$);
+select pg_temp.q('S3s resend: the invoice state follows the NEWEST slip: pending verification (3), one pending, no more-evidence message',
+  $$select pg_temp.sv('is1', 'status_code')::int = 3 and pg_temp.sv('is1', 'pending_evidence')::int = 1 and pg_temp.sv('is1', 'more_evidence_message') is null$$);
+select pg_temp.q('S3s resend: a payment recorded by staff does not close anything (is2 keeps its slip waiting for more evidence), and neither does another invoice''s new slip',
+  $$select pg_temp.ev('es2a', 'status') = 'more_evidence' and pg_temp.nev('es2a', 'evidence.superseded') = 0 and pg_temp.nrows('is2') = 2$$);
+select pg_temp.q('S3s resend: a confirmed slip and a rejected slip of the same invoice are not touched by the new slip (the rejected keeps its own reason)',
+  $$select pg_temp.ev('es3a', 'status') = 'confirmed' and pg_temp.ev('es3a', 'reject_reason') is null and pg_temp.ev('es3b', 'status') = 'rejected' and pg_temp.ev('es3b', 'reject_reason') = 'blurred' and pg_temp.ev('es3c', 'status') = 'submitted'
+       and pg_temp.nev('es3a', 'evidence.superseded') = 0 and pg_temp.nev('es3b', 'evidence.superseded') = 0$$);
+select pg_temp.asu('A');
+select pg_temp.q('S3s resend: the customer reads the old slip as rejected with that reason', format($$select status = 'rejected' and reject_reason = 'Replaced by a newer slip' from public.finance_payment_evidence where id = %L$$, pg_temp.c('es1a')));
+select pg_temp.mkslip('es1d', 'is1', 100);
+reset role;
+select pg_temp.q('S3s resend: idempotent: another slip later closes nothing more (still one audit row for each old slip, none for the newer ones)', $$select pg_temp.nev('es1a', 'evidence.superseded') = 1 and pg_temp.nev('es1b', 'evidence.superseded') = 1 and pg_temp.nev('es1c', 'evidence.superseded') = 0$$);
+select pg_temp.asu('C');
+select pg_temp.runs_ok('S3s: the staff rejects both new slips of is1', format($q$select public.finance_reject_evidence(%L, 'not a payment'), public.finance_reject_evidence(%L, 'not a payment')$q$, pg_temp.c('es1c'), pg_temp.c('es1d')));
+reset role;
+select pg_temp.q('S3s resend: when the new slips are rejected the invoice is rejected (7), not "more evidence" (10): the newest evidence decides', $$select pg_temp.sv('is1', 'status_code')::int = 7 and pg_temp.sv('is1', 'pending_evidence')::int = 0$$);
+select pg_temp.q('S3s the trigger: after insert, for each row, only for customer slips; a security definer function with a fixed search_path that no client role can call',
+  $$select (select count(*) = 1 and bool_and(pg_get_triggerdef(t.oid) like '%AFTER INSERT%' and pg_get_triggerdef(t.oid) like '%FOR EACH ROW%' and pg_get_triggerdef(t.oid) like '%customer_slip%') from pg_trigger t where t.tgrelid = 'public.finance_payment_evidence'::regclass and t.tgname = 'finance_evidence_supersede_old')
+        and (select p.prosecdef and p.proconfig @> array['search_path=public'] and not has_function_privilege('authenticated', p.oid, 'execute') and not has_function_privilege('anon', p.oid, 'execute') and not has_function_privilege('service_role', p.oid, 'execute')
+               from pg_proc p where p.oid = 'public.finance_evidence_supersede_old()'::regprocedure)$$);
+-- the cancel: with the old request closed, a customer who resent a slip that staff then rejected can cancel the order (the old "more evidence" slip used to block it for ever)
+select pg_temp.asu('A');
+select pg_temp.keep('oss', format($q$select public.shop_place_order('slip-key-s3-s1', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Somchai', '081-234-5678', null, null, %s, 'bank:SCB')::text$q$, pg_temp.c('P1')));
+select pg_temp.keep('ossinv', $q$select ((v::jsonb) -> 'order' -> 'invoice' ->> 'id') from t_ctx where k = 'oss'$q$);
+select pg_temp.keep('ossid', $q$select ((v::jsonb) -> 'order' ->> 'id') from t_ctx where k = 'oss'$q$);
+select pg_temp.mkslip('ess1', 'ossinv', pg_temp.c('P1')::numeric);
+select pg_temp.asu('C'); select pg_temp.runs_ok('S3s cancel setup: staff asks for more evidence', format($q$select public.finance_request_more_evidence(%L, 'Please send the slip again')$q$, pg_temp.c('ess1')));
+select pg_temp.asu('A');
+select pg_temp.err_like('S3s cancel: while more evidence is requested the customer cannot cancel (SLIP_PENDING), as before', format($q$select public.shop_cancel_my_order(%L)$q$, pg_temp.c('ossid')), '%SLIP_PENDING%');
+select pg_temp.mkslip('ess2', 'ossinv', pg_temp.c('P1')::numeric);
+select pg_temp.err_like('S3s cancel: with the new slip submitted the customer cannot cancel (SLIP_PENDING), as before', format($q$select public.shop_cancel_my_order(%L)$q$, pg_temp.c('ossid')), '%SLIP_PENDING%');
+select pg_temp.asu('C'); select pg_temp.runs_ok('S3s cancel setup: staff rejects the new slip', format($q$select public.finance_reject_evidence(%L, 'not a payment to us')$q$, pg_temp.c('ess2')));
+select pg_temp.asu('A');
+select pg_temp.runs_ok('S3s cancel: nothing is open any more (the old request was closed when the new slip came): the customer can cancel the order', format($q$select public.shop_cancel_my_order(%L)$q$, pg_temp.c('ossid')));
+reset role;
+select pg_temp.q('S3s cancel: the order is cancelled and the old slip is the rejected "Replaced" one', format($$select o.status = 'cancelled' and pg_temp.ev('ess1', 'status') = 'rejected' and pg_temp.ev('ess1', 'reject_reason') = 'Replaced by a newer slip' from public.shop_orders o where o.id = %L$$, pg_temp.c('ossid')));
+
+-- ---- S3t: Confirm refuses a transfer time more than 10 minutes in the future, with the same words as Record payment (a typo of the year or the day must not be saved)
+select pg_temp.asu('S'); select pg_temp.mkinv('ift', 100); reset role;
+select pg_temp.asu('A'); select pg_temp.mkslip('eft', 'ift', 100); reset role;
+select pg_temp.asu('C');
+select pg_temp.err_like('S3t confirm: a transfer time 11 minutes ahead is refused', format($q$select public.finance_confirm_evidence(%L, 100, 'S3-REF-T0001', now() + interval '11 minutes')$q$, pg_temp.c('eft')), '%The payment time is in the future%');
+select pg_temp.err_like('S3t confirm: a transfer time a year ahead is refused', format($q$select public.finance_confirm_evidence(%L, 100, 'S3-REF-T0001', now() + interval '1 year')$q$, pg_temp.c('eft')), '%The payment time is in the future%');
+select pg_temp.err_like('S3t record: the same words, from Record payment (so the two screens say the same)', 'select ' || pg_temp.recx('ift', 'cash', '10', null, 'cash drawer', $$now() + interval '11 minutes'$$), '%The payment time is in the future%');
+reset role;
+select pg_temp.q('S3t confirm: the refused attempts left the slip submitted', $$select pg_temp.ev('eft', 'status') = 'submitted' and pg_temp.ev('eft', 'confirmed_by') is null$$);
+select pg_temp.asu('C');
+select pg_temp.keep('cft', format($q$select public.finance_confirm_evidence(%L, 100, 'S3-REF-T0001', now() + interval '9 minutes')::text$q$, pg_temp.c('eft')));
+reset role;
+select pg_temp.q('S3t confirm: 9 minutes ahead is accepted (the limit is 10, the same as Record payment)', $$select pg_temp.jb('cft', 'status') = 'confirmed' and pg_temp.ev('eft', 'status') = 'confirmed'$$);
 
 -- ---- S3x: what the customer can and cannot see
 select pg_temp.asu('A');

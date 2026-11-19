@@ -65,8 +65,8 @@ do $$ declare c record; begin
     check (status in ('submitted', 'confirmed', 'more_evidence', 'verified', 'rejected'));
 end $$;
 
--- one bank transaction can back only one confirmed or posted payment (a rejected one releases its reference)
-create unique index if not exists finance_evidence_confirmed_ref_once on public.finance_payment_evidence (confirmed_bank_ref) where status in ('confirmed', 'verified');
+-- one bank transaction can back only one confirmed or posted payment, however its reference is typed (a rejected one releases its reference): the unique index is on the
+-- NORMALISED reference, so it is created in section 2g, after finance_slip_ref (the function that normalises) exists.
 
 -- 1c what the AI read: append-only attempts per slip. A finished attempt (done or failed) never changes; a re-run is a new row, so the history stays.
 create table if not exists public.finance_slip_analysis (
@@ -499,6 +499,7 @@ revoke execute on function public.finance_evidence_queue_analysis() from public,
 revoke execute on function public.finance_can_as(uuid, text), public.finance_slip_ref(text), public.finance_slip_name(text),
   public.finance_slip_reason(text, text, text, jsonb, jsonb, text), public.finance_slip_receivers(),
   public.finance_classify_slip(uuid, jsonb, jsonb, numeric, jsonb) from public, anon, authenticated;
+-- (finance_slip_ref is also revoked from the service role below and then granted back to it: see the comment there)
 revoke execute on function public.finance_analysis_begin(uuid, uuid, uuid), public.finance_analysis_complete(uuid, jsonb, jsonb, numeric, jsonb, text, text),
   public.finance_analysis_fail(uuid, text, text) from public, anon, authenticated;
 revoke execute on function public.finance_request_analysis(uuid) from public, anon;
@@ -507,6 +508,10 @@ do $$ begin
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     revoke execute on function public.finance_evidence_queue_analysis(), public.finance_can_as(uuid, text), public.finance_slip_ref(text), public.finance_slip_name(text),
       public.finance_slip_reason(text, text, text, jsonb, jsonb, text), public.finance_slip_receivers(), public.finance_classify_slip(uuid, jsonb, jsonb, numeric, jsonb) from service_role;
+    -- finance_slip_ref is used by expression indexes (2g) and the service role may write those tables directly: an index entry is computed as the role that writes the row, so
+    -- without this right a direct write of the service role would fail with "permission denied for function finance_slip_ref". It stays closed to public, anon and authenticated
+    -- (none of them can write these tables). It is a pure text function: it reads nothing.
+    grant execute on function public.finance_slip_ref(text) to service_role;
     grant execute on function public.finance_analysis_begin(uuid, uuid, uuid) to service_role;
     grant execute on function public.finance_analysis_complete(uuid, jsonb, jsonb, numeric, jsonb, text, text) to service_role;
     grant execute on function public.finance_analysis_fail(uuid, text, text) to service_role;
@@ -521,6 +526,15 @@ create index if not exists finance_evidence_confslipref_idx on public.finance_pa
 create index if not exists finance_deposits_slipref_idx on public.finance_wallet_deposits (public.finance_slip_ref(bank_trans_ref)) where bank_trans_ref is not null;
 create index if not exists finance_analysis_slipref_idx on public.finance_slip_analysis (public.finance_slip_ref(extracted ->> 'trans_ref')) where status = 'done';
 create index if not exists finance_analysis_qrslipref_idx on public.finance_slip_analysis (public.finance_slip_ref(qr ->> 'trans_ref')) where status = 'done';
+
+-- one bank transaction backs one confirmed or posted payment, WHATEVER the spelling: ABC-123 and abc123 are one reference. The look-up in Confirm / Record payment (finance_ref_in_use)
+-- is normalised too, but two people confirming one transfer on different invoices at the same moment both pass it before either commits; this unique index is what stops the
+-- second (it waits for the first, then fails with 23505), and so two Posts can never both find a confirmed payment of the same transfer. finance_slip_ref is non-strict (null in,
+-- empty text out), so the predicate keeps rows without a reference (cash) out of it. A rejected or sent-back slip is outside the index: it frees its reference. (An earlier draft of
+-- this migration had a unique index on the raw text: it is dropped here, so sending the file again replaces it.)
+drop index if exists public.finance_evidence_confirmed_ref_once;
+create unique index if not exists finance_evidence_confirmed_refnorm_once on public.finance_payment_evidence (public.finance_slip_ref(confirmed_bank_ref))
+  where confirmed_bank_ref is not null and status in ('confirmed', 'verified');
 
 -- ================================================================================================= 3 workflow
 -- Confirm -> Post makes money officially received in two steps by two people (or the same person when post_requires_manager is off); Reject and Request more
@@ -638,6 +652,7 @@ begin
   if coalesce(v_ref, '') = '' then raise exception 'The bank transaction reference is required'; end if;
   if length(public.finance_slip_ref(v_ref)) < 4 or length(v_ref) > 80 then raise exception 'The bank transaction reference must have 4 to 80 letters or digits'; end if;
   if p_transfer_at is null then raise exception 'The transfer date and time are required'; end if;
+  if p_transfer_at > now() + interval '10 minutes' then raise exception 'The payment time is in the future'; end if;   -- the same limit and words as Record payment
   if length(v_note) > 500 then raise exception 'The note is too long (500 characters at most)'; end if;
   select * into e from public.finance_payment_evidence where id = p_evidence for update;
   if not found then raise exception 'Evidence not found'; end if;
@@ -655,6 +670,9 @@ end $$;
 
 -- 3e Post: the confirmed payment becomes official: one receipt, its allocation and its ledger row, through the core, once. Pressing Post twice (or two people at the
 -- same time: the second waits for the lock) answers replay = true and creates nothing. Anything that is not confirmed is refused (NOT_CONFIRMED).
+-- Who may Post: a verifier, or a manager while post_requires_manager is on; and a CASH payment ALWAYS needs a manager, whatever the setting: cash has no bank record to check
+-- against, so one verifier must not be able to record cash on any open invoice and then post it alone (the person who records it is a verifier, the person who posts it a manager).
+-- The cash check comes before the replay answer, so the refusal does not depend on whether the entry has been posted already.
 create or replace function public.finance_post_evidence(p_evidence uuid, p_note text default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare e public.finance_payment_evidence; i public.finance_invoices; rc public.finance_receipts; v jsonb;
@@ -662,6 +680,7 @@ begin
   perform public.finance_require(case when coalesce((select s.post_requires_manager from public.finance_settings s where s.id), false) then 'manage' else 'verify' end, 'post payments');
   select * into e from public.finance_payment_evidence where id = p_evidence for update;     -- the evidence first, then the invoice (the order the core uses)
   if not found then raise exception 'Evidence not found'; end if;
+  if e.method = 'cash' then perform public.finance_require('manage', 'post cash payments'); end if;
   select * into i from public.finance_invoices where id = e.invoice_id for update;
   if e.status = 'verified' then
     select * into rc from public.finance_receipts where evidence_id = e.id;
@@ -710,6 +729,27 @@ begin
   update public.finance_payment_evidence set status = 'more_evidence', request_message = v_msg, requested_by = auth.uid(), requested_at = now() where id = e.id;
   perform public.finance_log('evidence', e.id, 'evidence.request_more', jsonb_build_object('message', v_msg, 'was', e.status));
 end $$;
+
+-- 3g2 A customer who sends a new slip after "more evidence" replaces the old request. Left open, the old slip would stay in the unresolved list for ever and block the order's cancel
+-- (SLIP_PENDING). So when a customer slip is added, the older slips of the SAME invoice that wait for more evidence are closed as rejected ("Replaced by a newer slip"): nobody
+-- decided it, so there is no reviewer, only the time, and the audit row evidence.superseded (naming the new slip). The request stays on the old row as history. Only slips
+-- waiting for more evidence are touched (not submitted, confirmed, posted or rejected ones), only on the same invoice, and a payment recorded by staff does not start it. It runs
+-- inside the insert's own transaction (a staff Reject of the same old slip at the same moment waits for the row lock and then finds it already closed). Internal (not callable).
+create or replace function public.finance_evidence_supersede_old()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare r record;
+begin
+  for r in
+    update public.finance_payment_evidence set status = 'rejected', reject_reason = 'Replaced by a newer slip', reviewed_at = now()
+      where invoice_id = new.invoice_id and id <> new.id and status = 'more_evidence'
+      returning id
+  loop
+    perform public.finance_log('evidence', r.id, 'evidence.superseded', jsonb_build_object('by', new.id));
+  end loop;
+  return new;
+end $$;
+drop trigger if exists finance_evidence_supersede_old on public.finance_payment_evidence;
+create trigger finance_evidence_supersede_old after insert on public.finance_payment_evidence for each row when (new.source = 'customer_slip') execute function public.finance_evidence_supersede_old();
 
 -- 3h Record payment: staff enter a payment at the back office (a bank transfer or cash) against an invoice. It is created already confirmed (by the person who
 -- typed it) and still has to be posted. It can never be more than the invoice still owes, counting what is confirmed but not posted yet.
@@ -955,14 +995,14 @@ end $$;
 
 -- 3n who may call what. The core and the reference check are internal (not even the service role); the new actions are for signed-in users, and each checks the
 -- finance role itself. (The replaced functions keep the grants they already had.)
-revoke execute on function public.finance_verify_core(uuid, numeric, text, timestamptz, text, text, text, text), public.finance_ref_in_use(text, uuid) from public, anon, authenticated;
+revoke execute on function public.finance_verify_core(uuid, numeric, text, timestamptz, text, text, text, text), public.finance_ref_in_use(text, uuid), public.finance_evidence_supersede_old() from public, anon, authenticated;
 revoke execute on function public.finance_confirm_evidence(uuid, numeric, text, timestamptz, text), public.finance_post_evidence(uuid, text), public.finance_request_more_evidence(uuid, text),
   public.finance_record_payment(uuid, text, numeric, timestamptz, text, uuid, text, text, text, text), public.finance_save_review_settings(jsonb) from public, anon;
 grant execute on function public.finance_confirm_evidence(uuid, numeric, text, timestamptz, text), public.finance_post_evidence(uuid, text), public.finance_request_more_evidence(uuid, text),
   public.finance_record_payment(uuid, text, numeric, timestamptz, text, uuid, text, text, text, text), public.finance_save_review_settings(jsonb) to authenticated;
 do $$ begin
   if exists (select 1 from pg_roles where rolname = 'service_role') then
-    revoke execute on function public.finance_verify_core(uuid, numeric, text, timestamptz, text, text, text, text), public.finance_ref_in_use(text, uuid) from service_role;
+    revoke execute on function public.finance_verify_core(uuid, numeric, text, timestamptz, text, text, text, text), public.finance_ref_in_use(text, uuid), public.finance_evidence_supersede_old() from service_role;
   end if;
 end $$;
 

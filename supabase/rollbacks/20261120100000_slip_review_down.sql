@@ -338,6 +338,10 @@ begin
     group by (x.at at time zone 'Asia/Bangkok')::date, b.code, x.bank) q), '[]'::jsonb);
 end $function$;
 
+-- the trigger that closes older "more evidence" slips when a customer sends a new one goes first (it writes to the evidence table and calls finance_log), then its function.
+-- It leaves no object of its own: what it changed (a closed slip) keeps requested_by, so the guard at the top has already refused if one exists.
+drop trigger if exists finance_evidence_supersede_old on public.finance_payment_evidence;
+drop function if exists public.finance_evidence_supersede_old();
 drop function if exists public.finance_save_review_settings(jsonb);
 drop function if exists public.finance_record_payment(uuid, text, numeric, timestamptz, text, uuid, text, text, text, text);
 drop function if exists public.finance_request_more_evidence(uuid, text);
@@ -349,7 +353,8 @@ drop function if exists public.finance_ref_in_use(text, uuid);
 -- ================================================================================================= 2 analysis (undo)
 -- the queue trigger first (it writes to the analysis table that section 1c drops below), then the functions, callers before the helpers they use.
 -- No data lives in these objects (the guard above has already refused if any analysis row exists), so nothing is lost.
--- (the duplicate-scan indexes use finance_slip_ref, so they go before it)
+-- (the duplicate-scan indexes, and the unique index on the normalised confirmed reference, use finance_slip_ref, so they go before it)
+drop index if exists public.finance_evidence_confirmed_refnorm_once;
 drop index if exists public.finance_receipts_slipref_idx;
 drop index if exists public.finance_evidence_slipref_idx;
 drop index if exists public.finance_evidence_confslipref_idx;
@@ -384,8 +389,7 @@ end $$;
 drop table if exists public.finance_slip_analysis;
 drop function if exists public.finance_guard_slip_analysis();
 
--- 1b evidence: index, checks, file columns, new columns (dropping a column drops the checks that only used it)
-drop index if exists public.finance_evidence_confirmed_ref_once;
+-- 1b evidence: checks, file columns, new columns (dropping a column drops the checks that only used it). (The unique index on the confirmed reference is section 2g: gone above.)
 alter table public.finance_payment_evidence drop constraint if exists finance_payment_evidence_status_chk;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'finance_payment_evidence_status_check' and conrelid = 'public.finance_payment_evidence'::regclass) then
