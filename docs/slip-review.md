@@ -171,7 +171,7 @@ The database rollback below is only possible **before** any of those records exi
 
 ## Tests
 
-All SQL goes through `scripts/run-sql-tests.sh`, one transaction that always rolls back (the live database is the only one, there is no test copy); read-only look-ups only through `scripts/db-readonly.sh`. Last recorded results (2026-11-20, machine under load from other processes; the SQL suites, vitest and tsc were re-run after the final review fixes, the full Playwright suite and the build check are marked below):
+All SQL goes through `scripts/run-sql-tests.sh`, one transaction that always rolls back (the live database is the only one, there is no test copy); read-only look-ups only through `scripts/db-readonly.sh`. Last recorded results (2026-11-20, machine under load from other processes; everything below was re-run on the final code; the SQL suite and the down-proof were re-run once more after the last commit):
 
 | Command | What it proves | Last recorded result |
 |---|---|---|
@@ -181,9 +181,9 @@ All SQL goes through `scripts/run-sql-tests.sh`, one transaction that always rol
 | `bash scripts/run-slip-review-down-proof.sh guard` | the rollback refuses for an analysis, a staff entry, a confirmed slip, a slip waiting for more evidence, a confirm stamp, a cash ledger row | **6 of 6 refused** |
 | `bash scripts/run-slip-review-down-proof.sh control` | sanity check: without the rollback the comparison must find differences | 1 of 10 passed (expected: it sees the migration) |
 | `npx vitest run` | unit tests (client, labels, Edge Function with fakes, UI helpers, hygiene) | **26 files, 720 tests passed** |
-| `npx playwright test -c playwright.shop.config.ts` | screens against a fake backend: customer copy and flows, staff dashboard, record payment, widths, accessibility | after the final review fixes: `slip-review` **49 passed**, `slip-customer payments-admin` **37 passed**; the FULL suite (198 before those fixes, two shards) was not re-run yet: PENDING |
+| `npx playwright test -c playwright.shop.config.ts` | screens against a fake backend: customer copy and flows, staff dashboard, record payment, widths, accessibility | full suite on the final code, two shards (2026-11-20): shard 1/2 **103 passed**; shard 2/2 **101 passed and 1 failed** (`shop.spec.ts:350` "orders: list, filters, detail and self-service cancel rules", a timing race in its tab-count helper under load: it shows the previous tab's list for a moment; run alone 8 of 8 passed) |
 | `npx tsc --noEmit` | types | clean (exit 0) |
-| `npx vite build --outDir .superpowers/dist-check --emptyOutDir` | the production build compiles | built before the final review fixes (index.html about 2.2 MB); not re-run yet: PENDING |
+| `npx vite build --outDir .superpowers/dist-check --emptyOutDir` | the production build compiles | built on the final code (2026-11-20; index.html about 2.2 MB); `dist/` untouched |
 
 Notes on how to read these:
 
