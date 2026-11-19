@@ -2,8 +2,9 @@
 -- Design: docs/superpowers/specs/2026-11-19-slip-review-eod-design.md   Plan: docs/superpowers/plans/2026-11-19-slip-review-eod.md
 -- Rollback: supabase/rollbacks/20261120100000_slip_review_down.sql (sections there undo these ones in reverse order).
 --
--- Ships DARK: ai_review_enabled and post_requires_manager are false, so with this migration alone nothing a customer or a staff member does today
--- behaves differently. Every statement is idempotent (the test runner may send the file again after it is live).
+-- Ships DARK in the database: ai_review_enabled and post_requires_manager are false, so with this migration alone (and the old app still live) nothing a customer or a staff
+-- member does today behaves differently. The NEW APP is not dark: its staff screens (the dashboard, Record payment) change as soon as it is deployed, whatever the settings say
+-- (docs/slip-review.md, "What is dark and what is not"). Every statement is idempotent (the test runner may send the file again after it is live).
 --
 -- Sections (each task appends its own): 1 schema, 2 analysis, 3 workflow, 4 reads, 5 customer order list.
 
