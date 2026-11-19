@@ -57,6 +57,10 @@ export interface Evidence {
  * confirmed / posted / requested, what staff confirmed, the file path and its hash, how it was verified) are simply not asked for.
  */
 export const CUSTOMER_EVIDENCE_COLUMNS = 'id, invoice_id, status, created_at, claimed_amount, claimed_transfer_at, claimed_bank, claimed_ref, file_type, reject_reason, request_message, verified_amount, transfer_at, bank_trans_ref, reviewed_at, source, method';
+/** The same list without the three columns the slip-review migration added (request_message, source, method): what a database that does not have the migration yet can answer. */
+export const CUSTOMER_EVIDENCE_COLUMNS_BASE = 'id, invoice_id, status, created_at, claimed_amount, claimed_transfer_at, claimed_bank, claimed_ref, file_type, reject_reason, verified_amount, transfer_at, bank_trans_ref, reviewed_at';
+/** PostgREST says a selected column does not exist: 42703 (Postgres undefined_column) or PGRST204 (the schema cache has no such column). */
+const unknownColumn = (e: { code?: string } | null) => e?.code === '42703' || e?.code === 'PGRST204';
 /** A payment event as a customer sees it (see CUSTOMER_EVIDENCE_COLUMNS). A narrower type than Evidence on purpose: a customer screen cannot reach a staff-only field. */
 export interface CustomerEvidence {
   id: string; invoice_id: string; status: Evidence['status']; created_at: string; claimed_amount: number; claimed_transfer_at: string | null; claimed_bank: string | null; claimed_ref: string | null;
@@ -95,7 +99,11 @@ export const finance = {
     return must(await supabase.from('finance_receipts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: false }), 'Load receipts');
   },
   async myEvidence(invoiceId: string): Promise<CustomerEvidence[]> {
-    return must(await supabase.from('finance_payment_evidence').select(CUSTOMER_EVIDENCE_COLUMNS).eq('invoice_id', invoiceId).order('created_at', { ascending: false }), 'Load slips') as unknown as CustomerEvidence[];
+    const read = (cols: string) => supabase.from('finance_payment_evidence').select(cols).eq('invoice_id', invoiceId).order('created_at', { ascending: false });
+    let r = await read(CUSTOMER_EVIDENCE_COLUMNS);
+    // a database without the slip-review migration has no request_message / source / method: ask again, once, for the columns it does have (never `*`)
+    if (r.error && unknownColumn(r.error)) r = await read(CUSTOMER_EVIDENCE_COLUMNS_BASE);
+    return must(r, 'Load slips') as unknown as CustomerEvidence[];
   },
   /** Upload the slip into the caller's own folder of the private bucket, then record it. Settles nothing by itself. */
   async submitEvidence(p: { invoiceId: string; file: File; claimedAmount: number; transferAt: string | null; bank: string; ref: string; bankAccountId?: string | null }): Promise<string> {

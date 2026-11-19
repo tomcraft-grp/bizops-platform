@@ -20,9 +20,11 @@ export interface FItem {
 }
 /** One payment event on an invoice, as the fake keeps it. `staffNote` is what staff wrote in the staff-only columns (review_note, confirm_note): it must never reach a customer's screen. */
 export interface FEvidence { id: string; status: 'submitted' | 'confirmed' | 'more_evidence' | 'verified' | 'rejected'; claimed_amount: number; created_at: string; reject_reason?: string | null; reviewed_at?: string; request_message?: string | null; confirmed_amount?: number | null; source?: 'customer_slip' | 'staff_entry'; method?: 'transfer' | 'cash'; staffNote?: string }
-interface FInvoice { id: string; invoice_no: string; amount: number; paid: number; cancelled: boolean; evidence: FEvidence[]; req: null | { ref: string; amount: number; qr_payload: string; expires_at: string }; source_ref: string; created_at: string; refunded?: number; /** test control: force a state code the fake cannot derive (6 = overpaid, under review) */ forceCode?: number }
+interface FInvoice { id: string; invoice_no: string; amount: number; paid: number; cancelled: boolean; evidence: FEvidence[]; req: null | { ref: string; amount: number; qr_payload: string; expires_at: string }; source_ref: string; created_at: string; refunded?: number; /** the customer's receipts (what the payment history lists) */ receipts?: { receipt_no: string; amount: number; received_at: string }[]; /** test control: force a state code the fake cannot derive (6 = overpaid, under review) */ forceCode?: number }
 interface FOrder { id: string; order_no: string; status: string; fulfilment: string; contact_name: string; contact_phone: string; delivery_address: string | null; note: string | null; items: { line_no: number; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[]; subtotal: number; discount: number; shipping_fee: number; total: number; created_at: string; key: string; hash: string; invoice: FInvoice; status_note: string | null; cancel_reason: string | null; payment_pref: string | null }
 
+/** the columns of the payment events table that the slip-review migration added and that a customer reads */
+const REVIEW_COLUMNS = ['request_message', 'source', 'method'];
 export const settingsDefault = { require_payment_slip: true, shop_open: true, closed_message: null as string | null, delivery_enabled: true, pickup_enabled: true, pickup_note: 'รับที่ร้าน 99 ถนนทดสอบ', shipping_fee: 50, free_shipping_min: 1000 as number | null };
 
 export class FakeShop {
@@ -63,6 +65,12 @@ export class FakeShop {
   private gate = new Promise<void>((resolve) => { this.openGate = resolve; });
   /** every direct table read the browser made (the table and the columns it asked for), so a test can see what a customer screen reads */
   restReads: { table: string; select: string | null }[] = [];
+  /** true = a database WITHOUT the slip-review migration: the payment events table has no request_message / source / method column (selecting one is an error, like PostgREST) */
+  noReviewColumns = false;
+  /** true = every read of the payment events fails with a server error that has nothing to do with columns */
+  failEvidenceReads = false;
+  /** true = shop_place_order answers without the invoice object: the app must not depend on it once the order exists */
+  placeWithoutInvoice = false;
   failNext(fn: string, times = 1) { this.fail.set(fn, times); }
   /** the server handles the call, but the answer never reaches the phone (dropped connection) */
   dropResponseOnce(fn: string) { this.drop.add(fn); }
@@ -149,7 +157,12 @@ export class FakeShop {
           popular: [...sold].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([s]) => this.itemJson(this.item(s))) };
       }
       case 'shop_quote': return this.quote(a.p_items, String(a.p_fulfilment));
-      case 'shop_place_order': return this.place(a, viaHttp);
+      case 'shop_place_order': {
+        const r = this.place(a, viaHttp);
+        if (!(viaHttp && this.placeWithoutInvoice)) return r;
+        const { invoice: _gone, ...order } = r.order as Record<string, unknown>; void _gone;     // an answer without the invoice object
+        return { ...r, order };
+      }
       case 'shop_my_orders': {
         const f = String(a.p_filter ?? 'all');
         const mine = this.orders.filter((o) => { const p = this.payOf(o); return f === 'unpaid' ? o.status !== 'cancelled' && [0, 1, 3, 4, 7, 9, 10].includes(p) : f === 'to_ship' ? ['new', 'confirmed', 'preparing', 'packed'].includes(o.status) && [5, 6].includes(p) : f === 'to_receive' ? ['shipped', 'ready'].includes(o.status) : f === 'done' ? o.status === 'completed' : f === 'cancelled' ? ['cancelled', 'returned'].includes(o.status) : true; })
@@ -160,7 +173,7 @@ export class FakeShop {
       case 'shop_my_order': { const o = this.orders.find((x) => x.id === a.p_id); if (!o) this.err('Order not found'); return { ...this.orderJson(o), events: [] }; }
       case 'shop_cancel_my_order': {
         const o = this.orders.find((x) => x.id === a.p_id); if (!o) this.err('Order not found');
-        if (o.status !== 'new') this.err('ORDER_IN_PROGRESS'); if (o.invoice.paid > 0) this.err('PAYMENT_RECORDED'); if (o.invoice.evidence.some((e) => e.status === 'submitted' || e.status === 'confirmed')) this.err('SLIP_PENDING');   // a slip the shop confirmed (not yet posted) also blocks it
+        if (o.status !== 'new') this.err('ORDER_IN_PROGRESS'); if (o.invoice.paid > 0) this.err('PAYMENT_RECORDED'); if (o.invoice.evidence.some((e) => e.status === 'submitted' || e.status === 'confirmed' || e.status === 'more_evidence')) this.err('SLIP_PENDING');   // like shop_cancel_order_internal: a slip the shop confirmed (not yet posted) or asked more evidence for also blocks it
         o.status = 'cancelled'; o.invoice.cancelled = true; o.cancel_reason = String(a.p_reason ?? 'Cancelled by customer'); return this.orderJson(o);
       }
       case 'finance_my_invoices': return this.orders.map((o) => this.invoiceRow(o.invoice));
@@ -294,6 +307,8 @@ export class FakeShop {
   }
   /** staff posted a payment of this amount (partly or fully) */
   setPaid(orderNo: string, amount: number) { this.order(orderNo).invoice.paid = amount; }
+  /** a receipt the customer can see in the payment history (it does not change the paid amount: use setPaid for that) */
+  addReceipt(orderNo: string, receiptNo: string, amount: number) { const o = this.order(orderNo); (o.invoice.receipts ??= []).push({ receipt_no: receiptNo, amount, received_at: new Date().toISOString() }); }
   /** a payment QR that is still valid (state 1) or has expired (state 9) */
   giveQr(orderNo: string, live = true) {
     const o = this.order(orderNo);
@@ -352,16 +367,25 @@ export class FakeShop {
       }
       if (p.startsWith('/rest/v1/') && !p.startsWith('/rest/v1/rpc/')) this.restReads.push({ table: p.slice('/rest/v1/'.length), select: url.searchParams.get('select') });
       if (p === '/rest/v1/finance_payment_evidence') {
+        if (this.failEvidenceReads) return json(route, { code: 'XX000', message: 'boom', details: null, hint: null }, 500);
         // like PostgREST: only the columns asked for come back, and a column the table does not have is an error
         const id = url.searchParams.get('invoice_id')?.replace('eq.', '');
         const inv = this.orders.find((o) => o.invoice.id === id)?.invoice;
-        const rows = (inv?.evidence ?? []).map((e) => this.evidenceRow(e, id ?? ''));
+        const missing = this.noReviewColumns ? REVIEW_COLUMNS : [];                       // an old database has no such columns
+        const strip = (r: Record<string, unknown>) => Object.fromEntries(Object.entries(r).filter(([c]) => !missing.includes(c)));
+        const rows = (inv?.evidence ?? []).map((e) => strip(this.evidenceRow(e, id ?? '')));
         const select = url.searchParams.get('select') ?? '*';
         if (select === '*') return json(route, rows);
         const cols = select.split(',').map((c) => c.trim());
-        const unknown = cols.find((c) => !(c in this.evidenceRow({ id: '', status: 'submitted', claimed_amount: 0, created_at: '' }, '')));
+        const have = strip(this.evidenceRow({ id: '', status: 'submitted', claimed_amount: 0, created_at: '' }, ''));
+        const unknown = cols.find((c) => !(c in have));
         if (unknown) return json(route, { code: '42703', message: `column finance_payment_evidence.${unknown} does not exist`, details: null, hint: null }, 400);
-        return json(route, rows.map((r) => Object.fromEntries(cols.map((c) => [c, (r as Record<string, unknown>)[c]]))));
+        return json(route, rows.map((r) => Object.fromEntries(cols.map((c) => [c, r[c]]))));
+      }
+      if (p === '/rest/v1/finance_receipts') {                                           // the customer's own receipts of one invoice
+        const id = url.searchParams.get('invoice_id')?.replace('eq.', '');
+        const inv = this.orders.find((o) => o.invoice.id === id)?.invoice;
+        return json(route, (inv?.receipts ?? []).map((r, i) => ({ id: `rc-${i}`, receipt_no: r.receipt_no, invoice_id: id, amount: r.amount, bank_trans_ref: null, received_at: r.received_at, needs_review: false, status: 'posted', created_at: r.received_at })));
       }
       if (p.startsWith('/storage/v1/object/sign/') && req.method() === 'POST') return json(route, { signedURL: `/object/sign/${p.slice('/storage/v1/object/sign/'.length)}?token=t` });   // staff open a slip
       if (p.startsWith('/storage/v1/object/sign/')) return route.fulfill({ status: 200, contentType: 'image/png', headers: cors, body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') });

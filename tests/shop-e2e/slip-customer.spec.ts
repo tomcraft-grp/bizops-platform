@@ -324,3 +324,58 @@ test.describe('customers never see the AI or any staff-only data', () => {
     });
   }
 });
+
+test.describe('older databases, odd answers and the shape of the page', () => {
+  /** the 14 columns an old payment events table has (the 17 a customer reads minus request_message, source, method) */
+  const BASE_COLUMNS = ['id', 'invoice_id', 'status', 'created_at', 'claimed_amount', 'claimed_transfer_at', 'claimed_bank', 'claimed_ref', 'file_type', 'reject_reason', 'verified_amount', 'transfer_at', 'bank_trans_ref', 'reviewed_at'];
+
+  test('a database WITHOUT the slip-review columns: the browser asks again with the base columns, so the rejection reason and the receipts still show (never *)', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate(); fake.noReviewColumns = true;
+    const o = fake.seedOrder(); fake.addEvidence(o.order_no, 'rejected', { reject_reason: 'ยอดเงินไม่ตรง', reviewed_at: new Date().toISOString() }); fake.addReceipt(o.order_no, 'RC-000042', 100);
+    await open(page, fake); await openOrder(page, o.order_no);
+    expect(await pills(page)).toContain(th('pay.rejected'));
+    await expect(detail(page)).toContainText('ยอดเงินไม่ตรง');                                      // the reason the staff wrote (state 7)
+    await expect(detail(page)).toContainText('RC-000042');                                          // the receipts of the history
+    const reads = fake.restReads.filter((r) => r.table.startsWith('finance_payment_evidence'));
+    expect(reads.some((r) => r.select!.split(',').map((c) => c.trim()).includes('request_message'))).toBe(true);        // first the full list (it failed: the old table has no such column)
+    expect(reads.some((r) => [...r.select!.split(',').map((c) => c.trim())].sort().join() === [...BASE_COLUMNS].sort().join())).toBe(true);   // then the base list
+    for (const r of reads) expect(r.select).not.toBe('*');
+  });
+
+  test('when the slips cannot be read at all, the receipts of the history still show (each part is read on its own)', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate(); fake.failEvidenceReads = true;
+    const o = fake.seedOrder(350); fake.setPaid(o.order_no, 200); fake.addReceipt(o.order_no, 'RC-000007', 200);
+    await open(page, fake); await openOrder(page, o.order_no);
+    await page.getByRole('button', { name: /^(Details|รายละเอียด)$/ }).click();
+    await expect(detail(page)).toContainText('RC-000007');
+    await expect(detail(page)).toContainText('ชำระแล้ว ฿200 · คงเหลือ ฿150');                         // the rest of the screen is as usual
+  });
+
+  test('an order answer without an invoice object never throws after the order exists: the page opens, no error is shown, the reader is simply not asked', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate(); fake.placeWithoutInvoice = true; await open(page, fake);
+    await placeWithSlip(page);
+    await expect(detail(page)).toContainText(PENDING_TH);                                            // the order page loaded the invoice itself
+    expect(fake.orders).toHaveLength(1);
+    await expect(page.getByText(th('err.generic'))).toHaveCount(0);
+    await page.waitForTimeout(400);
+    expect(fake.invokes).toEqual([]);
+  });
+
+  test('only the payment status pill wraps; the order pill keeps one line', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate();
+    const o = fake.seedOrder(); fake.addEvidence(o.order_no, 'submitted');
+    await open(page, fake); await openOrder(page, o.order_no);
+    const ws = (sel: string) => detail(page).locator(sel).first().evaluate((e) => getComputedStyle(e).whiteSpace);
+    expect(await ws('.sp-pill.sp-pay')).toBe('normal');
+    expect(await ws('.sp-pill:not(.sp-pay)')).toBe('nowrap');
+  });
+
+  test('the fake refuses a self-cancel while a slip waits, is confirmed or more evidence is requested (like shop_cancel_order_internal)', () => {
+    const fake = new FakeShop();
+    const more = fake.seedOrder(); fake.addEvidence(more.order_no, 'submitted'); fake.requestMoreEvidence(more.order_no, 'x');
+    const confirmed = fake.seedOrder(); fake.addEvidence(confirmed.order_no, 'confirmed', { confirmed_amount: 320 });
+    const waiting = fake.seedOrder(); fake.addEvidence(waiting.order_no, 'submitted');
+    for (const o of [more, confirmed, waiting]) expect(() => fake.rpc('shop_cancel_my_order', { p_id: o.id }), o.order_no).toThrow('SLIP_PENDING');
+    const plain = fake.seedOrder(); fake.rpc('shop_cancel_my_order', { p_id: plain.id }); expect(plain.status).toBe('cancelled');
+  });
+});

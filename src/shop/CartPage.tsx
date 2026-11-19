@@ -154,7 +154,9 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       forgetAttempt(sessionStorage, uid);
       // the order and its slip are saved: ask the AI reader to look at the slip, once, best effort. Never awaited and it never throws (analyze swallows every error),
       // so a slow or broken reader cannot delay the order page or fail the order; the shop checks every slip by hand whatever the reader does.
-      if (fp && uploaded) void review.analyze({ invoiceId: r.order.invoice.id });
+      // (the answer is read defensively: an order without an invoice object must never throw after the order exists, so then the reader is simply not asked)
+      const invoiceId = r.order.invoice?.id;
+      if (fp && uploaded && invoiceId) void review.analyze({ invoiceId });
       useCart.getState().clear();
       useShopNav.getState().openOrder(r.order.id);
       toast('success', t('co.placed'));

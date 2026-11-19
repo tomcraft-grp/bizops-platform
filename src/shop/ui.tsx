@@ -147,7 +147,7 @@ export const PAY_LABEL: Record<StatusCode, { k: K; tone: 'good' | 'warn' | 'bad'
 export function PayBadge({ code }: { code: StatusCode }) {
   const t = useT();
   const p = PAY_LABEL[code] ?? PAY_LABEL[0];
-  return <span className={cx('sp-pill', p.tone)}>{t(p.k)}</span>;
+  return <span className={cx('sp-pill', 'sp-pay', p.tone)}>{t(p.k)}</span>;
 }
 /** "Paid ฿200 · remaining ฿150" and "The shop confirmed ฿320; it is being recorded" under a payment status (nothing when there is nothing to say). */
 export function PayNotes({ inv }: { inv: Pick<InvoiceState, 'paid' | 'outstanding' | 'status_code' | 'confirmed_pending'> }) {

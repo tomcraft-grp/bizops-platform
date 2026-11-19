@@ -90,7 +90,9 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   const payable = inv.status_code !== 8 && inv.status_code !== 5 && inv.status_code !== 6 && inv.outstanding > 0;
 
   const loadHistory = useCallback(async () => {
-    try { const [ev, rc] = await Promise.all([finance.myEvidence(inv.id), finance.myReceipts(inv.id)]); setHistory({ ev, rc }); } catch { setHistory({ ev: [], rc: [] }); }
+    // each part on its own: when one read fails the other still shows (the receipts must not vanish with the slips, nor the slips with the receipts)
+    const [ev, rc] = await Promise.allSettled([finance.myEvidence(inv.id), finance.myReceipts(inv.id)]);
+    setHistory({ ev: ev.status === 'fulfilled' ? ev.value : [], rc: rc.status === 'fulfilled' ? rc.value : [] });
   }, [inv.id]);
   useEffect(() => { if (open) void loadHistory(); }, [open, loadHistory, inv.status_code]);
   useEffect(() => { setForm((f) => ({ ...f, amount: f.amount || String(inv.outstanding) })); }, [inv.outstanding]);
