@@ -149,7 +149,7 @@ All SQL goes through `scripts/run-sql-tests.sh`, one transaction that always rol
 | `bash scripts/run-slip-review-down-proof.sh guard` | the rollback refuses for an analysis, a staff entry, a confirmed slip, a slip waiting for more evidence, a confirm stamp, a cash ledger row | **6 of 6 refused** |
 | `bash scripts/run-slip-review-down-proof.sh control` | sanity check: without the rollback the comparison must find differences | 1 of 10 passed (expected: it sees the migration) |
 | `npx vitest run` | unit tests (client, labels, Edge Function with fakes, UI helpers, hygiene) | **26 files, 717 tests passed** |
-| `npx playwright test -c playwright.shop.config.ts` | screens against a fake backend: customer copy and flows, staff dashboard, record payment, widths, accessibility | PW_RESULT |
+| `npx playwright test -c playwright.shop.config.ts` | screens against a fake backend: customer copy and flows, staff dashboard, record payment, widths, accessibility | **198 passed, 0 failed** (shard 1/2: 99 in 9.0 min, shard 2/2: 99 in 8.4 min) |
 | `npx tsc --noEmit` | types | clean (exit 0) |
 | `npx vite build --outDir .superpowers/dist-check --emptyOutDir` | the production build compiles | built (index.html about 2.2 MB) |
 
