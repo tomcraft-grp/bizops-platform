@@ -6,6 +6,7 @@
 --            S2 analysis (the queue trigger, the classifier, begin / complete / fail, request, who may call what).
 --            S3 workflow (Confirm, Post, Reject, Request more evidence, Record payment, the one-step verify kept as it was, reports, RLS, grants).
 --            S4 reads (the review list, summary and detail, the settings read, the derived stage, and the cancel guard for a confirmed payment).
+--            S5 customer order list (shop_my_orders: an order that asks the customer for more evidence is in the To pay chip).
 -- Later tasks append their sections above the result block at the bottom.
 create temp table t_res (n serial, test text, ok boolean, detail text);
 create temp table t_ctx (k text primary key, v text);
@@ -2458,6 +2459,73 @@ select pg_temp.q('S4l summary: ...205 more awaiting slips, each expecting the in
 -- ---- put back what this section changed in the shared setup
 select pg_temp.runs_ok('S4 cleanup: the settings are back to the dark defaults', $q$update public.finance_settings set ai_review_enabled = false, post_requires_manager = false, ai_min_confidence = 0.80, slip_window_before_min = 120, slip_future_tolerance_min = 10$q$);
 select pg_temp.q('S4 cleanup: the settings are dark', $$select not ai_review_enabled and not post_requires_manager and ai_min_confidence = 0.80 and slip_window_before_min = 120 and slip_future_tolerance_min = 10 from public.finance_settings$$);
+
+
+-- =========================================================================================== S5 customer order list
+-- shop_my_orders filters the customer's "unpaid" chip ("To pay") by the state of the order's invoice. An order whose invoice is in state 10 (more evidence requested: the
+-- customer has to act) must be in that chip. Five own orders of customer A, one in each state, found by their ids; no absolute counts (A may have real orders).
+reset role;
+create or replace function pg_temp.mo(p_key text, p_filter text, p_user text default 'A') returns void language plpgsql as $$
+begin
+  perform pg_temp.asu(p_user);
+  perform pg_temp.keep4(p_key, format($q$select public.shop_my_orders(%L, 50, 0)::text$q$, p_filter));
+  execute 'reset role';
+end $$;
+-- is the order (key) in the stored answer
+create or replace function pg_temp.inmo(p_key text, p_ord text) returns boolean language sql as $$
+  select exists (select 1 from t_ctx x, jsonb_array_elements(x.v::jsonb -> 'orders') o where x.k = p_key and o ->> 'id' = pg_temp.c(p_ord)) $$;
+-- how many of the five fixture orders are in the stored answer
+create or replace function pg_temp.nmo(p_key text) returns integer language sql as $$
+  select count(*)::int from t_ctx k where k.k in ('q5a', 'q5b', 'q5c', 'q5d', 'q5e') and pg_temp.inmo(p_key, k.k) $$;
+select pg_temp.runs_ok('S5 setup: the settings are the dark defaults', $q$update public.finance_settings set ai_review_enabled = false, post_requires_manager = false$q$);
+-- the shop allows 10 orders per customer per hour and the earlier sections already placed nine for A: they are made three hours old (this run only), so the five below can be placed
+select pg_temp.runs_ok('S5 setup: the orders placed by customer A in the earlier sections are made three hours old', format($q$update public.shop_orders set created_at = now() - interval '3 hours' where profile_id = %L and created_at > now() - interval '1 hour'$q$, pg_temp.c('A')));
+select pg_temp.asu('A');
+select pg_temp.keep('r5a', format($q$select public.shop_place_order('s5-key-0001', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Somchai', '081-234-5678', null, null, %s, 'bank:SCB')::text$q$, pg_temp.c('P1')::numeric));
+select pg_temp.keep('r5b', format($q$select public.shop_place_order('s5-key-0002', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Somchai', '081-234-5678', null, null, %s, 'bank:SCB')::text$q$, pg_temp.c('P1')::numeric));
+select pg_temp.keep('r5c', format($q$select public.shop_place_order('s5-key-0003', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Somchai', '081-234-5678', null, null, %s, 'bank:SCB')::text$q$, pg_temp.c('P1')::numeric));
+select pg_temp.keep('r5d', format($q$select public.shop_place_order('s5-key-0004', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Somchai', '081-234-5678', null, null, %s, 'bank:SCB')::text$q$, pg_temp.c('P1')::numeric));
+select pg_temp.keep('r5e', format($q$select public.shop_place_order('s5-key-0005', '[{"sku_code":"FG-000001","qty":1}]', 'pickup', 'Somchai', '081-234-5678', null, null, %s, 'bank:SCB')::text$q$, pg_temp.c('P1')::numeric));
+reset role;
+select pg_temp.keep('q5a', $q$select (v::jsonb) -> 'order' ->> 'id' from t_ctx where k = 'r5a'$q$); select pg_temp.keep('w5a', $q$select (v::jsonb) -> 'order' -> 'invoice' ->> 'id' from t_ctx where k = 'r5a'$q$);
+select pg_temp.keep('q5b', $q$select (v::jsonb) -> 'order' ->> 'id' from t_ctx where k = 'r5b'$q$); select pg_temp.keep('w5b', $q$select (v::jsonb) -> 'order' -> 'invoice' ->> 'id' from t_ctx where k = 'r5b'$q$);
+select pg_temp.keep('q5c', $q$select (v::jsonb) -> 'order' ->> 'id' from t_ctx where k = 'r5c'$q$); select pg_temp.keep('w5c', $q$select (v::jsonb) -> 'order' -> 'invoice' ->> 'id' from t_ctx where k = 'r5c'$q$);
+select pg_temp.keep('q5d', $q$select (v::jsonb) -> 'order' ->> 'id' from t_ctx where k = 'r5d'$q$); select pg_temp.keep('w5d', $q$select (v::jsonb) -> 'order' -> 'invoice' ->> 'id' from t_ctx where k = 'r5d'$q$);
+select pg_temp.keep('q5e', $q$select (v::jsonb) -> 'order' ->> 'id' from t_ctx where k = 'r5e'$q$); select pg_temp.keep('w5e', $q$select (v::jsonb) -> 'order' -> 'invoice' ->> 'id' from t_ctx where k = 'r5e'$q$);
+-- a: a slip that staff sent back for more evidence (state 10)   b: a slip waiting to be checked (state 3)   c: a slip verified for the whole amount (state 5, fully paid)
+-- d: nothing done yet (state 0 or 1)   e: cancelled by the customer (state 8, order cancelled)
+select pg_temp.asu('A'); select pg_temp.s4slip('s5a', 'w5a', pg_temp.c('P1')::numeric); select pg_temp.s4slip('s5b', 'w5b', pg_temp.c('P1')::numeric); select pg_temp.s4slip('s5c', 'w5c', pg_temp.c('P1')::numeric); reset role;
+select pg_temp.asu('C');
+select pg_temp.runs_ok('S5 setup: the slip of order a is sent back for more evidence', format($q$select public.finance_request_more_evidence(%L, 'S5 please send a clearer slip')$q$, pg_temp.c('s5a')));
+select pg_temp.keep('v5c', format($q$select public.finance_verify_evidence(%L, %s, 'S5-REF-C0001', now(), 'S5')::text$q$, pg_temp.c('s5c'), pg_temp.c('P1')::numeric));
+reset role;
+select pg_temp.runs_ok('S5 setup: order e is cancelled (it has no slip)', format($q$select public.shop_cancel_order_internal(%L, 'S5 test', true)$q$, pg_temp.c('q5e')));
+select pg_temp.q('S5 setup: the five orders are in the states the cases need: a = 10 (more evidence requested), b = 3 (slip pending), c = 5 (fully paid), d = 0 or 1 (nothing done), e = 8 (cancelled)',
+  $$select pg_temp.sv('w5a', 'status_code')::int = 10 and pg_temp.sv('w5b', 'status_code')::int = 3 and pg_temp.sv('w5c', 'status_code')::int = 5 and pg_temp.sv('w5d', 'status_code')::int in (0, 1)
+       and pg_temp.sv('w5e', 'status_code')::int = 8 and (select status from public.shop_orders where id = pg_temp.c('q5e')::uuid) = 'cancelled' and (select status from public.shop_orders where id = pg_temp.c('q5a')::uuid) = 'new'$$);
+
+select pg_temp.mo('M_all', 'all'); select pg_temp.mo('M_unpaid', 'unpaid'); select pg_temp.mo('M_ship', 'to_ship'); select pg_temp.mo('M_recv', 'to_receive'); select pg_temp.mo('M_done', 'done'); select pg_temp.mo('M_canc', 'cancelled');
+select pg_temp.q('S5 my orders: an order whose invoice asks for more evidence (state 10) is in "To pay" (unpaid) and in "All"',
+  $$select pg_temp.inmo('M_unpaid', 'q5a') and pg_temp.inmo('M_all', 'q5a')$$);
+select pg_temp.q('S5 my orders: ...and in no other chip (it is not shippable, not to receive, not done, not cancelled)',
+  $$select not pg_temp.inmo('M_ship', 'q5a') and not pg_temp.inmo('M_recv', 'q5a') and not pg_temp.inmo('M_done', 'q5a') and not pg_temp.inmo('M_canc', 'q5a')$$);
+select pg_temp.q('S5 my orders: a slip pending (state 3) and an order with nothing paid or sent (0 or 1) are still in "To pay"', $$select pg_temp.inmo('M_unpaid', 'q5b') and pg_temp.inmo('M_unpaid', 'q5d')$$);
+select pg_temp.q('S5 my orders: a fully paid order (state 5) is NOT in "To pay", but is "To ship" (new order, paid) and in "All"',
+  $$select not pg_temp.inmo('M_unpaid', 'q5c') and pg_temp.inmo('M_ship', 'q5c') and pg_temp.inmo('M_all', 'q5c')$$);
+select pg_temp.q('S5 my orders: a cancelled order is not in "To pay" and not in "To ship", it is in "Cancelled" and in "All"',
+  $$select not pg_temp.inmo('M_unpaid', 'q5e') and not pg_temp.inmo('M_ship', 'q5e') and pg_temp.inmo('M_canc', 'q5e') and pg_temp.inmo('M_all', 'q5e')$$);
+select pg_temp.q('S5 my orders: the other chips are as before for the sample: To ship holds only the paid order, Cancelled only the cancelled one, To receive and Done none of the five',
+  $$select pg_temp.nmo('M_ship') = 1 and pg_temp.nmo('M_canc') = 1 and pg_temp.nmo('M_recv') = 0 and pg_temp.nmo('M_done') = 0 and pg_temp.nmo('M_all') = 5 and pg_temp.nmo('M_unpaid') = 3$$);
+select pg_temp.q('S5 my orders: the five orders split between To pay (3: states 10, 3, 0 or 1), To ship (1) and Cancelled (1), none in two chips',
+  $$select pg_temp.nmo('M_unpaid') + pg_temp.nmo('M_ship') + pg_temp.nmo('M_canc') = 5$$);
+select pg_temp.q('S5 my orders: the total of "To pay" counts the state-10 order (relative: it is at least the 3 unpaid ones here)', $$select (select (v::jsonb ->> 'total')::int from t_ctx where k = 'M_unpaid') >= 3$$);
+select pg_temp.mo('M_unpaid_b', 'unpaid', 'B');
+select pg_temp.q('S5 my orders: another customer sees none of these orders in any list', $$select pg_temp.nmo('M_unpaid_b') = 0$$);
+select pg_temp.q('S5 my orders: the function keeps its signature, its answer and its grants (signed-in customers only), stable, security definer, fixed search_path, defined once',
+  $$select pg_get_function_arguments(p.oid) = 'p_filter text DEFAULT ''all''::text, p_limit integer DEFAULT 20, p_offset integer DEFAULT 0' and pg_get_function_result(p.oid) = 'jsonb' and p.provolatile = 's' and p.prosecdef
+       and p.proconfig @> array['search_path=public'] and has_function_privilege('authenticated', p.oid, 'execute') and not has_function_privilege('anon', p.oid, 'execute')
+       and (select count(*) from pg_proc q join pg_namespace n on n.oid = q.pronamespace where n.nspname = 'public' and q.proname = 'shop_my_orders') = 1
+     from pg_proc p where p.oid = to_regprocedure('public.shop_my_orders(text, integer, integer)')$$);
 
 -- =========================================================================================== result
 do $$ declare r text; bad int; tot int;

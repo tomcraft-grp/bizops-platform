@@ -1,6 +1,6 @@
 -- Rolls back 20261120100000_slip_review.sql: drops the slip-analysis table and every column, index and constraint the migration added, and puts the
 -- earlier checks back (evidence statuses submitted/verified/rejected, ledger-queue event types without CASH_RECEIPT, file columns NOT NULL).
--- The sections undo the migration in REVERSE order: the section of a later task (4 reads, 3 workflow, 2 analysis) goes ABOVE "1 schema" in this file, so
+-- The sections undo the migration in REVERSE order: the section of a later task (5 customer order list, 4 reads, 3 workflow, 2 analysis) goes ABOVE "1 schema" in this file, so
 -- the functions and triggers that use the new columns are removed before the columns are.
 --
 -- REFUSES to run once the new objects hold records, because dropping them would destroy financial history: any analysis row, any staff-recorded
@@ -21,6 +21,35 @@ do $guard$ begin
   if exists (select 1 from public.finance_gl_queue where event_type = 'CASH_RECEIPT') then
     raise exception 'Cash receipts are queued for the ledger: they cannot be rolled back.'; end if;
 end $guard$;
+
+-- ================================================================================================= 5 customer order list (undo)
+-- shop_my_orders goes back to the definition that was LIVE before this migration (pg_get_functiondef of 2026-11-20): the "To pay" chip without state 10.
+CREATE OR REPLACE FUNCTION public.shop_my_orders(p_filter text DEFAULT 'all'::text, p_limit integer DEFAULT 20, p_offset integer DEFAULT 0)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare uid uuid; lim integer := least(greatest(coalesce(p_limit, 20), 1), 50); off integer := greatest(coalesce(p_offset, 0), 0); res jsonb;
+begin
+  uid := public.shop_require_user();
+  with mine as (
+    select o.id, o.created_at, o.status, (public.finance_invoice_state_raw(o.invoice_id) ->> 'status_code')::int as pay
+    from public.shop_orders o where o.profile_id = uid),
+  f as (
+    select m.*, count(*) over () as total from mine m
+    where case coalesce(p_filter, 'all')
+      when 'unpaid' then m.status <> 'cancelled' and m.pay in (0, 1, 3, 4, 7, 9)
+      when 'to_ship' then m.status in ('new', 'confirmed', 'preparing', 'packed') and m.pay in (5, 6)
+      when 'to_receive' then m.status in ('shipped', 'ready')
+      when 'done' then m.status = 'completed'
+      when 'cancelled' then m.status in ('cancelled', 'returned')
+      else true end
+    order by m.created_at desc limit lim offset off)
+  select jsonb_build_object('total', coalesce((select max(total) from f), 0),
+    'orders', coalesce(jsonb_agg(public.shop_order_json(f.id) order by f.created_at desc), '[]'::jsonb)) into res from f;
+  return res;
+end $function$;
 
 -- ================================================================================================= 4 reads (undo)
 -- The cancel goes back to the definition that was LIVE before this migration (pg_get_functiondef of 2026-11-19: no check for a confirmed payment), then the four reads,

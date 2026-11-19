@@ -5,7 +5,7 @@
 -- Ships DARK: ai_review_enabled and post_requires_manager are false, so with this migration alone nothing a customer or a staff member does today
 -- behaves differently. Every statement is idempotent (the test runner may send the file again after it is live).
 --
--- Sections (each task appends its own): 1 schema, 2 analysis, 3 workflow, 4 reads.
+-- Sections (each task appends its own): 1 schema, 2 analysis, 3 workflow, 4 reads, 5 customer order list.
 
 -- ================================================================================================= 1 schema
 -- 1a settings: five knobs on the existing one-row table (a manager edits them through finance_save_review_settings, section 3)
@@ -1239,4 +1239,31 @@ do $$ begin
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     revoke execute on function public.finance_evidence_stage(text, text, text), public.finance_review_expected(uuid), public.finance_review_arr(jsonb, text, text[]), public.finance_review_date(jsonb, text) from service_role;
   end if;
+end $$;
+
+-- ================================================================================================= 5 customer order list
+-- shop_my_orders filters the customer's "To pay" chip (unpaid) by the state of the order's invoice. State 10 (more evidence requested, section 3) is a state where the customer
+-- has to act, so it belongs in that chip: before this change such an order showed only under "All". The body is the LIVE one (pg_get_functiondef of 2026-11-20) with this single
+-- change, `in (0, 1, 3, 4, 7, 9)` -> `in (0, 1, 3, 4, 7, 9, 10)`; the signature, the answer and the grants (CREATE OR REPLACE keeps them) are the same.
+create or replace function public.shop_my_orders(p_filter text default 'all', p_limit integer default 20, p_offset integer default 0)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare uid uuid; lim integer := least(greatest(coalesce(p_limit, 20), 1), 50); off integer := greatest(coalesce(p_offset, 0), 0); res jsonb;
+begin
+  uid := public.shop_require_user();
+  with mine as (
+    select o.id, o.created_at, o.status, (public.finance_invoice_state_raw(o.invoice_id) ->> 'status_code')::int as pay
+    from public.shop_orders o where o.profile_id = uid),
+  f as (
+    select m.*, count(*) over () as total from mine m
+    where case coalesce(p_filter, 'all')
+      when 'unpaid' then m.status <> 'cancelled' and m.pay in (0, 1, 3, 4, 7, 9, 10)
+      when 'to_ship' then m.status in ('new', 'confirmed', 'preparing', 'packed') and m.pay in (5, 6)
+      when 'to_receive' then m.status in ('shipped', 'ready')
+      when 'done' then m.status = 'completed'
+      when 'cancelled' then m.status in ('cancelled', 'returned')
+      else true end
+    order by m.created_at desc limit lim offset off)
+  select jsonb_build_object('total', coalesce((select max(total) from f), 0),
+    'orders', coalesce(jsonb_agg(public.shop_order_json(f.id) order by f.created_at desc), '[]'::jsonb)) into res from f;
+  return res;
 end $$;
