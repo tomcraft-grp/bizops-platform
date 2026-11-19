@@ -1749,7 +1749,7 @@ begin return (
                                    'expected_total', (select coalesce(sum(exp), 0) from a where status in ('submitted', 'confirmed')),
                                    'ai_total', (select coalesce(sum(ai), 0) from a where status in ('submitted', 'confirmed'))),
     'ai_verified', (select count(*) from a where status = 'submitted' and ns = 'done' and nr = 'match'),
-    'manual_review', (select count(*) from a where status = 'submitted' and (ns = 'failed' or (ns = 'done' and nr <> 'match'))),
+    'manual_review', (select count(*) from a where status = 'submitted' and (ns = 'failed' or (ns = 'done' and nr <> 'match' and nr not in ('duplicate_suspected', 'suspicious_slip')))),
     'suspicious', (select count(*) from a where status = 'submitted' and ns = 'done' and nr in ('duplicate_suspected', 'suspicious_slip')),
     'confirmed', jsonb_build_object('count', (select count(*) from a where status = 'confirmed'), 'amount', (select coalesce(sum(coalesce(confirmed_amount, claimed_amount)), 0) from a where status = 'confirmed')),
     'posted', jsonb_build_object('count', (select count(*) from a where status = 'verified' and (p_from is null or posted_day >= p_from) and (p_to is null or posted_day <= p_to)),
@@ -1810,8 +1810,8 @@ select pg_temp.rs('sum1');
 select pg_temp.q('S4 setup: the three analyses came out as planned: a match, a duplicate (the same reference as the first slip), a match',
   $$select (select result from public.finance_slip_analysis where evidence_id = pg_temp.c('s4_m')::uuid) = 'match' and (select result from public.finance_slip_analysis where evidence_id = pg_temp.c('s4_d')::uuid) = 'duplicate_suspected'
        and (select result from public.finance_slip_analysis where evidence_id = pg_temp.c('s4_c')::uuid) = 'match' and pg_temp.ev('s4_c', 'status') = 'confirmed'$$);
-select pg_temp.q('S4 summary A: 3 slips (a match, a duplicate, a confirmed one) change the counts by 3 awaiting, 1 AI verified, 1 manual review, 1 suspicious, 1 confirmed, and nothing else',
-  $$select pg_temp.sd('sum0', 'sum1', 'awaiting.count') = 3 and pg_temp.sd('sum0', 'sum1', 'ai_verified') = 1 and pg_temp.sd('sum0', 'sum1', 'manual_review') = 1 and pg_temp.sd('sum0', 'sum1', 'suspicious') = 1
+select pg_temp.q('S4 summary A: 3 slips (a match, a duplicate, a confirmed one) change the counts by 3 awaiting, 1 AI verified, 0 manual review (the duplicate is counted as suspicious only), 1 suspicious, 1 confirmed, and nothing else',
+  $$select pg_temp.sd('sum0', 'sum1', 'awaiting.count') = 3 and pg_temp.sd('sum0', 'sum1', 'ai_verified') = 1 and pg_temp.sd('sum0', 'sum1', 'manual_review') = 0 and pg_temp.sd('sum0', 'sum1', 'suspicious') = 1
        and pg_temp.sd('sum0', 'sum1', 'confirmed.count') = 1 and pg_temp.sd('sum0', 'sum1', 'posted.count') = 0 and pg_temp.sd('sum0', 'sum1', 'rejected') = 0 and pg_temp.sd('sum0', 'sum1', 'more_evidence') = 0
        and pg_temp.sd('sum0', 'sum1', 'posted.amount') = 0$$);
 select pg_temp.q('S4 summary A: ...the money: expected = the order total + 210 + 240, what the AI read = the order total + 200 + 240, confirmed = 240',
@@ -1916,6 +1916,25 @@ select pg_temp.runs_ok('S4d staff: a manager can read the list', $q$select publi
 select pg_temp.runs_ok('S4d staff: a manager can read the summary', $q$select public.finance_review_summary(null, null)$q$);
 reset role;
 select pg_temp.runs_ok('S4d setup: the viewer is a clerk again', format($q$update public.finance_staff_roles set role = 'clerk' where user_id = %L$q$, pg_temp.c('D')));
+-- a staff member whose profile is disabled has no finance role at all (the verifier C and the clerk D, each with the role row still there): all four reads refuse them
+select pg_temp.as_user(pg_temp.c('S')::uuid);       -- (the signed-in claims are the manager's: only a SUPER_ADMIN may change another user's status)
+select pg_temp.runs_ok('S4d setup: the verifier''s and the clerk''s profiles are disabled (inside this run; their staff role rows stay)', format($q$update public.profiles set status = 'disabled' where id in (%L, %L)$q$, pg_temp.c('C'), pg_temp.c('D')));
+select pg_temp.asu('C');
+select pg_temp.err_like('S4d disabled: a verifier with a disabled profile cannot read the list', $q$select public.finance_review_list('{}'::jsonb, 5, 0)$q$, '%not allowed%');
+select pg_temp.err_like('S4d disabled: ...nor the summary', $q$select public.finance_review_summary(null, null)$q$, '%not allowed%');
+select pg_temp.err_like('S4d disabled: ...nor the detail', format($q$select public.finance_review_detail(%L)$q$, pg_temp.c('s4_m')), '%not allowed%');
+select pg_temp.err_like('S4d disabled: ...nor the settings', $q$select public.finance_review_settings()$q$, '%not allowed%');
+select pg_temp.asu('D');
+select pg_temp.err_like('S4d disabled: a clerk with a disabled profile cannot read the list', $q$select public.finance_review_list('{}'::jsonb, 5, 0)$q$, '%not allowed%');
+select pg_temp.err_like('S4d disabled: ...nor the summary', $q$select public.finance_review_summary(null, null)$q$, '%not allowed%');
+select pg_temp.err_like('S4d disabled: ...nor the detail', format($q$select public.finance_review_detail(%L)$q$, pg_temp.c('s4_m')), '%not allowed%');
+select pg_temp.err_like('S4d disabled: ...nor the settings', $q$select public.finance_review_settings()$q$, '%not allowed%');
+reset role;
+select pg_temp.as_user(pg_temp.c('S')::uuid);       -- (the signed-in claims are the manager's: only a SUPER_ADMIN may change another user's status)
+select pg_temp.runs_ok('S4d setup: the profiles are active again', format($q$update public.profiles set status = 'active' where id in (%L, %L)$q$, pg_temp.c('C'), pg_temp.c('D')));
+select pg_temp.asu('C');
+select pg_temp.runs_ok('S4d disabled: ...and the verifier reads again once the profile is active', $q$select public.finance_review_list('{}'::jsonb, 5, 0)$q$);
+reset role;
 
 -- ---- S4e the list: stages, fields, ordering. First the newest-attempt rule, before a third attempt was asked for
 select pg_temp.q('S4e newest attempt: while attempt 2 of s4_t is done and matched the stage is ai_completed (the newest attempt decides), with the result of attempt 2 and no reasons',
@@ -2110,6 +2129,13 @@ select pg_temp.err_like('S4f invalid: a reason that is a list is refused', $q$se
 select pg_temp.err_like('S4f invalid: a filter that is an array is refused', $q$select public.finance_review_list('[]'::jsonb, 50, 0)$q$, '%INVALID_FILTER%');
 select pg_temp.err_like('S4f invalid: a filter that is a string is refused', $q$select public.finance_review_list('"x"'::jsonb, 50, 0)$q$, '%INVALID_FILTER%');
 select pg_temp.runs_ok('S4f invalid: a JSON null as the filter is the same as {}', $q$select public.finance_review_list('null'::jsonb, 5, 0)$q$);
+-- a list filter holds at most 20 values (there are 7 stages, 7 results, 2 sources, 2 methods): more is refused, whatever the values are
+select pg_temp.err_like('S4f invalid: 21 stages are refused', format($q$select public.finance_review_list(%L::jsonb, 5, 0)$q$, (select jsonb_build_object('stage', jsonb_agg('posted'::text))::text from generate_series(1, 21))), '%INVALID_FILTER%stage%');
+select pg_temp.err_like('S4f invalid: 21 AI results are refused', format($q$select public.finance_review_list(%L::jsonb, 5, 0)$q$, (select jsonb_build_object('ai_result', jsonb_agg('match'::text))::text from generate_series(1, 21))), '%INVALID_FILTER%ai_result%');
+select pg_temp.err_like('S4f invalid: 21 sources are refused', format($q$select public.finance_review_list(%L::jsonb, 5, 0)$q$, (select jsonb_build_object('source', jsonb_agg('staff_entry'::text))::text from generate_series(1, 21))), '%INVALID_FILTER%source%');
+select pg_temp.err_like('S4f invalid: 21 methods are refused', format($q$select public.finance_review_list(%L::jsonb, 5, 0)$q$, (select jsonb_build_object('method', jsonb_agg('cash'::text))::text from generate_series(1, 21))), '%INVALID_FILTER%method%');
+select pg_temp.err_like('S4f invalid: 1000 values are refused', format($q$select public.finance_review_list(%L::jsonb, 5, 0)$q$, (select jsonb_build_object('stage', jsonb_agg('posted'::text))::text from generate_series(1, 1000))), '%INVALID_FILTER%stage%');
+select pg_temp.runs_ok('S4f invalid: exactly 20 values are accepted', format($q$select public.finance_review_list(%L::jsonb, 5, 0)$q$, (select jsonb_build_object('stage', jsonb_agg('posted'::text))::text from generate_series(1, 20))));
 reset role;
 
 -- ---- S4g the summary. The unresolved counts ignore the date range; posted and rejected use the money event's day (Bangkok); the numbers are worked out by hand
@@ -2125,12 +2151,19 @@ select pg_temp.q('S4g summary: every part is a number (zero when there is nothin
        and pg_temp.sj('sum_d3', 'posted.count') = 0 and pg_temp.sj('sum_d3', 'posted.amount') = 0 and pg_temp.sj('sum_d3', 'rejected') = 0$$);
 select pg_temp.q('S4g summary: no arguments at all (both dates optional) is the same as no range',
   $$select (select v from t_ctx where k = 'sum_def')::jsonb = (select v from t_ctx where k = 'sum2')::jsonb$$);
-select pg_temp.q('S4g summary: the 18 slips of the section against the summary taken before them: 13 awaiting, 1 AI verified, 4 manual review of which 2 suspicious, 2 confirmed for 320, 1 sent back for more evidence, 2 posted for 450, 2 rejected',
-  $$select pg_temp.sd('sum0', 'sum2', 'awaiting.count') = 13 and pg_temp.sd('sum0', 'sum2', 'ai_verified') = 1 and pg_temp.sd('sum0', 'sum2', 'manual_review') = 4 and pg_temp.sd('sum0', 'sum2', 'suspicious') = 2
+select pg_temp.q('S4g summary: the 18 slips of the section against the summary taken before them: 13 awaiting, 1 AI verified, 2 manual review (the amount mismatch and the failed reader), 2 suspicious (the duplicate and the bad QR), 2 confirmed for 320, 1 sent back for more evidence, 2 posted for 450, 2 rejected',
+  $$select pg_temp.sd('sum0', 'sum2', 'awaiting.count') = 13 and pg_temp.sd('sum0', 'sum2', 'ai_verified') = 1 and pg_temp.sd('sum0', 'sum2', 'manual_review') = 2 and pg_temp.sd('sum0', 'sum2', 'suspicious') = 2
        and pg_temp.sd('sum0', 'sum2', 'confirmed.count') = 2 and pg_temp.sd('sum0', 'sum2', 'confirmed.amount') = 320 and pg_temp.sd('sum0', 'sum2', 'more_evidence') = 1
        and pg_temp.sd('sum0', 'sum2', 'posted.count') = 2 and pg_temp.sd('sum0', 'sum2', 'posted.amount') = 450 and pg_temp.sd('sum0', 'sum2', 'rejected') = 2$$);
 select pg_temp.q('S4g summary: ...the money of the 13 awaiting slips: expected = 3 x the price + 2610 (the order totals, then each invoice or finished analysis), what the AI read = 4 x the price + 970',
   $$select pg_temp.sd('sum0', 'sum2', 'awaiting.expected_total') = 3 * pg_temp.c('P1')::numeric + 2610 and pg_temp.sd('sum0', 'sum2', 'awaiting.ai_total') = 4 * pg_temp.c('P1')::numeric + 970$$);
+select pg_temp.q('S4g summary: the three AI tiles never overlap: AI verified + manual review + suspicious is exactly the number of submitted slips whose newest analysis is finished or failed (a plain SQL count; waiting and unanalysed slips are in none), for the whole and for the 18 slips (5: s4_m; s4_a and s4_f; s4_d and s4_s)',
+  $$select pg_temp.sj('sum2', 'ai_verified') + pg_temp.sj('sum2', 'manual_review') + pg_temp.sj('sum2', 'suspicious')
+         = (select count(*) from public.finance_payment_evidence e where e.status = 'submitted'
+              and (select x.status from public.finance_slip_analysis x where x.evidence_id = e.id order by x.attempt desc limit 1) in ('done', 'failed'))
+       and pg_temp.sd('sum0', 'sum2', 'ai_verified') + pg_temp.sd('sum0', 'sum2', 'manual_review') + pg_temp.sd('sum0', 'sum2', 'suspicious') = 5$$);
+select pg_temp.q('S4g summary: ...the manual review tile excludes the suspicious ones: it is the list total for stage manual_review less those whose newest result is duplicate_suspected or suspicious_slip (the section''s 4 slips in that stage, 2 of them suspicious)',
+  $$select pg_temp.lt('L_st3') = 4 and pg_temp.lt('L_c1') = 2 and pg_temp.sd('sum0', 'sum2', 'manual_review') = pg_temp.lt('L_st3') - pg_temp.lt('L_c1') and pg_temp.sd('sum0', 'sum2', 'suspicious') = pg_temp.lt('L_c1')$$);
 select pg_temp.same('S4g summary: the whole summary equals an independent recount in plain SQL (no range)', 'sum2');
 select pg_temp.same('S4g summary: ...for the 10th', 'sum_d1', date '2031-03-10', date '2031-03-10');
 select pg_temp.same('S4g summary: ...for the 11th', 'sum_d2', date '2031-03-11', date '2031-03-11');
@@ -2245,10 +2278,15 @@ select pg_temp.asu('S');
 select pg_temp.err_like('S4h detail: an unknown slip is "Evidence not found"', $q$select public.finance_review_detail(gen_random_uuid())$q$, '%Evidence not found%');
 select pg_temp.err_like('S4h detail: no slip is "Evidence not found"', $q$select public.finance_review_detail(null)$q$, '%Evidence not found%');
 reset role;
-select pg_temp.keep('ev_n0', $q$select count(*)::text from public.finance_events$q$);
-select pg_temp.rl('L_ro', pg_temp.w()); select pg_temp.rs('sum_ro'); select pg_temp.rd('D_ro', 's4_m');
-select pg_temp.q('S4h reading changes nothing: the list, the summary and the detail wrote no audit row, and no analysis or evidence changed',
-  $$select (select v::bigint from t_ctx where k = 'ev_n0') = (select count(*) from public.finance_events) and pg_temp.lt('L_ro') = 18$$);
+create or replace function pg_temp.rows_state() returns text language plpgsql security definer as $$
+begin return
+  (select count(*) from public.finance_events) || '/' || (select count(*) from public.finance_slip_analysis) || '/' || (select count(*) from public.finance_payment_evidence) || '/'
+    || (select count(*) from public.finance_receipts) || '/' || (select count(*) from public.finance_invoices) || '/'
+    || md5(coalesce((select string_agg(x::text, '|' order by x.id) from public.finance_payment_evidence x), '')) || '/' || md5(coalesce((select string_agg(x::text, '|' order by x.id) from public.finance_slip_analysis x), '')); end $$;
+select pg_temp.keep('ev_n0', $q$select pg_temp.rows_state()$q$);
+select pg_temp.rl('L_ro', pg_temp.w()); select pg_temp.rs('sum_ro'); select pg_temp.rd('D_ro', 's4_m'); select pg_temp.rd('D_ro2', 's4_t');
+select pg_temp.q('S4h reading changes nothing: after the list, the summary and two details the audit log, the analysis rows, the evidence rows, the receipts and the invoices are exactly as before (their counts, and a hash of every evidence and analysis row)',
+  $$select (select v from t_ctx where k = 'ev_n0') = pg_temp.rows_state() and (select v from t_ctx where k = 'ev_n0') is not null and pg_temp.lt('L_ro') = 18 and pg_temp.dj('D_ro2', 'evidence.id') = pg_temp.c('s4_t')$$);
 
 -- ---- S4i the settings read
 select pg_temp.asu('C'); select pg_temp.keep4('set0', $q$select public.finance_review_settings()::text$q$); reset role;
@@ -2348,6 +2386,18 @@ select pg_temp.q('S4k indexes: the list is ordered by created_at desc, id and th
 
 -- ---- S4l paging cap: 205 slips on one day; a limit of 1000 is cut to 200 and the total still says 205
 select pg_temp.rs('sum2b');
+-- the AI tiles are about SUBMITTED slips: a slip that is already confirmed-and-posted, rejected, or sent back for more evidence does not count in them, whatever its newest analysis says
+select pg_temp.runs_ok('S4g setup: finished analyses on slips that are no longer submitted (posted: suspicious_slip, more evidence: duplicate_suspected, rejected: amount_mismatch, another rejected: a failed reader)',
+  format($q$insert into public.finance_slip_analysis (evidence_id, attempt, status, result, error, reasons, extracted, expected, finished_at)
+    select e.id, 1, case when e.id = %L::uuid then 'failed' else 'done' end,
+           case e.id when %L::uuid then 'suspicious_slip' when %L::uuid then 'duplicate_suspected' when %L::uuid then 'amount_mismatch' else 'manual_review' end,
+           case when e.id = %L::uuid then 'S4 reader down' end, '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, now()
+      from public.finance_payment_evidence e where e.id in (%L, %L, %L, %L)$q$,
+    pg_temp.c('s4h7a'), pg_temp.c('s4h6'), pg_temp.c('s4h5'), pg_temp.c('s4h1'), pg_temp.c('s4h7a'), pg_temp.c('s4h6'), pg_temp.c('s4h5'), pg_temp.c('s4h1'), pg_temp.c('s4h7a')));
+select pg_temp.rs('sum2c');
+select pg_temp.q('S4g summary tiles: analyses on posted, rejected and sent-back slips change none of the three AI tiles (nor anything else in the summary)',
+  $$select (select v::jsonb from t_ctx where k = 'sum2c') = (select v::jsonb from t_ctx where k = 'sum2b')$$);
+select pg_temp.same('S4g summary tiles: ...and the summary still equals the recount', 'sum2c');
 select pg_temp.runs_ok('S4l setup: 205 more slips on one invoice, on 2031-03-20',
   format($q$insert into public.finance_payment_evidence (invoice_id, customer_id, file_path, file_sha256, file_type, claimed_amount, created_at)
     select %L::uuid, %L::uuid, 'S4/bulk-' || g, md5('s4-bulk-' || g) || md5('s4b-bulk-' || g), 'image/png', 1, timestamptz '2031-03-20 12:00:00+07' + g * interval '1 second' from generate_series(1, 205) g$q$, pg_temp.c('v4_o'), pg_temp.c('cust')));

@@ -982,7 +982,7 @@ returns text language sql immutable set search_path = public as $$
   end
 $$;
 
--- 4b readers of the filter (internal): a text list (a single string counts as a list of one; null, "" and [] mean "no filter"; a value outside the allowed ones is an error)
+-- 4b readers of the filter (internal): a text list (a single string counts as a list of one; null, "" and [] mean "no filter"; more than 20 values, or a value outside the allowed ones, is an error)
 -- and a calendar date (YYYY-MM-DD only: Postgres would also take words such as 'yesterday').
 create or replace function public.finance_review_arr(p_val jsonb, p_name text, p_allowed text[])
 returns text[] language plpgsql immutable set search_path = public as $$
@@ -991,6 +991,7 @@ begin
   if p_val is null or jsonb_typeof(p_val) = 'null' then return null; end if;
   if jsonb_typeof(p_val) = 'string' then v := array[p_val #>> '{}'];
   elsif jsonb_typeof(p_val) = 'array' then
+    if jsonb_array_length(p_val) > 20 then raise exception 'INVALID_FILTER: % has too many values (at most 20)', p_name; end if;
     for x in select e.value from jsonb_array_elements(p_val) e loop
       if jsonb_typeof(x) <> 'string' then raise exception 'INVALID_FILTER: % must be text or a list of text', p_name; end if;
       v := v || (x #>> '{}');
@@ -1117,8 +1118,9 @@ end $$;
 
 -- 4e the KPI summary. The UNRESOLVED counts ignore the range (they are what is waiting today):
 --   awaiting      payments with status submitted or confirmed: how many, what they were expected to be (4c), what the AI read on them (newest finished analysis)
---   ai_verified   submitted payments in stage ai_completed;  manual_review  submitted payments in stage manual_review (it includes the suspicious ones);
---   suspicious    ... of which the newest analysis said duplicate_suspected or suspicious_slip
+--   ai_verified   submitted payments in stage ai_completed;  manual_review  submitted payments in stage manual_review WITHOUT the suspicious ones (a mismatch, low confidence, a failed reader);
+--   suspicious    submitted payments whose newest analysis said duplicate_suspected or suspicious_slip. The three tiles never overlap: together they are the submitted payments with a finished or
+--                 failed newest analysis (one still waiting for the reader, or never analysed, is in none of them: it is only in awaiting)
 --   confirmed     status confirmed: how many and the money (confirmed_amount, else the claimed amount);  more_evidence  status more_evidence (counted on its own)
 -- posted (status verified, on the day of posted_at, or of reviewed_at for a slip the old one-step verify settled) and rejected (on the day of reviewed_at) use the range;
 -- days are calendar days in Asia/Bangkok, both ends inclusive, either end may be null (no range at all: every posted and rejected slip counts, also one that has no date;
@@ -1144,7 +1146,7 @@ begin
   select jsonb_build_object(
     'awaiting', jsonb_build_object('count', count(*) filter (where awaiting), 'expected_total', coalesce(sum(expected) filter (where awaiting), 0), 'ai_total', coalesce(sum(ai_amount) filter (where awaiting), 0)),
     'ai_verified', count(*) filter (where stage = 'ai_completed'),
-    'manual_review', count(*) filter (where stage = 'manual_review'),
+    'manual_review', count(*) filter (where stage = 'manual_review' and coalesce(a_result, '') not in ('duplicate_suspected', 'suspicious_slip')),
     'suspicious', count(*) filter (where stage = 'manual_review' and a_result in ('duplicate_suspected', 'suspicious_slip')),
     'confirmed', jsonb_build_object('count', count(*) filter (where status = 'confirmed'), 'amount', coalesce(sum(coalesce(confirmed_amount, claimed_amount)) filter (where status = 'confirmed'), 0)),
     'posted', jsonb_build_object('count', count(*) filter (where status = 'verified'), 'amount', coalesce(sum(coalesce(verified_amount, confirmed_amount, claimed_amount)) filter (where status = 'verified'), 0)),
