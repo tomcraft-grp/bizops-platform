@@ -665,6 +665,10 @@ begin
     end if;
   end if;
   if e.status <> 'confirmed' then raise exception 'NOT_CONFIRMED: this slip is % (it must be confirmed before it is posted)', e.status; end if;
+  -- Confirm checked that the reference was new, but hours can pass before Post (end-of-day approval): the one-step verify may have recorded the same transfer on
+  -- another slip meanwhile, typed differently (the core only compares exactly). Look again, in the normalised form, before any money is recorded.
+  if e.method = 'transfer' and e.confirmed_bank_ref is not null and public.finance_ref_in_use(e.confirmed_bank_ref, e.id) is not null then
+    raise exception 'Bank transaction % was already recorded (reused slip?)', e.confirmed_bank_ref using errcode = '23505'; end if;
   v := public.finance_verify_core(e.id, e.confirmed_amount, case when e.method = 'cash' then null else e.confirmed_bank_ref end, e.confirmed_transfer_at, p_note, 'staff', 'confirmed', e.method);
   perform public.finance_log('evidence', e.id, 'evidence.post', jsonb_build_object('receipt_no', v ->> 'receipt_no', 'amount', e.confirmed_amount, 'note', nullif(trim(p_note), '')));
   return v || jsonb_build_object('replay', false);

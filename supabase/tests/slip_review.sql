@@ -1397,6 +1397,19 @@ select pg_temp.asu('C');
 select pg_temp.err_like('S3c2 post: a confirmed slip of a cancelled invoice cannot be posted', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('eo')), '%invoice is cancelled%');
 reset role;
 select pg_temp.q('S3c2 post: ...the slip stays confirmed and no receipt was made', $$select pg_temp.ev('eo', 'status') = 'confirmed' and pg_temp.nrc('eo') = 0$$);
+-- the same bank transfer typed differently: confirmed on one slip, then recorded by the one-step verify on another slip (reference written with spaces / lower case)
+-- before the first one is posted. The core only compares exactly, so Post itself must look at the normalised form, or one transfer would get two receipts.
+select pg_temp.asu('S'); select pg_temp.mkinv('iq', 100); reset role;
+select pg_temp.asu('A'); select pg_temp.mkslip('eq1', 'iq', 100); select pg_temp.mkslip('eq2', 'iq', 100); reset role;
+select pg_temp.asu('C');
+select pg_temp.conf('cq1', 'eq1', 100, 'S3-REF-Q1');
+select pg_temp.keep('vq2', format($q$select public.finance_verify_evidence(%L, 100, 's3 ref q1', now())::text$q$, pg_temp.c('eq2')));
+select pg_temp.err_state('S3c2 post: the same transfer written differently on another slip stops Post with SQLSTATE 23505', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('eq1')), '23505');
+select pg_temp.err_like('S3c2 post: ...and says the bank transaction was already recorded', format($q$select public.finance_post_evidence(%L)$q$, pg_temp.c('eq1')), '%already recorded%');
+reset role;
+select pg_temp.q('S3c2 post: ...one transfer, one receipt: the one-step slip has the receipt, the confirmed slip stays confirmed with none, the invoice is paid once',
+  $$select pg_temp.jb('vq2', 'result') = 'fully_paid' and pg_temp.nrc('eq2') = 1 and pg_temp.nrc('eq1') = 0 and pg_temp.ev('eq1', 'status') = 'confirmed' and pg_temp.ev('eq1', 'posted_at') is null
+       and (select count(*) from public.finance_receipts where invoice_id = pg_temp.c('iq')::uuid) = 1 and pg_temp.sv('iq', 'paid')::numeric = 100$$);
 
 -- ---- S3i: Reject (a confirmed slip too) and Request more evidence
 select pg_temp.asu('A'); select pg_temp.mkslip('ej', 'ij', 120); reset role;
