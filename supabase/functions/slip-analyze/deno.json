@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "jsqr": "npm:jsqr@1.4.0",
+    "pngjs": "npm:pngjs@7.0.0",
+    "jpeg-js": "npm:jpeg-js@0.4.4"
+  }
+}
