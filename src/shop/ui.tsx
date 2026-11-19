@@ -140,6 +140,7 @@ export const PAY_LABEL: Record<StatusCode, { k: K; tone: 'good' | 'warn' | 'bad'
   0: { k: 'pay.unpaid', tone: 'warn' }, 1: { k: 'pay.unpaid', tone: 'warn' }, 9: { k: 'pay.unpaid', tone: 'warn' },
   3: { k: 'pay.pending', tone: 'info' }, 4: { k: 'pay.partial', tone: 'warn' }, 5: { k: 'pay.paid', tone: 'good' },
   6: { k: 'pay.review', tone: 'info' }, 7: { k: 'pay.rejected', tone: 'bad' }, 8: { k: 'pay.cancelled', tone: '' },
+  10: { k: 'pay.pending', tone: 'warn' },   // more evidence requested: still awaiting verification until the customer sends another slip
 };
 export function PayBadge({ code }: { code: StatusCode }) {
   const t = useT();

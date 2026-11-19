@@ -89,7 +89,7 @@ function VerifyModal({ ev, onClose, onDone }: { ev: Evidence & { invoice_no?: st
   const [url, setUrl] = useState<string | null>(null);
   const [f, setF] = useState({ amount: '', ref: '', when: localInput(ev.claimed_transfer_at ? new Date(ev.claimed_transfer_at) : new Date()), note: '' });
   const [busy, setBusy] = useState('');
-  useEffect(() => { finance.slipUrl(ev.file_path).then(setUrl).catch((e: Error) => toast('error', e.message)); }, [ev.file_path]);
+  useEffect(() => { if (ev.file_path) finance.slipUrl(ev.file_path).then(setUrl).catch((e: Error) => toast('error', e.message)); }, [ev.file_path]);
   const amount = Number(f.amount);
   const verify = async () => {
     if (!(amount > 0) || !f.ref.trim()) return toast('error', tl(lang, 'Enter the amount and the bank transaction reference from your bank record'));

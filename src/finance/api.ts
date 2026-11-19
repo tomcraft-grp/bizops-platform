@@ -11,8 +11,8 @@ const NEED: Record<FinanceCap, number> = { view: 1, invoice: 2, verify: 3, manag
 /** UI hint only: the database enforces the same ladder (public.finance_can). */
 export const canFinance = (role: FinanceRole | null, cap: FinanceCap) => !!role && RANK[role] >= NEED[cap];
 
-/** 0 unpaid · 1 awaiting payment · 3 pending verification · 4 partially paid · 5 fully paid · 6 overpaid (review) · 7 rejected · 8 cancelled · 9 expired */
-export type StatusCode = 0 | 1 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+/** 0 unpaid · 1 awaiting payment · 3 pending verification · 4 partially paid · 5 fully paid · 6 overpaid (review) · 7 rejected · 8 cancelled · 9 expired · 10 more evidence requested */
+export type StatusCode = 0 | 1 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 export const STATUS: Record<StatusCode, { en: string; th: string; tone: 'good' | 'warn' | 'bad' | 'info' | '' }> = {
   0: { en: 'Unpaid', th: 'ยังไม่ชำระ', tone: '' },
   1: { en: 'Awaiting payment', th: 'รอชำระเงิน', tone: 'info' },
@@ -23,12 +23,17 @@ export const STATUS: Record<StatusCode, { en: string; th: string; tone: 'good' |
   7: { en: 'Payment rejected', th: 'หลักฐานถูกปฏิเสธ', tone: 'bad' },
   8: { en: 'Cancelled', th: 'ยกเลิก', tone: '' },
   9: { en: 'QR expired', th: 'QR หมดอายุ', tone: 'bad' },
+  10: { en: 'More evidence requested', th: 'ขอหลักฐานเพิ่ม', tone: 'warn' },
 };
 
 export interface PaymentRequestView { ref: string; amount: number; qr_payload: string; expires_at: string; expired: boolean }
 export interface InvoiceState {
   invoice_id: string; amount: number; paid: number; outstanding: number; unapplied: number; refunded?: number; status_code: StatusCode; status: string;
   pending_evidence: number; request: PaymentRequestView | null;
+  /** The sum of payments a verifier confirmed that nobody has posted yet (not money yet). Absent before the slip-review migration. */
+  confirmed_pending?: number;
+  /** What staff asked the customer for, while the status is 10 (more evidence requested). */
+  more_evidence_message?: string | null;
 }
 export interface InvoiceRow extends InvoiceState {
   id: string; invoice_no: string; issue_date: string; due_date: string; description: string | null; customer_name?: string;
@@ -37,15 +42,20 @@ export interface InvoiceRow extends InvoiceState {
 export interface QrRequest { ref: string; amount: number; qr_payload: string; expires_at: string; account_label: string; merchant_name: string | null }
 export interface PaymentAccount { id: string; label: string; kind: 'promptpay' | 'bill_payment'; target: string; target_type: string; merchant_name: string | null; is_default: boolean; active: boolean; created_at: string }
 export interface QrInfo { kind: 'promptpay' | 'bill_payment'; target: string; target_type: string; ref1: string | null; merchant_name: string | null; has_amount: boolean }
+/** One payment event: a customer's slip, or a payment a staff member recorded at the back office (then it may have no file). */
 export interface Evidence {
-  id: string; invoice_id: string; customer_id: string; file_path: string; file_type: string; claimed_amount: number; claimed_transfer_at: string | null;
-  claimed_bank: string | null; claimed_ref: string | null; status: 'submitted' | 'verified' | 'rejected'; verified_via: string | null; verified_amount: number | null;
+  id: string; invoice_id: string; customer_id: string; file_path: string | null; file_type: string | null; claimed_amount: number; claimed_transfer_at: string | null;
+  claimed_bank: string | null; claimed_ref: string | null; status: 'submitted' | 'confirmed' | 'more_evidence' | 'verified' | 'rejected'; verified_via: string | null; verified_amount: number | null;
   bank_trans_ref: string | null; reject_reason: string | null; reviewed_at: string | null; created_at: string;
+  // added by the slip-review migration (absent on a database that does not have it yet)
+  source?: 'customer_slip' | 'staff_entry'; method?: 'transfer' | 'cash';
+  confirmed_amount?: number | null; confirmed_bank_ref?: string | null; confirmed_transfer_at?: string | null; confirmed_at?: string | null; confirm_note?: string | null;
+  posted_at?: string | null; request_message?: string | null; requested_at?: string | null;
 }
 export interface Receipt { id: string; receipt_no: string; invoice_id: string; amount: number; bank_trans_ref: string | null; received_at: string; needs_review: boolean; status: 'posted' | 'reversed'; created_at: string }
 export interface VerifyResult { result: 'fully_paid' | 'partially_paid' | 'overpaid_credited' | 'overpaid_review'; receipt_no: string; credited_to_wallet?: number; state: InvoiceState }
 
-function must<T>(r: { data: T | null; error: { message: string } | null }, what: string): T {
+export function must<T>(r: { data: T | null; error: { message: string } | null }, what: string): T {
   if (r.error) throw new Error(`${what}: ${r.error.message}`);
   return r.data as T;
 }

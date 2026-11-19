@@ -24,6 +24,7 @@ const MSG: Record<StatusCode, { th: string; en: string; tone: 'info' | 'warn' | 
   7: { th: 'หลักฐานการชำระถูกปฏิเสธ ดูเหตุผลด้านล่าง แล้วส่งสลิปใหม่หรือเลือกช่องทางอื่น', en: 'Your payment evidence was rejected (see the reason below). Send a new slip or choose another way to pay.', tone: 'bad' },
   8: { th: 'ใบแจ้งหนี้นี้ถูกยกเลิก', en: 'This invoice was cancelled.', tone: 'warn' },
   9: { th: 'QR หมดอายุ กรุณาสร้างใหม่ หากโอนไปแล้วให้อัปโหลดสลิป', en: 'The QR expired. Create a new one. If you already paid, upload your slip.', tone: 'warn' },
+  10: { th: 'ทางร้านขอหลักฐานการชำระเพิ่มเติม กรุณาส่งสลิปใหม่', en: 'The shop asked for more evidence of your payment. Please send a new slip.', tone: 'warn' },
 };
 
 export function CustomerInvoices({ lang: langProp, hide }: { lang?: Lang; hide?: (r: InvoiceRow) => boolean } = {}) {

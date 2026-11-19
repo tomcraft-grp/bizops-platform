@@ -891,4 +891,9 @@ export const TH_BACKOFFICE: Record<string, string> = {
     'รายจ่ายประจำวันให้ใช้ “บันทึกรายจ่ายประจำวัน”: พนักงานบันทึก ผู้จัดการอนุมัติ และนักบัญชีลงบัญชี ส่วน “เพิ่มค่าใช้จ่าย” ที่นี่จะลงบัญชีทันทีโดยไม่มีขั้นตอนอนุมัติ',
   'Use a manual journal only for adjustments that no other screen records (corrections, accruals, opening items). Every line needs a debit or a credit and the totals must match. Everyday spending belongs in Daily expenses.':
     'ใช้ร่างรายการบัญชีเฉพาะการปรับปรุงที่หน้าอื่นบันทึกไม่ได้ (การแก้ไข ค่าใช้จ่ายค้างจ่าย ยอดยกมา) ทุกบรรทัดต้องมีเดบิตหรือเครดิต และยอดรวมสองฝั่งต้องเท่ากัน ส่วนรายจ่ายประจำวันให้บันทึกที่ “บันทึกรายจ่ายประจำวัน”',
+  // slip review (finance/review.ts): the label of an AI result and of a payment's stage. The same texts are in AI_RESULT / STAGE; tests/unit/slipReview.test.ts keeps them equal.
+  'Verified / Match': 'ตรงกัน', 'Amount Mismatch': 'ยอดเงินไม่ตรง', 'Date Mismatch': 'วันที่ไม่ตรง', 'Time Anomaly': 'เวลาผิดปกติ', 'Duplicate Suspected': 'สงสัยสลิปซ้ำ',
+  'Suspicious Slip': 'สลิปน่าสงสัย', 'Manual Review Required': 'ต้องตรวจสอบด้วยตนเอง', 'AI check passed — not proof of payment': 'AI ตรวจผ่านแล้ว — ไม่ใช่หลักฐานว่าเงินเข้าจริง',
+  'Slip Submitted': 'ส่งสลิปแล้ว', 'AI Verification Completed': 'AI ตรวจแล้ว', 'Payment Confirmed': 'ยืนยันการชำระแล้ว', 'Invoice Posted': 'ลงรายการแล้ว',
+  'Payment Rejected': 'ปฏิเสธการชำระ', 'More Evidence Requested': 'ขอหลักฐานเพิ่ม', 'More evidence requested': 'ขอหลักฐานเพิ่ม',
 };

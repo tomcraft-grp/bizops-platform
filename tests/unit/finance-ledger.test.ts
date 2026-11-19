@@ -153,7 +153,67 @@ describe('finance queue -> general ledger (existing posting engine)', () => {
     });
   });
 
+  // ---- cash received at the back office (slip review: Record payment with method cash). The database writes Dr cash / Cr ar, never a bank line.
+  const cashReceipt = (id: string, amount: number, applied = amount) => row(id, 'CASH_RECEIPT', `RC-${id}`, amount, [{ side: 'dr', role: 'cash', amount }, { side: 'cr', role: 'ar', amount: applied }]);
+  const cashReversal = (id: string, amount: number) => row(id, 'RECEIPT_REVERSAL', `RC-${id}`, amount, [{ side: 'cr', role: 'cash', amount }, { side: 'dr', role: 'ar', amount }]);
+
+  it('a CASH_RECEIPT is Dr cash on hand (1100) / Cr accounts receivable (1130), balanced, with its own memo', () => {
+    tx((d) => {
+      expect(roleCode(d, 'cash')).toBe('1100');
+      const p = planFinanceRow(d, cashReceipt('c1', 300), NONE);
+      expect(p.ok).toBe(true); expect(p.errors).toEqual([]);
+      expect(p.lines).toEqual([{ account: 'cash', debit: 300, credit: 0 }, { account: 'ar', debit: 0, credit: 300 }]);   // roles are resolved to 1100 / 1130 by the posting engine
+      expect(p.lines.reduce((s, l) => s + l.debit - l.credit, 0)).toBe(0);
+      expect(p.memo).toBe('Cash received RC-c1');                                       // not the raw event type
+      const b0 = bal(d, '1100'), a0 = bal(d, '1130'), k0 = bal(d, '1110');
+      const r = postFinanceRow(d, ctx, cashReceipt('c1', 300), NONE);
+      const j = d.journals.find((x) => x.id === r.journalId)!;
+      expect(j.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['1100', 300, 0], ['1130', 0, 300]]);
+      expect(j.memo).toBe('Cash received RC-c1'); expect(j.refType).toBe('finance_event'); expect(j.refId).toBe('c1');
+      expect(bal(d, '1100') - b0).toBe(300); expect(bal(d, '1130') - a0).toBe(-300); expect(bal(d, '1110') - k0).toBe(0);   // cash up, receivable down, the bank untouched
+    });
+  });
+
+  it('a CASH_RECEIPT is posted once: posting the same queue row again returns the same journal', () => {
+    tx((d) => {
+      const n0 = d.journals.length;
+      const a = postFinanceRow(d, ctx, cashReceipt('c2', 125.5), NONE);
+      const b = postFinanceRow(d, ctx, cashReceipt('c2', 125.5), NONE);
+      expect(a.already).toBe(false); expect(b.already).toBe(true); expect(b.journalNo).toBe(a.journalNo);
+      expect(d.journals.length).toBe(n0 + 1);
+      expect(financeJournal(d, 'c2')?.no).toBe(a.journalNo);
+      const v = verifyPosted(d, [{ id: 'c2', amount: 125.5, journal_no: a.journalNo, event_type: 'CASH_RECEIPT' }]);
+      expect(v.here).toBe(1); expect(v.mismatched).toEqual([]);                          // the daily agreement check also accepts it
+    });
+  });
+
+  it('reversing a cash receipt credits cash (1100), not the bank, and takes the receivable back', () => {
+    tx((d) => {
+      postFinanceRow(d, ctx, row('inv9', 'INVOICE_ISSUE', 'INV-9', 500, [{ side: 'dr', role: 'ar', amount: 500 }, { side: 'cr', role: 'sales', amount: 500, vat: 'split' }]), NONE);
+      const cash0 = bal(d, '1100'), bank0 = bal(d, '1110'), ar0 = bal(d, '1130');
+      postFinanceRow(d, ctx, cashReceipt('c3', 200), NONE);
+      expect(bal(d, '1100') - cash0).toBe(200); expect(bal(d, '1130') - ar0).toBe(-200);
+      const rev = postFinanceRow(d, ctx, cashReversal('rv3', 200), NONE);
+      const j = d.journals.find((x) => x.id === rev.journalId)!;
+      expect(j.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['1100', 0, 200], ['1130', 200, 0]]);
+      expect(j.memo).toBe('Receipt reversed RC-rv3');
+      expect(bal(d, '1100') - cash0).toBe(0);                                            // the cash box is back where it was
+      expect(bal(d, '1130') - ar0).toBe(0);                                              // and so is the receivable
+      expect(bal(d, '1110') - bank0).toBe(0);                                            // the bank was never involved
+      expect(Math.abs(trial(d))).toBeLessThan(0.005);
+    });
+  });
+
+  it('a malformed cash receipt is refused like any other: it must balance', () => {
+    tx((d) => {
+      const p = planFinanceRow(d, cashReceipt('c4', 300, 299), NONE);
+      expect(p.ok).toBe(false); expect(p.errors.join(' ')).toMatch(/does not balance/);
+    });
+  });
+
   it('every queue event type has a readable label', () => {
-    for (const t of ['INVOICE_ISSUE', 'INVOICE_CANCEL', 'BANK_RECEIPT', 'RECEIPT_REAPPLY', 'RECEIPT_REVERSAL', 'WALLET_DEPOSIT', 'WALLET_PAYMENT', 'WALLET_REFUND', 'WALLET_ADJUSTMENT', 'WALLET_REVERSAL']) expect(eventLabel(t)).not.toBe(t);
+    for (const t of ['INVOICE_ISSUE', 'INVOICE_CANCEL', 'BANK_RECEIPT', 'RECEIPT_REAPPLY', 'RECEIPT_REVERSAL', 'WALLET_DEPOSIT', 'WALLET_PAYMENT', 'WALLET_REFUND', 'WALLET_ADJUSTMENT', 'WALLET_REVERSAL', 'CASH_RECEIPT']) expect(eventLabel(t)).not.toBe(t);
+    expect(eventLabel('CASH_RECEIPT')).toBe('Cash received');
+    expect(eventLabel('SOMETHING_NEW')).toBe('SOMETHING_NEW');                           // an unknown type shows as itself, never blank
   });
 });
