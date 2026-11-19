@@ -15,8 +15,8 @@ import {
   type ReviewStage, type ReviewSummary, type SlipAnalysis,
 } from './review';
 import {
-  amountOf, compareRows, dayText, expectedOf, hasDiscrepancy, isMissingMigration, localInput, mayPost, percent, reasonValue, reviewErrorLine, reviewErrorText, SIGNAL_TEXT, SUSPICIOUS, timeText,
-  transferredOf, UNRESOLVED, uniqueCodes, uniqueReasons,
+  amountOf, compareRows, confirmPrefill, dayText, expectedOf, fromLocalInput, hasDiscrepancy, isMissingMigration, mayPost, percent, reasonValue, reviewErrorLine, reviewErrorText, SIGNAL_TEXT, SUSPICIOUS,
+  summaryRange, timeText, transferredOf, UNRESOLVED, uniqueCodes, uniqueReasons,
 } from './reviewUi';
 
 const PAGE = 50;
@@ -39,7 +39,10 @@ const METHOD_LABEL = { transfer: 'Bank transfer', cash: 'Cash' } as const;
 const ACTION_LABEL: Record<string, string> = {
   'evidence.confirm': 'Confirmed', 'evidence.post': 'Posted', 'evidence.reject': 'Rejected', 'evidence.request_more': 'Asked for more evidence', 'evidence.record': 'Recorded by staff', 'evidence.verify': 'Verified in one step',
 };
-interface Target { id: string; invoiceNo: string; amount: number }
+interface Target { id: string; invoiceNo: string; amount: number; outstanding?: number }
+/** The old verify form's hint, back where the money is decided: an amount above what the invoice owes is credited to the customer's wallet. Empty when it is not above. */
+const overOwed = (lang: 'en' | 'th', amount: number, outstanding: number | undefined) =>
+  outstanding != null && amount > outstanding + 0.004 ? tl(lang, 'More than the invoice still owes ({n} over): the extra is credited to the customer’s wallet when the payment is posted.', { n: money(amount - outstanding) }) : '';
 interface BulkRow { id: string; label: string; ok: boolean; text: string }
 
 // ================================================================================================ the dashboard
@@ -50,6 +53,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
   const canAct = canFinance(role, 'verify');
   const [settings, setSettings] = useState<ReviewSettings | null>(null);
   const [summary, setSummary] = useState<ReviewSummary | null>(null);
+  const [sumToday, setSumToday] = useState(true);                              // the tiles show today (no date chosen) or the chosen range
   const [page, setPage] = useState<ReviewPage | null>(null);
   const [missing, setMissing] = useState(false);
   const [f, setF] = useState<Filters>(NO_FILTER);
@@ -60,6 +64,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
   const [busy, setBusy] = useState('');
   const [bulk, setBulk] = useState<BulkRow[] | null>(null);
   const seq = useRef(0);
+  const sumSeq = useRef(0);
   const cur = useRef({ f, offset });                                     // what is on screen right now: an action that finishes later still reloads THIS page, never the page it was started from
   cur.current = { f, offset };
   const appliedSearch = useRef('');
@@ -79,9 +84,14 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
       setPage({ total: 0, items: [] });
     }
   }, [f, offset]); // eslint-disable-line react-hooks/exhaustive-deps
-  const loadSummary = useCallback(async () => { try { setSummary(await review.summary(null, null)); } catch { /* the list says what is wrong */ } }, []);
+  /** The tiles follow the date filter; with no date chosen the range is today, so Posted means "posted today". The unresolved counts ignore the range (the database does). */
+  const loadSummary = useCallback(async () => {
+    const id = ++sumSeq.current, r = summaryRange(cur.current.f.from, cur.current.f.to);
+    try { const s = await review.summary(r.from, r.to); if (id === sumSeq.current) { setSummary(s); setSumToday(r.today); } } catch { /* the list says what is wrong */ }
+  }, []);
   useEffect(() => { void loadList(); }, [loadList]);
-  useEffect(() => { void loadSummary(); review.settings().then((s) => setSettings(s ?? null)).catch(() => setSettings(null)); }, [loadSummary]);
+  useEffect(() => { void loadSummary(); }, [loadSummary, f.from, f.to]);
+  useEffect(() => { review.settings().then((s) => setSettings(s ?? null)).catch(() => setSettings(null)); }, []);
   useEffect(() => {                                                        // typing waits 300 ms; the page goes back to the first only when the text really changed (opening the screen must not undo a Next press)
     const h = setTimeout(() => { if (appliedSearch.current === box) return; appliedSearch.current = box; setF((x) => ({ ...x, search: box })); setOffset(0); }, 300);
     return () => clearTimeout(h);
@@ -113,7 +123,8 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
   };
   /** Post one confirmed payment, after a dialog that says how much. Returns true when it is done (or was already). */
   const postOne = (g: Target): Promise<boolean> => once(false, async () => {
-    const a = await ask({ title: tl(lang, 'Post {a} to {n}?', { a: money(g.amount), n: g.invoiceNo }), body: tl(lang, 'This makes the payment official: a receipt and a ledger entry are created. It cannot be undone, only reversed.'), confirmLabel: tl(lang, 'Post Invoice') });
+    const over = overOwed(lang, g.amount, g.outstanding);
+    const a = await ask({ title: tl(lang, 'Post {a} to {n}?', { a: money(g.amount), n: g.invoiceNo }), body: [tl(lang, 'This makes the payment official: a receipt and a ledger entry are created. It cannot be undone, only reversed.'), over].filter(Boolean).join(' '), confirmLabel: tl(lang, 'Post Invoice') });
     if (!a.ok) return false;
     const r = await run(g.id, async () => { try { const x = await review.post(g.id); toastPosted(x); return true; } catch (e) { toast('error', reviewErrorText(lang, e)); return false; } });
     if (r) await refresh();
@@ -167,7 +178,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
         {tile('manual', 'Manual review', n(s?.manual_review), 'A person must check', AI_TIP)}
         {tile('suspicious', 'Suspicious', n(s?.suspicious), 'Duplicate or edited', AI_TIP, s && s.suspicious > 0 ? 'bad' : undefined)}
         {tile('confirmed', 'Confirmed', n(s?.confirmed.count), tl(lang, '{a} waiting to be posted', { a: m(s?.confirmed.amount) }))}
-        {tile('posted', 'Posted', n(s?.posted.count), tl(lang, '{a} received', { a: m(s?.posted.amount) }))}
+        {tile('posted', sumToday ? 'Posted today' : 'Posted (in range)', n(s?.posted.count), tl(lang, '{a} received', { a: m(s?.posted.amount) }))}
       </div>
 
       <div className="row wrap" style={{ gap: 8 }}>
@@ -177,7 +188,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
         <Select sm style={{ width: 'auto' }} value={f.ai} disabled={f.suspicious} onChange={(e) => set({ ai: e.target.value as Filters['ai'] })} aria-label={tl(lang, 'AI result')}>
           <option value="">{tl(lang, 'All AI results')}</option>{(Object.keys(AI_RESULT) as AiResult[]).map((k) => <option key={k} value={k}>{L(AI_RESULT[k])}</option>)}
         </Select>
-        <button type="button" className="chip" aria-pressed={f.suspicious} onClick={() => set({ suspicious: !f.suspicious })}>{tl(lang, 'Suspicious')}{s ? ` (${s.suspicious})` : ''}</button>
+        <button type="button" className="chip sr-chip" aria-pressed={f.suspicious} onClick={() => set({ suspicious: !f.suspicious })}>{tl(lang, 'Suspicious')}{s ? ` (${s.suspicious})` : ''}</button>
         <Input sm type="date" style={{ width: 'auto' }} value={f.from} onChange={(e) => set({ from: e.target.value })} aria-label={tl(lang, 'From date')} />
         <Input sm type="date" style={{ width: 'auto' }} value={f.to} onChange={(e) => set({ to: e.target.value })} aria-label={tl(lang, 'To date')} />
         <Select sm style={{ width: 'auto', maxWidth: 200 }} value={f.reason} onChange={(e) => set({ reason: e.target.value })} aria-label={tl(lang, 'Reason')}>
@@ -218,7 +229,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
               </tr></thead>
               <tbody>
                 {items.map((i) => (
-                  <Row key={i.evidence_id} i={i} lang={lang} L={L} canAct={canAct} canPostNow={canPostNow} busy={busy} onOpen={() => setOpenId(i.evidence_id)} onPost={() => postOne({ id: i.evidence_id, invoiceNo: i.invoice_no, amount: amountOf(i) })} />
+                  <Row key={i.evidence_id} i={i} lang={lang} L={L} canAct={canAct} canPostNow={canPostNow} busy={busy} onOpen={() => setOpenId(i.evidence_id)} onPost={() => postOne({ id: i.evidence_id, invoiceNo: i.invoice_no, amount: amountOf(i), outstanding: i.outstanding })} />
                 ))}
               </tbody>
             </table>
@@ -293,7 +304,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
   const [url, setUrl] = useState<string | null>(null);
   const [mode, setMode] = useState<'view' | 'confirm' | 'more'>('view');
   const [intent, setIntent] = useState<'confirm' | 'post'>('confirm');
-  const [form, setForm] = useState({ amount: '', ref: '', when: '', note: '', prefilled: false });
+  const [form, setForm] = useState<{ amount: string; ref: string; when: string; note: string; filled: ('amount' | 'ref' | 'when')[]; unreadDay: string }>({ amount: '', ref: '', when: '', note: '', filled: [], unreadDay: '' });
   const [message, setMessage] = useState('');
   const panel = useRef<HTMLDivElement>(null);
   const asking = useRef(false);
@@ -317,7 +328,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
   const label = o?.order_no ?? inv.invoice_no;
   const stage = STAGE[e.stage];
   const amount = e.confirmed_amount ?? last?.extracted?.amount ?? e.claimed_amount;
-  const g: Target = { id: e.id, invoiceNo: inv.invoice_no, amount };
+  const g: Target = { id: e.id, invoiceNo: inv.invoice_no, amount, outstanding: inv.outstanding };
   const reasons = uniqueReasons(newest?.reasons);
   const info = reasons.filter((r) => r.severity === 'info'), rest = reasons.filter((r) => r.severity !== 'info');
   const cmp = compareRows(last, e.expected_amount);
@@ -327,12 +338,15 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
   const statusLabel = (s: string) => (s in STAGE ? L(STAGE[s as ReviewStage]) : s === 'submitted' ? L(STAGE.slip_submitted) : s === 'verified' ? L(STAGE.posted) : s);
 
   const openConfirm = (how: 'confirm' | 'post') => {
-    const x = last?.extracted;
-    setForm({ amount: x?.amount != null ? String(x.amount) : '', ref: x?.trans_ref ?? last?.qr?.trans_ref ?? '', when: localInput(x?.transfer_at), note: '', prefilled: !!x && (x.amount != null || !!x.trans_ref || !!x.transfer_at) });
+    const p = confirmPrefill(last?.extracted, last?.qr?.trans_ref);        // only what the AI really read: a time it could not read stays empty for the person to type
+    setForm({ amount: p.amount, ref: p.ref, when: p.when, note: '', filled: p.filled, unreadDay: p.unreadTimeDay });
     setIntent(how); setMode('confirm');
   };
   const amt = Number(form.amount);
-  const formOk = form.amount.trim() !== '' && amt > 0 && Math.abs(Math.round(amt * 100) - amt * 100) < 1e-6 && form.ref.replace(/[^0-9A-Za-z]/g, '').length >= 4 && !Number.isNaN(new Date(form.when).getTime());
+  const amtOk = form.amount.trim() !== '' && amt > 0 && Math.abs(Math.round(amt * 100) - amt * 100) < 1e-6;
+  const sentAt = fromLocalInput(form.when);                                 // what was typed is Bangkok time, sent with an explicit +07:00
+  const formOk = amtOk && form.ref.replace(/[^0-9A-Za-z]/g, '').length >= 4 && sentAt != null;
+  const overHint = amtOk ? overOwed(lang, amt, inv.outstanding) : '';
 
   const submitConfirm = async (post: boolean) => {
     if (asking.current) return;
@@ -346,11 +360,11 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
       if (!r.ok) return;
     }
     if (post) {
-      const r = await ask({ title: tl(lang, 'Confirm and post {a} to {n}?', { a: money(amt), n: inv.invoice_no }), body: tl(lang, 'This makes the payment official: a receipt and a ledger entry are created. It cannot be undone, only reversed.'), confirmLabel: tl(lang, 'Post Invoice') });
+      const r = await ask({ title: tl(lang, 'Confirm and post {a} to {n}?', { a: money(amt), n: inv.invoice_no }), body: [tl(lang, 'This makes the payment official: a receipt and a ledger entry are created. It cannot be undone, only reversed.'), overHint].filter(Boolean).join(' '), confirmLabel: tl(lang, 'Post Invoice') });
       if (!r.ok) return;
     }
     const ok = await run('confirm', async () => {
-      try { await review.confirm({ evidenceId: e.id, amount: amt, bankRef: form.ref.trim(), transferAt: new Date(form.when).toISOString(), note: form.note }); } catch (x) { toast('error', reviewErrorText(lang, x)); return false; }
+      try { await review.confirm({ evidenceId: e.id, amount: amt, bankRef: form.ref.trim(), transferAt: sentAt!, note: form.note }); } catch (x) { toast('error', reviewErrorText(lang, x)); return false; }
       if (!post) { toast('success', tl(lang, 'Payment confirmed. It is not posted yet: the invoice still owes the money until it is posted.')); return true; }
       try { await review.post(e.id); toast('success', tl(lang, 'Confirmed and posted')); } catch (x) { toast('error', `${tl(lang, 'Confirmed, but not posted:')} ${reviewErrorLine(lang, x)}`); }
       return true;
@@ -448,7 +462,8 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
             )}
             {canRunAi && <div style={{ marginTop: 8 }}><Button size="sm" disabled={off || mode !== 'view'} loading={busy === 'ai'} onClick={runAi}><Play size={13} /> <Tx>Run AI check</Tx></Button></div>}
 
-            {info.map((r) => <div key={r.code} style={{ marginTop: 8 }}><Banner tone="info"><div><b>{L(REASON_TEXT(r.code))}</b>{reasonValue(r, r.found) && <div className="muted">{reasonValue(r, r.found)}</div>}</div></Banner></div>)}
+            {/* a resent transfer's "found" is an internal id, so only its sentence is shown */}
+            {info.map((r) => <div key={r.code} style={{ marginTop: 8 }}><Banner tone="info"><div><b>{L(REASON_TEXT(r.code))}</b>{r.code !== 'RESUBMITTED_TRANSFER' && reasonValue(r, r.found) && <div className="muted">{reasonValue(r, r.found)}</div>}</div></Banner></div>)}
             {rest.length > 0 && (
               <ul aria-label={tl(lang, 'Reasons')} className="rv-list">
                 {rest.map((r) => (
@@ -487,12 +502,14 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
           <div ref={panel} className="dev-item" data-panel="confirm">
             <h3 className="rv-h" style={{ margin: 0 }}><Tx>Confirm payment</Tx></h3>
             <Banner tone="warn"><Tx>Fill these in from your bank statement or banking app, not from the slip picture alone. A slip can be faked.</Tx></Banner>
-            {form.prefilled && <div className="muted" style={{ fontSize: 12 }}><Tx>Filled in from what the AI read. Check every value against your bank record: nothing is sent until you press a button.</Tx></div>}
+            {form.filled.length > 0 && <div className="muted" style={{ fontSize: 12 }} data-note="prefilled">{tl(lang, 'Filled in from what the AI read: {what}. Check every value against your bank record: nothing is sent until you press a button.', { what: form.filled.map((k) => tl(lang, ({ amount: 'the amount', ref: 'the bank reference', when: 'the transfer date and time' } as const)[k])).join(', ') })}</div>}
+            {form.unreadDay && <div className="muted" style={{ fontSize: 12 }} data-note="time-unread">{tl(lang, 'The AI read the date ({d}) but not the time of day. Type the time from your bank record.', { d: form.unreadDay })}</div>}
             <div className="row wrap gap-8" style={{ alignItems: 'flex-start' }}>
               <Field label="Amount received (฿)"><Input type="number" inputMode="decimal" min={0} step="0.01" value={form.amount} onChange={(x) => setForm({ ...form, amount: x.target.value })} /></Field>
               <Field label="Bank transaction reference"><Input maxLength={80} value={form.ref} onChange={(x) => setForm({ ...form, ref: x.target.value })} /></Field>
               <Field label="Transfer date and time"><Input type="datetime-local" value={form.when} onChange={(x) => setForm({ ...form, when: x.target.value })} /></Field>
             </div>
+            {overHint && <div className="muted" style={{ fontSize: 12 }} role="status" data-note="over-owed">{overHint}</div>}
             <Field label="Note (optional)"><Input maxLength={500} value={form.note} onChange={(x) => setForm({ ...form, note: x.target.value })} /></Field>
             <div className="row wrap gap-6">
               <Button variant={intent === 'post' && canPostNow ? undefined : 'primary'} disabled={off || !formOk} loading={busy === 'confirm'} onClick={() => void submitConfirm(false)}><Tx>Confirm</Tx></Button>

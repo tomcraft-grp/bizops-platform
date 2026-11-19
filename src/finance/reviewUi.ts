@@ -24,11 +24,36 @@ export const dayText = (iso: string | null | undefined) => fmt(iso, { day: '2-di
 export const timeText = (iso: string | null | undefined) => fmt(iso, { hour: '2-digit', minute: '2-digit' });
 /** The Bangkok calendar day of an instant, YYYY-MM-DD. */
 const dayKey = (iso: string | null | undefined) => (iso ? new Date(new Date(iso).getTime() + 7 * 3600e3).toISOString().slice(0, 10) : '');
-/** Value for an <input type="datetime-local"> (the browser's local time, which is Bangkok for the staff) from an instant; '' when there is none. */
+/**
+ * Value for an <input type="datetime-local"> from an instant: the Bangkok wall clock, never the browser's own zone (every time on these screens is the shop's), so a
+ * staff browser set to another zone still shows and sends the same moment. '' when there is none.
+ */
 export const localInput = (iso: string | null | undefined) => {
   if (!iso) return '';
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() + 7 * 3600e3).toISOString().slice(0, 16);
+};
+/** The instant (ISO, UTC) of what was typed in a datetime-local field, read as Bangkok time with an explicit +07:00; null when it is not a complete valid date and time. */
+export const fromLocalInput = (v: string | null | undefined): string | null => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(v ?? ''));
+  if (!m) return null;
+  const d = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6] ?? '00'}+07:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return localInput(d.toISOString()).slice(0, 10) === `${m[1]}-${m[2]}-${m[3]}` ? d.toISOString() : null;          // 31 February would roll over into March: refuse it
+};
+/** Today's date in the shop's calendar (Bangkok), YYYY-MM-DD. */
+export const todayBkk = (nowMs: number = Date.now()) => new Date(nowMs + 7 * 3600e3).toISOString().slice(0, 10);
+/** True when a typed date and time is later than now plus the 10 minutes the database allows. A missing or broken value is not "in the future": other checks catch it. */
+export const isFutureInput = (v: string, nowMs: number = Date.now(), toleranceMin = 10): boolean => {
+  const at = fromLocalInput(v);
+  return at != null && new Date(at).getTime() > nowMs + toleranceMin * 60e3;
+};
+/**
+ * The range the KPI strip asks the database for. With no date chosen it is today for both ends, so Posted means "posted today"; the unresolved counts ignore the range anyway.
+ */
+export const summaryRange = (from: string, to: string, nowMs: number = Date.now()): { from: string; to: string; today: boolean } => {
+  if (!from && !to) { const d = todayBkk(nowMs); return { from: d, to: d, today: true }; }
+  return { from, to, today: false };
 };
 
 // ------------------------------------------------------------------------------------------------ the list
@@ -122,6 +147,28 @@ export function compareRows(a: SlipAnalysis | null | undefined, fallbackExpected
   ];
 }
 export const percent = (v: number | null | undefined) => (v == null ? '' : `${Math.round(v * 100)}%`);
+
+// ------------------------------------------------------------------------------------------------ the Confirm form's starting values
+export interface ConfirmPrefill {
+  amount: string; ref: string; when: string;
+  /** The date the AI read when it could not read the time of day (shown as a hint, never as the value); '' otherwise. */
+  unreadTimeDay: string;
+  /** Which of the three fields were filled in from the reading (what the note under the title may claim). */
+  filled: ('amount' | 'ref' | 'when')[];
+}
+/**
+ * What the Confirm form starts with: only what the AI actually read. A slip whose time of day could not be read is stored at 12:00 of its date (`time_known` false): that is
+ * not read data, so the time stays empty and the person types it from the bank record. Nothing here is a decision; every value is checked and sent by a person.
+ */
+export function confirmPrefill(x: SlipAnalysis['extracted'] | null | undefined, qrRef: string | null | undefined): ConfirmPrefill {
+  const amount = x?.amount != null ? String(x.amount) : '';
+  const ref = x?.trans_ref ?? qrRef ?? '';
+  const when = x?.time_known && x.transfer_at ? localInput(x.transfer_at) : '';
+  const unreadTimeDay = x && !x.time_known && x.transfer_at ? dayText(x.transfer_at) : '';
+  const filled: ConfirmPrefill['filled'] = [];
+  if (amount) filled.push('amount'); if (ref) filled.push('ref'); if (when) filled.push('when');
+  return { amount, ref, when, unreadTimeDay, filled };
+}
 
 // ------------------------------------------------------------------------------------------------ refusals from the database, as sentences
 // The database raises messages such as "EXCEEDS_OUTSTANDING: 500 is more than the 150 that can still be added to this invoice". For the codes people actually meet, the

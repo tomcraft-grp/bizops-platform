@@ -13,6 +13,7 @@ async function openReview(page: Page, fake: FakeShop, role: FRole = 'manager', l
   fake.profile.role = 'SUPER_ADMIN'; fake.profile.display_name = 'Staff'; fake.w.role = role;
   if (seed) fake.rv.seed();
   await fake.install(page);
+  await page.clock.setFixedTime(new Date(fake.rv.clockIso));                    // the staff page and the fake database are at the same moment (timers still run): "today" is 19 Nov 2026, 12:00 in Bangkok
   await page.addInitScript((l) => { try { localStorage.setItem('bizops.lang', l); } catch { /* ignore */ } }, lang);
   await page.goto('/#/payment-review');
   await expect(page.getByRole('heading', { name: lang === 'en' ? 'Payment review' : 'ตรวจสอบการชำระเงิน' }).first()).toBeVisible();
@@ -150,6 +151,7 @@ test.describe('the detail: slip beside the order', () => {
   test('an info reason is shown prominently and never presses anything; a duplicate shows its reason once and the tamper signal', async ({ page }) => {
     const fake = new FakeShop(); await openReview(page, fake, 'verifier'); await open(page, 'INV-000101');
     await expect(dlg(page).getByText(/resent a transfer already sent on an earlier slip/)).toBeVisible();
+    await expect(dlg(page)).not.toContainText('ev-0');                                                                       // the "found" of this reason is an internal id: only the sentence is shown
     await expect(dlg(page)).toContainText('AI check passed — not proof of payment');
     await dlg(page).getByRole('button', { name: 'Close' }).click();
     await open(page, 'INV-000103');
@@ -163,7 +165,7 @@ test.describe('the detail: slip beside the order', () => {
     await openReview(page, fake, 'verifier', 'en', false); await open(page, 'INV-000102');
     await expect(dlg(page).getByRole('link', { name: 'Open the PDF slip' })).toBeVisible();
     await dlg(page).getByRole('button', { name: 'Close' }).click();
-    fake.rv.rpc('finance_record_payment', { p_invoice: 'inv-4', p_method: 'cash', p_amount: 50, p_received_at: new Date().toISOString(), p_bank_trans_ref: null, p_bank_account: null, p_note: 'Counter' });
+    fake.rv.rpc('finance_record_payment', { p_invoice: 'inv-4', p_method: 'cash', p_amount: 50, p_received_at: new Date(fake.rv.clockIso).toISOString(), p_bank_trans_ref: null, p_bank_account: null, p_note: 'Counter' });
     await search(page).fill('INV-000104'); await expect(rows(page)).toHaveCount(2);
     await row(page, 'INV-000104').filter({ hasText: 'Cash' }).getByRole('button', { name: 'Review' }).click();
     await expect(dlg(page)).toContainText('Recorded by staff'); await expect(dlg(page)).toContainText('No slip file');
@@ -370,6 +372,161 @@ test.describe('confirm, post, reject, request more, record payment', () => {
     await expect.poll(() => fake.count('finance_post_evidence')).toBe(1);                                                    // the request is on its way (held back for 800 ms)
     await expect(row(page, 'INV-000105')).toHaveCount(0);                                                                    // done: the list no longer has it
     expect(fake.count('finance_post_evidence')).toBe(1);                                                                      // and it was sent once
+  });
+});
+
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+
+test.describe('only what the AI really read is pre-filled', () => {
+  test('a time the AI could not read is NOT filled in as if it were read: the field is empty, Confirm waits for a typed time, the note does not claim it', async ({ page }) => {
+    const fake = new FakeShop(); fake.rv.seed();
+    Object.assign(fake.rv.analyses.find((a) => a.evidence_id === 'ev-2')!.extracted!, { time_known: false, transfer_at: '2026-11-19T12:00:00+07:00' });   // what slip-analyze stores when the time was not on the slip
+    await openReview(page, fake, 'verifier', 'en', false); await open(page, 'INV-000102');
+    await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
+    const d = dlg(page); const ok = d.getByRole('button', { name: 'Confirm', exact: true });
+    await expect(d.getByLabel('Amount received (฿)')).toHaveValue('300'); await expect(d.getByLabel('Bank transaction reference')).toHaveValue('SCB777000222');
+    await expect(d.getByLabel('Transfer date and time')).toHaveValue('');                                                    // not 12:00
+    await expect(d.locator('[data-note="prefilled"]')).toContainText('the amount, the bank reference'); await expect(d.locator('[data-note="prefilled"]')).not.toContainText('date and time');
+    await expect(d.locator('[data-note="time-unread"]')).toContainText('19 Nov 2026');                                        // the date is a hint, not a value
+    await expect(ok).toBeDisabled(); await expect(d.getByRole('button', { name: 'Confirm & Post' })).toBeDisabled();
+    await d.getByLabel('Transfer date and time').fill('2026-11-19T10:50'); await expect(ok).toBeEnabled();
+    await ok.click(); await dlg(page).getByRole('button', { name: 'Record bank amount' }).click();
+    await expect(page.locator('.modal')).toHaveCount(0);
+    expect(fake.calls.find((c) => c.fn === 'finance_confirm_evidence')!.args).toMatchObject({ p_transfer_at: new Date('2026-11-19T10:50:00+07:00').toISOString() });   // what the person typed, not noon
+  });
+
+  test('a time the AI did read is still filled in, and the note names the time', async ({ page }) => {
+    const fake = new FakeShop(); await openReview(page, fake, 'verifier'); await open(page, 'INV-000102');
+    await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
+    await expect(dlg(page).getByLabel('Transfer date and time')).toHaveValue('2026-11-19T10:50');
+    await expect(dlg(page).locator('[data-note="prefilled"]')).toContainText('the amount, the bank reference, the transfer date and time');
+    await expect(dlg(page).locator('[data-note="time-unread"]')).toHaveCount(0);
+  });
+});
+
+test.describe('the tiles follow the date filter', () => {
+  test('Posted means today until a range is chosen; then it follows the range and says so', async ({ page }) => {
+    const fake = new FakeShop(); await openReview(page, fake);
+    const sums = () => fake.calls.filter((c) => c.fn === 'finance_review_summary').map((c) => c.args);
+    await expect(kpi(page, 'posted')).toContainText('Posted today'); await expect(kpi(page, 'posted')).toContainText('฿180.00');
+    expect(sums().at(-1)).toEqual({ p_from: '2026-11-19', p_to: '2026-11-19' });                                              // no date chosen: today, in Bangkok
+    await page.getByLabel('From date').fill('2026-11-01'); await page.getByLabel('To date').fill('2026-11-18');
+    await expect(kpi(page, 'posted')).toContainText('Posted (in range)'); await expect(kpi(page, 'posted')).toContainText('฿0.00');
+    expect(sums().at(-1)).toEqual({ p_from: '2026-11-01', p_to: '2026-11-18' });
+    await expect(kpi(page, 'awaiting')).toContainText('5');                                                                    // the unresolved counts do not depend on the range
+    await page.getByLabel('To date').fill('2026-11-19'); await expect(kpi(page, 'posted')).toContainText('฿180.00');
+    await page.getByRole('button', { name: 'Clear filters' }).click();
+    await expect(kpi(page, 'posted')).toContainText('Posted today'); expect(sums().at(-1)).toEqual({ p_from: '2026-11-19', p_to: '2026-11-19' });
+  });
+
+  test('on the next day yesterday’s posted payments are not "today"; the label is Thai in Thai', async ({ page }) => {
+    const fake = new FakeShop(); fake.rv.clockIso = '2026-11-20T09:00:00+07:00'; await openReview(page, fake, 'manager', 'th');
+    await expect(kpi(page, 'posted')).toContainText('ลงรายการวันนี้'); await expect(kpi(page, 'posted')).toContainText('฿0.00');
+    expect(fake.calls.filter((c) => c.fn === 'finance_review_summary').at(-1)!.args).toEqual({ p_from: '2026-11-20', p_to: '2026-11-20' });
+  });
+});
+
+test.describe('a hint when more than the invoice owes is entered', () => {
+  test('the Confirm form and the Confirm & Post dialog say the extra is credited to the customer’s wallet; nothing is said for an amount that is not above', async ({ page }) => {
+    const fake = new FakeShop(); await openReview(page, fake, 'verifier'); await open(page, 'INV-000101');
+    await dlg(page).getByRole('button', { name: 'Confirm & Post' }).click();
+    const d = dlg(page);
+    await expect(d.locator('[data-note="over-owed"]')).toHaveCount(0);                                                       // ฿350 on a ฿350 invoice
+    await d.getByLabel('Amount received (฿)').fill('400');
+    await expect(d.locator('[data-note="over-owed"]')).toContainText('฿50.00 over'); await expect(d.locator('[data-note="over-owed"]')).toContainText('credited to the customer’s wallet');
+    await d.getByLabel('Amount received (฿)').fill('349'); await expect(d.locator('[data-note="over-owed"]')).toHaveCount(0);
+    await d.getByLabel('Amount received (฿)').fill('400');
+    await d.getByRole('button', { name: 'Confirm & Post' }).click();
+    await dlg(page).getByRole('button', { name: 'Record bank amount' }).click();                                              // ฿400 is not the ฿350 the order expects
+    await expect(dlg(page)).toContainText('Confirm and post ฿400.00 to INV-000101?'); await expect(dlg(page)).toContainText('credited to the customer’s wallet');
+    await dlg(page).getByRole('button', { name: 'Cancel' }).click();
+    expect(fake.count('finance_confirm_evidence')).toBe(0);
+  });
+
+  test('the Post dialog of a confirmed payment says it only when the amount is above what the invoice owes', async ({ page }) => {
+    const fake = new FakeShop(); fake.rv.settings.post_requires_manager = true; fake.rv.seed();
+    Object.assign(fake.rv.evidence.find((e) => e.id === 'ev-5')!, { confirmed_amount: 300 });                                    // confirmed above the ฿220 the invoice owes
+    await openReview(page, fake, 'manager', 'en', false);
+    await row(page, 'INV-000105').getByRole('button', { name: 'Post Invoice' }).click();
+    await expect(dlg(page)).toContainText('Post ฿300.00 to INV-000105?'); await expect(dlg(page)).toContainText('฿80.00 over'); await expect(dlg(page)).toContainText('credited to the customer’s wallet');
+    await dlg(page).getByRole('button', { name: 'Cancel' }).click();
+    const page2 = await page.context().newPage(); const fake2 = new FakeShop(); fake2.rv.settings.post_requires_manager = true; await openReview(page2, fake2, 'manager');    // the same payment, confirmed for exactly what the invoice owes
+    await row(page2, 'INV-000105').getByRole('button', { name: 'Post Invoice' }).click();
+    await expect(dlg(page2)).toContainText('Post ฿220.00 to INV-000105?'); await expect(dlg(page2)).not.toContainText('credited to the customer’s wallet');
+  });
+});
+
+test.describe('times are Bangkok time in a browser set to another zone', () => {
+  test.use({ timezoneId: 'America/Los_Angeles' });
+  test('the Confirm form shows and sends the Bangkok moment; the Record payment form starts at the Bangkok clock and sends what was typed as Bangkok time', async ({ page }) => {
+    const fake = new FakeShop(); await openReview(page, fake, 'verifier'); await open(page, 'INV-000102');
+    await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
+    await expect(dlg(page).getByLabel('Transfer date and time')).toHaveValue('2026-11-19T10:50');                              // 19:50 the evening before in Los Angeles
+    await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click(); await dlg(page).getByRole('button', { name: 'Record bank amount' }).click();
+    await expect(page.locator('.modal')).toHaveCount(0);
+    expect(fake.calls.find((c) => c.fn === 'finance_confirm_evidence')!.args).toMatchObject({ p_transfer_at: '2026-11-19T03:50:00.000Z' });
+    await open(page, 'INV-000104'); await dlg(page).getByRole('button', { name: 'Record payment' }).click();
+    const d = dlg(page);
+    await expect(d.getByLabel('Received date and time')).toHaveValue('2026-11-19T12:00');                                      // "now" on the Bangkok clock
+    await d.getByLabel('Payment method').selectOption('cash'); await d.getByLabel('Amount (฿)').fill('50'); await d.getByLabel('Note').fill('Cash at the counter');
+    await d.getByLabel('Received date and time').fill('2026-11-19T00:30');                                                    // next to midnight
+    await d.getByRole('button', { name: 'Record payment' }).click();
+    await expect(page.locator('.modal')).toHaveCount(0);
+    expect(fake.calls.filter((c) => c.fn === 'finance_record_payment').at(-1)!.args).toMatchObject({ p_received_at: '2026-11-18T17:30:00.000Z' });
+  });
+});
+
+test.describe('record payment: care with files, time, banks and closing', () => {
+  const openRecord = async (page: Page, fake: FakeShop) => {
+    await openReview(page, fake, 'verifier'); await page.getByRole('tab', { name: 'Invoices' }).click();
+    await page.locator('table.t tbody tr', { hasText: 'INV-000104' }).getByRole('button', { name: 'Record payment' }).click();
+    return dlg(page);
+  };
+  test('a slip file chosen for a transfer is dropped when the method becomes cash and is not sent when it goes back to transfer', async ({ page }) => {
+    const fake = new FakeShop(); const uploads: string[] = []; page.on('request', (r) => { if (r.method() === 'POST' && r.url().includes('/storage/v1/object/payment-evidence')) uploads.push(r.url()); });
+    const d = await openRecord(page, fake);
+    await d.getByLabel('Slip file (optional)').setInputFiles({ name: 'slip.png', mimeType: 'image/png', buffer: PNG });
+    await d.getByLabel('Payment method').selectOption('cash'); await d.getByLabel('Payment method').selectOption('transfer');
+    await expect(d.getByLabel('Slip file (optional)')).toHaveValue('');                                                        // the picker is empty again, and so is what would be sent
+    await d.getByLabel('Amount (฿)').fill('100'); await d.getByLabel('Note').fill('Paid by phone banking');
+    await d.getByLabel('Bank account').selectOption({ label: 'SCB · ธนาคารไทยพาณิชย์' }); await d.getByLabel('Bank transaction reference').fill('SCB-REC-0002');
+    await d.getByRole('button', { name: 'Record payment' }).click(); await expect(page.locator('.modal')).toHaveCount(0);
+    expect(uploads).toHaveLength(0); expect(fake.calls.find((c) => c.fn === 'finance_record_payment')!.args).toMatchObject({ p_file_path: null, p_sha256: null, p_file_type: null });
+  });
+
+  test('a time more than 10 minutes ahead is refused in the form with a readable message', async ({ page }) => {
+    const fake = new FakeShop(); const d = await openRecord(page, fake);
+    await d.getByLabel('Payment method').selectOption('cash'); await d.getByLabel('Amount (฿)').fill('50'); await d.getByLabel('Note').fill('Cash at the counter');
+    const ok = d.getByRole('button', { name: 'Record payment' }); await expect(ok).toBeEnabled();                                // now (12:00)
+    await d.getByLabel('Received date and time').fill('2026-11-19T12:30');
+    await expect(d).toContainText('This time is in the future. Check the date and time.'); await expect(ok).toBeDisabled();
+    await d.getByLabel('Received date and time').fill('2026-11-19T12:05');                                                    // within the 10 minutes the database allows
+    await expect(d).not.toContainText('This time is in the future'); await expect(ok).toBeEnabled();
+    expect(fake.count('finance_record_payment')).toBe(0);
+  });
+
+  test('a transfer cannot be sent before the list of bank accounts has loaded', async ({ page }) => {
+    const fake = new FakeShop();
+    await page.route('**/rest/v1/finance_bank_accounts*', async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.fallback(); });
+    const d = await openRecord(page, fake);
+    await d.getByLabel('Amount (฿)').fill('100'); await d.getByLabel('Note').fill('Paid by phone banking'); await d.getByLabel('Bank transaction reference').fill('SCB-REC-0003');
+    const ok = d.getByRole('button', { name: 'Record payment' });
+    await expect(d).toContainText('Loading the bank accounts…'); await expect(ok).toBeDisabled();
+    await expect(d.getByLabel('Bank account')).toBeVisible(); await expect(d).not.toContainText('Loading the bank accounts…'); await expect(ok).toBeDisabled();   // loaded: now the bank must be chosen
+    await d.getByLabel('Bank account').selectOption({ label: 'SCB · ธนาคารไทยพาณิชย์' }); await expect(ok).toBeEnabled();
+  });
+
+  test('Esc, the X and a click outside do nothing while the request runs; afterwards the form closes by itself', async ({ page }) => {
+    const fake = new FakeShop();
+    await page.route('**/rest/v1/rpc/finance_record_payment', async (route) => { await new Promise((r) => setTimeout(r, 1200)); await route.fallback(); });
+    const d = await openRecord(page, fake);
+    await d.getByLabel('Payment method').selectOption('cash'); await d.getByLabel('Amount (฿)').fill('50'); await d.getByLabel('Note').fill('Cash at the counter');
+    const ok = d.getByRole('button', { name: 'Record payment' }); await ok.click();
+    await expect(ok).toBeDisabled();                                                                                        // the request is running (held back for 1.2 s)
+    await page.keyboard.press('Escape'); await d.getByRole('button', { name: 'Close' }).click(); await page.mouse.click(5, 5);
+    await expect(d).toBeVisible();
+    await expect(page.locator('.modal')).toHaveCount(0);                                                                     // the answer came: done
+    expect(fake.count('finance_record_payment')).toBe(1);
   });
 });
 

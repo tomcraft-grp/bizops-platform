@@ -483,8 +483,8 @@ details.acc > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
 /* slip review dashboard (finance/SlipReview.tsx) */
 .t tbody tr.disc td { background: color-mix(in srgb, var(--crit-soft) 60%, var(--surface)); }
 .t tbody tr.disc td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
-button.chip { border: 1px solid var(--border); cursor: pointer; font: inherit; font-size: 12px; font-weight: 560; color: var(--text-2); padding: 3px 10px; }
-button.chip[aria-pressed="true"] { background: var(--crit-soft); color: var(--crit-text); border-color: var(--crit); }
+.sr-chip { border: 1px solid var(--border); cursor: pointer; font: inherit; font-size: 12px; font-weight: 560; color: var(--text-2); padding: 3px 10px; }
+.sr-chip[aria-pressed="true"] { background: var(--crit-soft); color: var(--crit-text); border-color: var(--crit); }
 .rv-split { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; } .rv-split > div { flex: 1 1 300px; min-width: 0; }
 .rv-h { margin: 0 0 6px; font-size: 13.5px; font-weight: 650; }
 .rv-list { margin: 8px 0 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }

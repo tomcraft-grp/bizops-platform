@@ -19,6 +19,8 @@ const RULES: Array<[RegExp, (m: RegExpExecArray) => string]> = [
   [/bank transaction (\S+) was already recorded/i, (m) => `รหัสอ้างอิงการโอน ${m[1]} ถูกบันทึกไปแล้ว (อาจเป็นสลิปที่ใช้ซ้ำ)`],
   [/the transfer is older than the (invoice|deposit request)/i, (m) => `เวลาที่โอนเก่ากว่า${/invoice/i.test(m[1]) ? 'ใบแจ้งหนี้' : 'คำขอเติมเงิน'} สลิปอาจไม่ใช่ของรายการนี้`],
   [/the transfer time is in the future/i, () => 'เวลาที่โอนอยู่ในอนาคต กรุณาตรวจสอบวันและเวลาที่กรอก'],
+  [/the payment is older than the invoice/i, () => 'เวลาที่รับชำระเก่ากว่าใบแจ้งหนี้ กรุณาตรวจสอบวันและเวลาที่กรอก'],
+  [/the payment time is in the future/i, () => 'เวลาที่รับชำระอยู่ในอนาคต กรุณาตรวจสอบวันและเวลาที่กรอก'],
   [/several slips for this invoice are already waiting/i, () => 'ใบแจ้งหนี้นี้มีสลิปรอตรวจสอบหลายใบแล้ว กรุณารอร้านตรวจสอบก่อน'],
   [/only jpg, png or pdf files are accepted/i, () => 'รองรับเฉพาะไฟล์ JPG, PNG หรือ PDF'],
   [/the file must be (\d+) ?mb or smaller/i, (m) => `ไฟล์ต้องมีขนาดไม่เกิน ${m[1]} MB`],

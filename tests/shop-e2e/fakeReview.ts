@@ -109,7 +109,10 @@ export class FakeReview {
     const role = this.shop.w.role;
     if (!role || RANK[role] < NEED[cap]) this.err(`You are not allowed to ${what}`);
   }
-  private now() { return new Date().toISOString(); }
+  /** The fake's own clock (the staff page is held at the same moment by openReview): a fixed day, so "today" does not depend on when the tests run. Every call is one second later. */
+  clockIso = '2026-11-19T12:00:00+07:00';
+  private tick = 0;
+  private now() { return new Date(Date.parse(this.clockIso) + (++this.tick) * 1000).toISOString(); }
   private inv(id: string) { return this.invoices.find((x) => x.id === id)!; }
   private ev(id: unknown) { const e = this.evidence.find((x) => x.id === id); if (!e) this.err('Evidence not found'); return e; }
   private cust(id: string) { return this.customers.find((x) => x.id === id)!; }
@@ -336,7 +339,7 @@ export class FakeReview {
     if (!['transfer', 'cash'].includes(method)) this.err('INVALID_METHOD: choose transfer or cash');
     if (a.p_amount == null || !(amount > 0) || r2(amount) !== amount) this.err('INVALID_AMOUNT: enter the amount in baht and satang');
     if (!a.p_received_at) this.err('The payment date and time are required');
-    if (new Date(String(a.p_received_at)).getTime() > Date.now() + 10 * 60e3) this.err('The payment time is in the future');
+    if (new Date(String(a.p_received_at)).getTime() > Date.parse(this.clockIso) + 10 * 60e3) this.err('The payment time is in the future');
     if ((note ?? '').length > 500) this.err('The note is too long (500 characters at most)');
     if (cash) {
       if (!note || note.length < 3) this.err('NOTE_REQUIRED: say where the cash was received (at least 3 characters)');

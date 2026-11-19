@@ -8,7 +8,7 @@ import { money } from '../lib/util';
 import { Banner, Button, Field, Input, Modal, Select, Textarea, Tx } from '../ui/kit';
 import { walletAdmin, type BankAccountRow } from '../wallet/api';
 import { review } from './review';
-import { localInput, reviewErrorText } from './reviewUi';
+import { fromLocalInput, isFutureInput, localInput, reviewErrorText } from './reviewUi';
 
 export interface RecordTarget { invoiceId: string; invoiceNo: string; customer?: string | null; outstanding: number; confirmedPending?: number }
 
@@ -25,27 +25,31 @@ export default function RecordPayment({ target, onClose, onDone }: { target: Rec
   const [note, setNote] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [banks, setBanks] = useState<BankAccountRow[]>([]);
+  const [banksReady, setBanksReady] = useState(false);                     // the list of bank accounts has answered (a transfer must not be sent before it is known whether a bank has to be chosen)
   const [busy, setBusy] = useState(false);
-  useEffect(() => { walletAdmin.banks().then((b) => setBanks(b.filter((x) => x.active))).catch(() => setBanks([])); }, []);
+  useEffect(() => { walletAdmin.banks().then((b) => setBanks(b.filter((x) => x.active))).catch(() => setBanks([])).finally(() => setBanksReady(true)); }, []);
 
   const pending = target.confirmedPending ?? 0;
   const limit = Math.max(r2(target.outstanding - pending), 0);          // what the invoice can still take: what it owes less what is confirmed and waits to be posted
   const amt = Number(amount);
   const amountOk = amount.trim() !== '' && amt > 0 && Math.abs(Math.round(amt * 100) - amt * 100) < 1e-6;
   const cash = method === 'cash';
-  const valid = amountOk && !Number.isNaN(new Date(when).getTime()) && note.trim().length >= 3 && (cash || (refLen(ref) >= 4 && (banks.length === 0 || !!bankId)));
+  const sentAt = fromLocalInput(when);                                      // typed as Bangkok time, sent with an explicit +07:00
+  const future = isFutureInput(when);                                       // the database allows 10 minutes ahead; more is a typo
+  const valid = amountOk && sentAt != null && !future && note.trim().length >= 3 && (cash || (banksReady && refLen(ref) >= 4 && (banks.length === 0 || !!bankId)));
+  const close = () => { if (!busy) onClose(); };                            // Esc, the X and a click outside do nothing while the request runs
 
   const save = async () => {
     setBusy(true);
     try {
-      await review.recordPayment({ invoiceId: target.invoiceId, method, amount: amt, receivedAt: new Date(when).toISOString(), bankRef: ref.trim(), bankAccountId: bankId || null, note: note.trim(), file: cash ? null : file });
+      await review.recordPayment({ invoiceId: target.invoiceId, method, amount: amt, receivedAt: sentAt!, bankRef: ref.trim(), bankAccountId: bankId || null, note: note.trim(), file: cash ? null : file });
       toast('success', tl(lang, 'Payment recorded. It is confirmed and waits to be posted.'));
       onDone();
     } catch (e) { toast('error', reviewErrorText(lang, e)); } finally { setBusy(false); }
   };
 
   return (
-    <Modal title={tl(lang, 'Record payment · {n}', { n: target.invoiceNo })} desc={target.customer ?? undefined} onClose={onClose}
+    <Modal title={tl(lang, 'Record payment · {n}', { n: target.invoiceNo })} desc={target.customer ?? undefined} onClose={close}
       footer={<><Button onClick={onClose} disabled={busy}><Tx>Cancel</Tx></Button><Button variant="primary" loading={busy} disabled={busy || !valid} onClick={save}><Tx>Record payment</Tx></Button></>}>
       <div className="col gap-8">
         <Banner tone="info"><Tx>Use this for money that did not come with the customer’s own slip: a transfer you found in the bank statement, or cash received at the shop. It is saved as Payment Confirmed and still has to be posted.</Tx></Banner>
@@ -55,7 +59,7 @@ export default function RecordPayment({ target, onClose, onDone }: { target: Rec
           <div className="row between"><span><Tx>Can still be added</Tx></span><b data-limit>{money(limit)}</b></div>
         </div>
         <Field label="Payment method">
-          <Select value={method} onChange={(e) => setMethod(e.target.value as 'transfer' | 'cash')}>
+          <Select value={method} onChange={(e) => { const m = e.target.value as 'transfer' | 'cash'; setMethod(m); if (m === 'cash') setFile(null); /* a hidden file is never sent */ }}>
             <option value="transfer">{tl(lang, 'Bank transfer')}</option><option value="cash">{tl(lang, 'Cash')}</option>
           </Select>
         </Field>
@@ -64,8 +68,10 @@ export default function RecordPayment({ target, onClose, onDone }: { target: Rec
         </Field>
         {amountOk && amt > limit && <div className="exp-err" role="status">{tl(lang, 'More than the {n} that can still be added to this invoice.', { n: money(limit) })}</div>}
         <Field label="Received date and time"><Input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} /></Field>
+        {future && <div className="exp-err" role="status">{tl(lang, 'This time is in the future. Check the date and time.')}</div>}
         {!cash && (
           <>
+            {!banksReady && <div className="muted" role="status" style={{ fontSize: 12 }}>{tl(lang, 'Loading the bank accounts…')}</div>}
             {banks.length > 0 && (
               <Field label="Bank account">
                 <Select value={bankId} onChange={(e) => setBankId(e.target.value)}>

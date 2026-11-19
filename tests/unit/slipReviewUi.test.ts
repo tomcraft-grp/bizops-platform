@@ -3,10 +3,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { t } from '../../src/lib/i18n';
+import { errorToastText, thaiForError } from '../../src/lib/errorText';
 import type { Reason, SlipAnalysis } from '../../src/finance/review';
 import {
-  compareRows, expectedOf, hasDiscrepancy, isMissingMigration, mayPost, reasonValue, reviewErrorLine, reviewErrorText, serverSentence, SERVER_SENTENCES, SIGNAL_CODES, SIGNAL_TEXT, transferredOf,
-  uniqueCodes, uniqueReasons,
+  compareRows, confirmPrefill, expectedOf, fromLocalInput, hasDiscrepancy, isFutureInput, isMissingMigration, localInput, mayPost, reasonValue, reviewErrorLine, reviewErrorText, serverSentence, SERVER_SENTENCES,
+  SIGNAL_CODES, SIGNAL_TEXT, summaryRange, todayBkk, transferredOf, uniqueCodes, uniqueReasons,
 } from '../../src/finance/reviewUi';
 import type { ReviewItem, ReviewSettings } from '../../src/finance/review';
 
@@ -137,6 +138,78 @@ describe('refusals from the database become sentences', () => {
   });
 });
 
+describe('times are the shop’s own (Bangkok), whatever time zone the browser is in', () => {
+  const zones = ['Asia/Bangkok', 'America/Los_Angeles', 'Pacific/Auckland', 'UTC'];
+  const inZone = (tz: string, fn: () => void) => { const was = process.env.TZ; process.env.TZ = tz; try { fn(); } finally { if (was === undefined) delete process.env.TZ; else process.env.TZ = was; } };
+  it('an instant becomes the Bangkok wall clock of a datetime-local field, also next to midnight', () => {
+    for (const tz of zones) inZone(tz, () => {
+      expect(localInput('2026-11-19T03:50:00Z'), tz).toBe('2026-11-19T10:50');
+      expect(localInput('2026-11-18T16:59:00Z'), tz).toBe('2026-11-18T23:59');            // one minute before Bangkok midnight
+      expect(localInput('2026-11-18T17:00:00Z'), tz).toBe('2026-11-19T00:00');            // Bangkok midnight: the next day
+      expect(localInput('2026-12-31T17:30:00Z'), tz).toBe('2027-01-01T00:30');            // and across a year end
+    });
+    expect(localInput(null)).toBe(''); expect(localInput('')).toBe(''); expect(localInput('not a date')).toBe('');
+  });
+  it('what staff type is read as Bangkok time and sent with an explicit +07:00 offset, so every browser sends the same instant', () => {
+    for (const tz of zones) inZone(tz, () => {
+      expect(fromLocalInput('2026-11-19T10:50'), tz).toBe('2026-11-19T03:50:00.000Z');
+      expect(fromLocalInput('2026-11-19T00:00'), tz).toBe('2026-11-18T17:00:00.000Z');
+      expect(fromLocalInput('2026-11-19T23:59'), tz).toBe('2026-11-19T16:59:00.000Z');
+      expect(fromLocalInput('2026-11-19T10:50:30'), tz).toBe('2026-11-19T03:50:30.000Z');
+    });
+    expect(fromLocalInput('')).toBeNull(); expect(fromLocalInput('tomorrow')).toBeNull(); expect(fromLocalInput('2026-13-40T10:50')).toBeNull(); expect(fromLocalInput('2026-11-19')).toBeNull();
+  });
+  it('a value goes there and back unchanged (to the minute), in any zone', () => {
+    for (const tz of zones) inZone(tz, () => {
+      for (const iso of ['2026-11-19T03:50:00.000Z', '2026-11-18T17:00:00.000Z', '2026-11-18T16:59:00.000Z', '2027-01-01T04:05:00.000Z']) expect(fromLocalInput(localInput(iso)), `${tz} ${iso}`).toBe(iso);
+    });
+  });
+  it('"today" is the Bangkok calendar day (it turns at 17:00 UTC)', () => {
+    expect(todayBkk(Date.parse('2026-11-19T16:59:00Z'))).toBe('2026-11-19'); expect(todayBkk(Date.parse('2026-11-19T17:00:00Z'))).toBe('2026-11-20');
+    for (const tz of zones) inZone(tz, () => expect(todayBkk(Date.parse('2026-11-19T20:00:00Z')), tz).toBe('2026-11-20'));
+  });
+  it('a time more than 10 minutes ahead of now is in the future (the database allows 10 minutes); an empty or broken value is not', () => {
+    const now = Date.parse('2026-11-19T05:00:00Z');                                   // 12:00 in Bangkok
+    expect(isFutureInput('2026-11-19T12:09', now)).toBe(false); expect(isFutureInput('2026-11-19T12:10', now)).toBe(false); expect(isFutureInput('2026-11-19T12:11', now)).toBe(true);
+    expect(isFutureInput('2026-11-20T00:00', now)).toBe(true); expect(isFutureInput('', now)).toBe(false); expect(isFutureInput('x', now)).toBe(false);
+  });
+});
+
+describe('the KPI strip follows the date filter; with none, it means today', () => {
+  it('both dates empty: today (Bangkok) for both ends; any date set: exactly what was chosen', () => {
+    const now = Date.parse('2026-11-19T20:00:00Z');                                   // already 20 Nov in Bangkok
+    expect(summaryRange('', '', now)).toEqual({ from: '2026-11-20', to: '2026-11-20', today: true });
+    expect(summaryRange('2026-11-01', '2026-11-19', now)).toEqual({ from: '2026-11-01', to: '2026-11-19', today: false });
+    expect(summaryRange('2026-11-05', '', now)).toEqual({ from: '2026-11-05', to: '', today: false });
+    expect(summaryRange('', '2026-11-05', now)).toEqual({ from: '', to: '2026-11-05', today: false });
+  });
+});
+
+describe('the Confirm form is pre-filled only with what the AI really read', () => {
+  const read = (over: Record<string, unknown> = {}) => ({ amount: 300, transfer_at: '2026-11-19T03:50:00Z', time_known: true, trans_ref: 'SCB777000222', ...over }) as unknown as Parameters<typeof confirmPrefill>[0];
+  it('a time that was read is filled in (Bangkok clock), with the amount and the reference', () => {
+    expect(confirmPrefill(read(), null)).toEqual({ amount: '300', ref: 'SCB777000222', when: '2026-11-19T10:50', unreadTimeDay: '', filled: ['amount', 'ref', 'when'] });
+  });
+  it('a time the AI did NOT read (it stored 12:00 of the date) is left empty; the date is only named as a hint', () => {
+    const p = confirmPrefill(read({ time_known: false, transfer_at: '2026-11-19T05:00:00Z' }), null);
+    expect(p.when).toBe(''); expect(p.unreadTimeDay).toBe('19 Nov 2026'); expect(p.filled).toEqual(['amount', 'ref']);          // the note must not claim the time
+    expect(confirmPrefill(read({ time_known: false, transfer_at: null }), null)).toMatchObject({ when: '', unreadTimeDay: '' });
+  });
+  it('nothing read gives an empty form; the reference falls back to the one in the QR code', () => {
+    expect(confirmPrefill(null, null)).toEqual({ amount: '', ref: '', when: '', unreadTimeDay: '', filled: [] });
+    expect(confirmPrefill(read({ amount: null, trans_ref: null, transfer_at: null }), 'QR-REF-1')).toMatchObject({ amount: '', ref: 'QR-REF-1', when: '', filled: ['ref'] });
+  });
+});
+
+describe('Thai for the refusals of "record payment"', () => {
+  it('"older than the invoice" and "in the future" have a Thai explanation, shown beside the English text in both UI languages', () => {
+    const older = 'Record payment: The payment is older than the invoice', future = 'Record payment: The payment time is in the future';
+    expect(thaiForError(older)).toMatch(/[ก-๿]/); expect(thaiForError(future)).toMatch(/[ก-๿]/);
+    expect(errorToastText('en', future).split('\n')).toEqual([future, thaiForError(future)]); expect(errorToastText('th', older).split('\n')).toEqual([thaiForError(older), older]);
+    expect(thaiForError(older)).not.toBe(thaiForError('Record payment: The transfer is older than the invoice'));          // its own sentence: it is a payment, not a transfer
+  });
+});
+
 describe('every sentence on the dashboard has a Thai text', () => {
   const src = (f: string) => readFileSync(new URL(`../../src/finance/${f}`, import.meta.url), 'utf8');
   const found = new Set<string>();
@@ -149,7 +222,7 @@ describe('every sentence on the dashboard has a Thai text', () => {
   // the tiles carry their tooltips in constants, and a few labels are built from tables of words
   const extra = ['The three AI tiles never overlap and need not add up to Awaiting: a slip that is still waiting for the AI, or was never analysed, is counted only in Awaiting.',
     'An invoice is counted once for every awaiting slip: an invoice with two awaiting slips is counted twice.', 'Queued', 'Running', 'Done', 'Failed', 'Amount', 'Date', 'Time', 'Receiver', 'Bank', 'Reference',
-    'Bank transfer', 'Cash', 'Confirmed', 'Posted', 'Rejected', 'Asked for more evidence', 'Recorded by staff', 'Verified in one step', 'Not analysed', 'Slips to check', 'Payment review', 'Unresolved payments'];
+    'Bank transfer', 'Cash', 'Confirmed', 'Posted', 'Posted today', 'Posted (in range)', 'the amount', 'the bank reference', 'the transfer date and time', 'Rejected', 'Asked for more evidence', 'Recorded by staff', 'Verified in one step', 'Not analysed', 'Slips to check', 'Payment review', 'Unresolved payments'];
   for (const e of extra) found.add(e);
   it('finds the sentences it is meant to check', () => { expect(found.size).toBeGreaterThan(100); expect(found.has('Run AI check')).toBe(true); expect(found.has('Review settings')).toBe(true); });
   it('has a Thai text for each (or the text is a name, a symbol or a number)', () => {
