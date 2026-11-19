@@ -141,7 +141,8 @@ test.describe('part payments and a payment the shop has confirmed', () => {
     const fake = new FakeShop(); fake.decorate();
     const a = fake.seedOrder(); const b = fake.seedOrder(); fake.verifyPayment(b.order_no);
     await open(page, fake);
-    for (const o of [a, b]) { await openOrder(page, o.order_no); await expect(detail(page)).not.toContainText('คงเหลือ'); await backToList(page); }
+    // (the invoice card's own "Remaining" row is always there: it is the new "Paid X · remaining Y" line that must be absent)
+    for (const o of [a, b]) { await openOrder(page, o.order_no); await expect(detail(page)).not.toContainText('ชำระแล้ว ฿'); await expect(page.getByTestId('pay-remaining')).toHaveCount(0); await backToList(page); }
   });
 
   test('a slip the shop CONFIRMED (not posted yet) reads as pending with the confirmed amount: not rejected, not paid; the history does not call it rejected', async ({ page }) => {
@@ -219,6 +220,16 @@ test.describe('more evidence requested (state 10)', () => {
     await openOrder(page, more.order_no); await expect(page.getByTestId('more-evidence-message')).toBeVisible(); await expect(cancel).toHaveCount(0); await backToList(page);
     await openOrder(page, pending.order_no); await expect(detail(page)).toContainText(PENDING_TH); await expect(cancel).toHaveCount(0); await backToList(page);
     await openOrder(page, unpaid.order_no); await expect(cancel).toBeVisible();
+  });
+
+  test('an order that asks for more evidence is in the "To pay" chip, with the new status', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate();
+    const o = fake.seedOrder(); fake.addEvidence(o.order_no, 'submitted'); fake.requestMoreEvidence(o.order_no, 'ส่งสลิปใหม่');
+    await open(page, fake);
+    await tab(page, th('nav.orders')).click();
+    await page.getByRole('tab', { name: th('ord.f.unpaid') }).click();
+    const row = page.locator('.sp-order').filter({ hasText: o.order_no });
+    await expect(row).toBeVisible(); await expect(row).toContainText(th('pay.moreEvidence'));
   });
 
   test('a rejected slip still shows the reason the staff wrote (state 7)', async ({ page }) => {

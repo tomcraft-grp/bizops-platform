@@ -152,7 +152,7 @@ export class FakeShop {
       case 'shop_place_order': return this.place(a, viaHttp);
       case 'shop_my_orders': {
         const f = String(a.p_filter ?? 'all');
-        const mine = this.orders.filter((o) => { const p = this.payOf(o); return f === 'unpaid' ? o.status !== 'cancelled' && [0, 1, 3, 4, 7, 9].includes(p) : f === 'to_ship' ? ['new', 'confirmed', 'preparing', 'packed'].includes(o.status) && [5, 6].includes(p) : f === 'to_receive' ? ['shipped', 'ready'].includes(o.status) : f === 'done' ? o.status === 'completed' : f === 'cancelled' ? ['cancelled', 'returned'].includes(o.status) : true; })
+        const mine = this.orders.filter((o) => { const p = this.payOf(o); return f === 'unpaid' ? o.status !== 'cancelled' && [0, 1, 3, 4, 7, 9, 10].includes(p) : f === 'to_ship' ? ['new', 'confirmed', 'preparing', 'packed'].includes(o.status) && [5, 6].includes(p) : f === 'to_receive' ? ['shipped', 'ready'].includes(o.status) : f === 'done' ? o.status === 'completed' : f === 'cancelled' ? ['cancelled', 'returned'].includes(o.status) : true; })
           .sort((x, y) => y.created_at.localeCompare(x.created_at));
         const off = Number(a.p_offset ?? 0), lim = Number(a.p_limit ?? 20);
         return { total: mine.length, orders: mine.slice(off, off + lim).map((o) => this.orderJson(o)) };
