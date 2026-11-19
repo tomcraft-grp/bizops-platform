@@ -467,18 +467,26 @@ begin
     where id = a.id;
 end $$;
 
--- 2e a staff re-run: a NEW attempt (the old ones stay), at most 5 per slip, only while the AI review is on
+-- 2e a staff re-run: a NEW attempt (the old ones stay), at most 5 per slip, only while the AI review is on.
+-- A run that has been "running" for over 5 minutes (the same rule as finance_analysis_begin) is a worker that died (a timeout, out of memory): it is closed as
+-- failed first, so it is not a lock for ever; a fresh run, or one that is only waiting, is still refused (ALREADY_QUEUED). If the cap then refuses the new
+-- attempt, the whole call is undone, so that last stale run stays "running" (begin can still claim it).
 create or replace function public.finance_request_analysis(p_evidence uuid)
 returns uuid language plpgsql security definer set search_path = public as $$
-declare e public.finance_payment_evidence; a public.finance_slip_analysis; v_n integer; v_id uuid;
+declare e public.finance_payment_evidence; a public.finance_slip_analysis; v_have boolean; v_n integer; v_id uuid;
 begin
   perform public.finance_require('verify', 'ask for a new slip analysis');
   if not coalesce((select s.ai_review_enabled from public.finance_settings s where s.id), false) then raise exception 'AI_DISABLED: the AI review is switched off'; end if;
   select * into e from public.finance_payment_evidence where id = p_evidence for update;           -- serialises the attempt numbers of one slip
   if not found then raise exception 'NOT_FOUND: slip not found'; end if;
   if e.file_path is null then raise exception 'NOTHING_TO_DO: this payment has no slip image'; end if;
-  select * into a from public.finance_slip_analysis where evidence_id = e.id order by attempt desc limit 1;
-  if found and a.status in ('queued', 'running') then raise exception 'ALREADY_QUEUED: an analysis of this slip is already waiting or running'; end if;
+  select * into a from public.finance_slip_analysis where evidence_id = e.id order by attempt desc limit 1 for update;   -- locked: begin's claim and this close cannot cross
+  v_have := found;
+  if v_have and a.status = 'running' and coalesce(a.started_at, a.created_at) < now() - interval '5 minutes' then
+    perform public.finance_analysis_fail(a.id, 'WORKER_STOPPED: the analysis did not finish (timeout or memory)', null);
+    a.status := 'failed';
+  end if;
+  if v_have and a.status in ('queued', 'running') then raise exception 'ALREADY_QUEUED: an analysis of this slip is already waiting or running'; end if;
   select count(*) into v_n from public.finance_slip_analysis where evidence_id = e.id;
   if v_n >= 5 then raise exception 'TOO_MANY_ATTEMPTS: this slip has already been analysed % times', v_n; end if;
   insert into public.finance_slip_analysis (evidence_id, attempt, status, requested_by) values (e.id, coalesce(a.attempt, 0) + 1, 'queued', auth.uid()) returning id into v_id;

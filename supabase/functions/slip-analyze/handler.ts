@@ -2,12 +2,14 @@
 // (tests/unit/slipAnalyze.test.ts). index.ts wires the real ones.
 //
 //   POST { "evidence_id": "<uuid>" }  or  { "invoice_id": "<uuid>" }     Authorization: Bearer <the signed-in user's JWT>
-//   -> 200 { status: 'completed', result } | { status: 'failed', error: 'CODE: message' } | { status: 'nothing_to_do' }
+//   -> 200 { status: 'completed' } | { status: 'failed' } | { status: 'nothing_to_do' }     (and NOTHING else: see below)
 //   -> 401 not signed in · 400 bad request · 404 slip not found / not yours · 405 wrong method · 500 the database could not start the attempt
 // A failed reading is NOT an HTTP error: the order and the payment slip were already saved; the attempt is marked failed and the slip shows as manual review.
+// The answer never carries what the AI found (the result, the reasons) or why it failed: the customer's own browser is the usual caller, and a customer must
+// never learn whether an edited slip passes. Staff read the results and the stored error of each attempt through the review functions of the database.
 //
 // begin() is the ONLY thing that decides who may analyse what (it knows the owner of the invoice and the staff roles); this file never reads the database.
-// Every path after begin() ends in complete() or fail(). The expected amount, date and receiver of the order are never available here, so they cannot reach the model.
+// Every path after begin() ends in complete() or fail() (and a worker that dies in between leaves the attempt "running": see the comment below). The expected amount, date and receiver of the order are never available here, so they cannot reach the model.
 import { errorText, GenError, normalize, parseRaw, PROMPT_VERSION, scrub, toBase64, type Provider } from './core.ts';
 import type { QrResult } from './qr.ts';
 
@@ -114,11 +116,14 @@ export async function handleRequest(req: Request, d: Deps): Promise<Response> {
     return reply(200, { status: 'nothing_to_do' });                                    // already analysed, nothing waiting, or the AI review is off
   }
 
-  // From here on the attempt is "running": every path must end in complete() or fail(), or the 5-minute rule in the database frees it.
+  // From here on the attempt is "running": every path must end in complete() or fail(). If this worker is killed before it can (a timeout, out of memory), the
+  // attempt stays "running" until finance_analysis_begin claims it again after 5 minutes, or a staff re-run (finance_request_analysis) closes it as failed
+  // after the same 5 minutes and queues a new attempt.
   const analysisId = begun.analysisId;
   const engine = d.provider?.model ?? 'none';
   const secrets = d.secrets ?? [];
   let settled = false;
+  let completing = false;
   try {
     if (!d.provider) throw new GenError('AI_NOT_CONFIGURED', 'no AI key is set for this project (the administrator must add one)');
     if (begun.fileType !== null && begun.fileType !== undefined && !ALLOWED_TYPES.includes(begun.fileType)) throw new GenError('UNSUPPORTED_TYPE', 'only JPG, PNG and PDF slips are read');
@@ -138,15 +143,19 @@ export async function handleRequest(req: Request, d: Deps): Promise<Response> {
 
     const reading = await d.provider.extract({ mediaType, base64: toBase64(bytes) });
     const { extracted, signals, confidence } = normalize(parseRaw(reading), (d.now ?? (() => new Date()))());
-    const done = await d.complete(analysisId, extracted, qr, confidence, signals, engine, PROMPT_VERSION);
+    completing = true;
+    await d.complete(analysisId, extracted, qr, confidence, signals, engine, PROMPT_VERSION);
     settled = true;
-    return reply(200, { status: 'completed', result: done.result });
+    return reply(200, { status: 'completed' });
   } catch (e) {
     let msg = 'AI_ERROR: unknown error';
     try { msg = errorText(e, secrets); } catch { /* keep the generic text */ }
-    try { await d.fail(analysisId, msg, engine); } catch { /* the database frees a stale "running" attempt after 5 minutes */ }
+    // The stored text is for the staff; the caller only learns that it failed. If complete() itself failed to answer but had already committed, fail() says
+    // ALREADY_DONE: the attempt IS finished, so the answer is "completed", not "failed".
+    let alreadyFinished = false;
+    try { await d.fail(analysisId, msg, engine); } catch (f) { alreadyFinished = completing && /ALREADY_DONE/.test((f as Error)?.message ?? ''); }
     settled = true;
-    return reply(200, { status: 'failed', error: msg });
+    return reply(200, { status: alreadyFinished ? 'completed' : 'failed' });
   } finally {
     if (!settled) { try { await d.fail(analysisId, 'AI_ERROR: the analysis stopped unexpectedly', engine); } catch { /* as above */ } }
   }

@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { Buffer } from 'node:buffer';
 import QRCode from 'qrcode';
 import { PNG } from 'pngjs';
@@ -12,7 +13,7 @@ import {
   errorText, GenError, MODEL, normalize, parseRaw, PROMPT_VERSION, scrub, selectProvider, SLIP_SCHEMA, SYSTEM_PROMPT, toBase64,
   type Provider, type RawSlip,
 } from '../../supabase/functions/slip-analyze/core';
-import { crc16, decodeSlipQr } from '../../supabase/functions/slip-analyze/qr';
+import { crc16, decodeSlipQr, inspectPng, interpretPayload } from '../../supabase/functions/slip-analyze/qr';
 import { classifyBeginError, handleRequest, MAX_FILE_BYTES, type BeginResult, type Deps } from '../../supabase/functions/slip-analyze/handler';
 
 const NOW = new Date('2026-11-19T10:00:00+07:00');
@@ -243,9 +244,14 @@ describe('normalize', () => {
     expect(amt(0.004)).toBeNull();
     for (const bad of [0, -1, -350, Number.NaN, Number.POSITIVE_INFINITY, null, undefined]) expect(amt(bad), String(bad)).toBeNull();
   });
-  it('an amount in a foreign currency is not compared with baht: it becomes unknown', () => {
-    for (const c of ['THB', 'thb', '฿', 'บาท', 'Baht', 'THB.', null]) expect(normalize(raw({ currency: c }), NOW).extracted.amount, String(c)).toBe(350);
-    expect(normalize(raw({ currency: 'USD' }), NOW).extracted.amount).toBeNull();
+  it('an amount in a known foreign currency is not compared with baht: it becomes unknown; any other text is treated as baht', () => {
+    for (const c of ['THB', 'thb', '฿', 'บาท', 'Baht', 'THB.', 'BHT', 'TBH', 'XYZ', 'abc', 'Bt', null]) expect(normalize(raw({ currency: c }), NOW).extracted.amount, String(c)).toBe(350);
+    const known = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'SGD', 'MYR', 'LAK', 'KHR', 'VND', 'MMK', 'HKD', 'AUD', 'KRW', 'INR', 'TWD', 'NZD', 'CAD', 'CHF'];
+    for (const c of known) {
+      expect(normalize(raw({ currency: c }), NOW).extracted.amount, c).toBeNull();
+      expect(normalize(raw({ currency: c.toLowerCase() }), NOW).extracted.amount, c.toLowerCase()).toBeNull();
+    }
+    expect(normalize(raw({ currency: ' USD ' }), NOW).extracted.amount).toBeNull();
   });
   it('produces exactly the contract that finance_classify_slip reads (no more, no less)', () => {
     const { extracted, signals, confidence } = normalize(raw({ tamper_signals: [{ code: 'font_mismatch', severity: 'high', detail: 'digits differ' }, { code: 'other', detail: 'odd' }] }), NOW);
@@ -411,18 +417,16 @@ describe('decodeSlipQr', () => {
     const r = decodeSlipQr(new Uint8Array(await qrPng(slipPayload({ crc: 'lower' }))), 'image/png');
     expect(r).toMatchObject({ found: true, crc_ok: true });
   });
-  it('a wrong checksum is found but not ok', async () => {
+  it('a slip QR with a wrong checksum is found and not ok', async () => {
     const r = decodeSlipQr(new Uint8Array(await qrPng(slipPayload({ crc: 'bad' }))), 'image/png');
     expect(r).toMatchObject({ found: true, crc_ok: false });
   });
-  it('a QR that is not a slip QR (a link, a payment QR, no checksum field, another country) is found but not ok', async () => {
-    const others = ['https://example.com/promo', '00020101021129370016A000000677010111011300668123456785802TH6304ABCD', slipPayload({ crc: 'none' }), slipPayload({ country: 'US' }), '0041', ''];
-    for (const payload of others.filter(Boolean)) {
+  it('a QR that is not slip-structured (a link, a payment QR, a truncated slip payload, another country) is found but unrecognised: crc_ok is null, so nothing is flagged', async () => {
+    const others = ['https://example.com/promo', '00020101021129370016A000000677010111011300668123456785802TH6304ABCD', slipPayload({ crc: 'none' }), slipPayload({ country: 'US' }), '0041'];
+    for (const payload of others) {
       const r = decodeSlipQr(new Uint8Array(await qrPng(payload)), 'image/png');
-      expect(r.found, payload).toBe(true);
-      expect(r.crc_ok, payload).toBe(false);
+      expect(r, payload).toEqual({ found: true, crc_ok: null, sending_bank: null, trans_ref: null });
     }
-    expect(decodeSlipQr(new Uint8Array(await qrPng('https://example.com/promo')), 'image/png')).toEqual({ found: true, crc_ok: false, sending_bank: null, trans_ref: null });
   });
   it('reads a QR from a JPEG', async () => {
     const page = place(await qrPng(slipPayload({ bank: '004', ref: 'ABCDEF1234567890' }), 320), 640, 640, 100, 100);
@@ -459,6 +463,136 @@ describe('decodeSlipQr', () => {
     expect(decodeSlipQr(ihdr, 'image/png')).toEqual(none);                                    // 30000 x 30000 pixels: refused before decoding
     expect(Date.now() - t0).toBeLessThan(1000);
   });
+});
+
+describe('interpretPayload (the slip-verify payload)', () => {
+  const NONE = { found: true, crc_ok: null, sending_bank: null, trans_ref: null };
+  it('a slip-structured payload with the right checksum is ok and gives the bank and the reference', () => {
+    expect(interpretPayload(slipPayload())).toEqual({ found: true, crc_ok: true, sending_bank: '014', trans_ref: '0002123123121200011' });
+  });
+  it('only a slip-structured payload (00 with 01 and 02, 51 = TH, 91 present) whose checksum is wrong gives crc_ok false', () => {
+    expect(interpretPayload(slipPayload({ crc: 'bad' }))).toEqual({ found: true, crc_ok: false, sending_bank: '014', trans_ref: '0002123123121200011' });
+    const body = tlv('00', tlv('00', '000001') + tlv('01', '014') + tlv('02', 'REF123456')) + tlv('51', 'TH');
+    expect(interpretPayload(body + tlv('91', '123'))).toMatchObject({ found: true, crc_ok: false });             // a checksum of the wrong length
+    expect(interpretPayload(body + '9104' + crc16(body + '9104') + tlv('99', 'x'))).toMatchObject({ found: true, crc_ok: false });   // 91 is not the last field
+  });
+  it('anything else that decodes is unrecognised (crc_ok null, no bank, no reference)', () => {
+    const inner = (o: { marker?: boolean; bank?: string | null; ref?: string | null } = {}) =>
+      (o.marker === false ? '' : tlv('00', '000001')) + (o.bank === null ? '' : tlv('01', o.bank ?? '014')) + (o.ref === null ? '' : tlv('02', o.ref ?? 'REF123456'));
+    const withCrc = (body: string) => body + '9104' + crc16(body + '9104');
+    const cases: [string, string][] = [
+      ['empty', ''], ['text', 'hello world'], ['a link', 'https://example.com/promo'], ['short', '0041'],
+      ['no country field', withCrc(tlv('00', inner()))],
+      ['another country', withCrc(tlv('00', inner()) + tlv('51', 'US'))],
+      ['no checksum field', tlv('00', inner()) + tlv('51', 'TH')],
+      ['no sending bank', withCrc(tlv('00', inner({ bank: null })) + tlv('51', 'TH'))],
+      ['no reference', withCrc(tlv('00', inner({ ref: null })) + tlv('51', 'TH'))],
+      ['a sending bank that is not 3 digits', withCrc(tlv('00', inner({ bank: 'ABCD' })) + tlv('51', 'TH'))],
+      ['a reference of only spaces', withCrc(tlv('00', inner({ ref: '   ' })) + tlv('51', 'TH'))],
+      ['field 00 that is not made of fields', withCrc(tlv('00', 'not nested') + tlv('51', 'TH'))],
+      ['a PromptPay payment QR', '00020101021129370016A000000677010111011300668123456785802TH6304ABCD'],
+    ];
+    for (const [name, payload] of cases) expect(interpretPayload(payload), name).toEqual(NONE);
+  });
+  it('is bounded: broken lengths, nested lengths that overrun, a huge payload, a long reference, a non-string', () => {
+    expect(interpretPayload('0099' + 'x'.repeat(10))).toEqual(NONE);                                          // a length that runs past the end
+    expect(interpretPayload(tlv('00', '0099' + '123') + tlv('51', 'TH') + '91040000')).toEqual(NONE);        // a nested length that runs past its field
+    expect(interpretPayload('00 5abc')).toEqual(NONE);                                                       // a length with a space
+    expect(interpretPayload('00-5abc')).toEqual(NONE);
+    expect(interpretPayload('00A5abc')).toEqual(NONE);
+    const t0 = Date.now();
+    expect(interpretPayload('0000'.repeat(250_000))).toEqual(NONE);                                          // 1 MB of empty fields
+    expect(interpretPayload(slipPayload({ ref: 'R'.repeat(5000) }))).toEqual(NONE);                         // longer than any QR holds
+    expect(Date.now() - t0).toBeLessThan(500);
+    const long = interpretPayload(slipPayload({ ref: 'R'.repeat(70) }));                                     // the longest a nested field can hold is 78
+    expect(long.crc_ok).toBe(true);
+    expect(long.trans_ref).toBe('R'.repeat(64));                                                             // the reference is cut to 64 characters
+    expect(() => interpretPayload(undefined as unknown as string)).not.toThrow();
+    expect(interpretPayload(undefined as unknown as string)).toEqual(NONE);
+    // a field 00 inside field 00 is not read as nested again: it is just the value of a field
+    const deep = tlv('00', tlv('00', tlv('00', tlv('00', '1')))) + tlv('51', 'TH');
+    expect(interpretPayload(deep + '9104' + crc16(deep + '9104'))).toEqual(NONE);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ pictures that could exhaust the worker
+// A hand-made PNG: the header says what the picture is, the data chunk is whatever the test needs.
+const be32 = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
+function crc32(buf: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of buf) { crc ^= byte; for (let k = 0; k < 8; k++) crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1; }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+const pngChunk = (type: string, data: Buffer) => { const t = Buffer.from(type, 'ascii'); return Buffer.concat([be32(data.length), t, data, be32(crc32(Buffer.concat([t, data])))]); };
+function craftPng(o: { w: number; h: number; bitDepth?: number; colorType?: number; interlace?: number; compression?: number; filter?: number; zeros?: number; ihdrName?: string }) {
+  const ihdr = Buffer.concat([be32(o.w), be32(o.h), Buffer.from([o.bitDepth ?? 8, o.colorType ?? 6, o.compression ?? 0, o.filter ?? 0, o.interlace ?? 0])]);
+  const idat = zlib.deflateSync(Buffer.alloc(o.zeros ?? 0));
+  const head = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk(o.ihdrName ?? 'IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', Buffer.alloc(0))]);
+  return new Uint8Array(head);
+}
+const NO_QR_RESULT = { found: false, crc_ok: null, sending_bank: null, trans_ref: null };
+
+describe('decodeSlipQr: pictures that could exhaust the worker', () => {
+  // pngjs inflates an INTERLACED picture with no output limit: a few KB of deflated zeros becomes gigabytes. So an interlaced PNG must never reach it.
+  it('an interlaced PNG is refused before anything is inflated, even when its header size is harmless', () => {
+    // 2000 x 2000 RGBA (16 MB) declared interlaced, with 40 MB of deflated zeros as data: inflating it is exactly what the worker must never do
+    const bomb = craftPng({ w: 2000, h: 2000, interlace: 1, zeros: 40 * 1024 * 1024 });
+    expect(bomb.length).toBeLessThan(200 * 1024);                                            // a small file that would inflate to 40 MB
+    const before = process.memoryUsage().arrayBuffers;
+    const t0 = Date.now();
+    expect(decodeSlipQr(bomb, 'image/png')).toEqual(NO_QR_RESULT);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(process.memoryUsage().arrayBuffers - before).toBeLessThan(16 * 1024 * 1024);       // nothing of the 40 MB was allocated
+    expect(decodeSlipQr(craftPng({ w: 8, h: 8, interlace: 1, zeros: 8 * 8 * 4 + 8 }), 'image/png')).toEqual(NO_QR_RESULT);   // a small interlaced PNG too
+    expect(inspectPng(bomb)).toEqual({ ok: false, reason: 'interlaced' });
+  });
+  it('the header check: what is refused, and why', () => {
+    const refused = (o: Parameters<typeof craftPng>[0]) => { const r = inspectPng(craftPng({ zeros: 16, ...o })); return r.ok ? 'ok' : r.reason; };
+    expect(refused({ w: 100, h: 100, interlace: 1 })).toBe('interlaced');
+    expect(refused({ w: 100, h: 100, interlace: 2 })).toBe('interlaced');
+    expect(refused({ w: 4000, h: 3000 })).toBe('too many pixels');                                                // 12 megapixels, 8 bits
+    expect(refused({ w: 3000, h: 3000 })).toBe('too many pixels');                                                // 9 megapixels
+    expect(refused({ w: 30000, h: 30000 })).toBe('too many pixels');
+    expect(refused({ w: 0, h: 100 })).toBe('empty picture');
+    expect(refused({ w: 100, h: 0 })).toBe('empty picture');
+    expect(refused({ w: 2800, h: 2800, bitDepth: 16, colorType: 6 })).toBe('too large once decoded');             // 7.84 MP is under 8, but 8 bytes a pixel is 62.7 MB
+    expect(refused({ w: 2800, h: 2800, bitDepth: 16, colorType: 2 })).toBe('ok');                                  // 6 bytes a pixel is 47 MB, under the 48 MiB limit
+    expect(refused({ w: 2800, h: 2800, bitDepth: 8, colorType: 6 })).toBe('ok');                                   // 31 MB
+    expect(refused({ w: 100, h: 100, colorType: 5 })).toBe('unknown colour type or bit depth');
+    expect(refused({ w: 100, h: 100, colorType: 1 })).toBe('unknown colour type or bit depth');
+    expect(refused({ w: 100, h: 100, bitDepth: 7 })).toBe('unknown colour type or bit depth');
+    expect(refused({ w: 100, h: 100, colorType: 2, bitDepth: 4 })).toBe('unknown colour type or bit depth');
+    expect(refused({ w: 100, h: 100, compression: 1 })).toBe('unknown method');
+    expect(refused({ w: 100, h: 100, filter: 1 })).toBe('unknown method');
+    expect(refused({ w: 100, h: 100, ihdrName: 'IHDX' })).toBe('no IHDR');
+    expect(inspectPng(new Uint8Array(10))).toEqual({ ok: false, reason: 'too short' });
+    expect(inspectPng(new Uint8Array(64))).toEqual({ ok: false, reason: 'not a PNG' });
+    expect(inspectPng(craftPng({ w: 1080, h: 2400, zeros: 16 }))).toEqual({ ok: true, width: 1080, height: 2400, decodedBytes: 1080 * 2400 * 4 });
+    expect(inspectPng(craftPng({ w: 1000, h: 1000, bitDepth: 1, colorType: 0, zeros: 16 }))).toEqual({ ok: true, width: 1000, height: 1000, decodedBytes: 125000 });
+  });
+  it('a refused header gives found:false without a decode (the data after it is not even read)', () => {
+    for (const o of [{ w: 4000, h: 3000 }, { w: 2800, h: 2800, bitDepth: 16, colorType: 6 }, { w: 100, h: 100, ihdrName: 'IHDX' }, { w: 100, h: 100, colorType: 5 }]) {
+      const t0 = Date.now();
+      expect(decodeSlipQr(craftPng({ zeros: 1024, ...o }), 'image/png'), JSON.stringify(o)).toEqual(NO_QR_RESULT);
+      expect(Date.now() - t0).toBeLessThan(500);
+    }
+  });
+  it('a legitimate picture under both limits still decodes: an 8-bit RGBA screenshot and an 8-bit grey picture, each with a slip QR', async () => {
+    const page = place(await qrPng(slipPayload(), 380), 1080, 2400, 350, 1500);
+    expect(decodeSlipQr(asPng(page), 'image/png')).toMatchObject({ found: true, crc_ok: true });
+    const small = place(await qrPng(slipPayload(), 300), 1000, 1000, 100, 100);
+    const grey = new Uint8Array(PNG.sync.write(small, { colorType: 0, bitDepth: 8, inputColorType: 6, inputHasAlpha: true }));
+    expect(inspectPng(grey)).toMatchObject({ ok: true, width: 1000, height: 1000, decodedBytes: 1000 * 1000 });
+    expect(decodeSlipQr(grey, 'image/png')).toMatchObject({ found: true, crc_ok: true });
+  });
+  it('the size limits: 7.8 megapixels decode, 9 megapixels do not (PNG and JPEG)', async () => {
+    const qr = await qrPng(slipPayload(), 400);
+    const ok = place(qr, 2800, 2800, 300, 300);
+    expect(decodeSlipQr(asPng(ok), 'image/png')).toMatchObject({ found: true, crc_ok: true });
+    const big = place(qr, 3000, 3000, 300, 300);
+    expect(decodeSlipQr(asPng(big), 'image/png')).toEqual(NO_QR_RESULT);
+    expect(decodeSlipQr(asJpeg(big), 'image/jpeg')).toEqual(NO_QR_RESULT);
+  }, 60000);
 });
 
 // ------------------------------------------------------------------------------------------------ the request handler
@@ -582,7 +716,7 @@ describe('request handler: the analysis', () => {
     const s = setup();
     const res = await s.call();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'completed', result: 'match' });
+    expect(await res.json()).toEqual({ status: 'completed' });                                  // the verdict is never in the answer: staff read it through the review functions
     expect(s.log.download).toEqual(['user-1/slip.png']);
     expect(s.log.decodeQr).toEqual([{ n: PNG_BYTES.length, mediaType: 'image/png' }]);
     expect(s.provider.images).toEqual([{ mediaType: 'image/png', base64: Buffer.from(PNG_BYTES).toString('base64') }]);
@@ -623,9 +757,7 @@ describe('request handler: the analysis', () => {
     const s = setup({ provider: null });
     const res = await s.call();
     expect(res.status).toBe(200);
-    const j = await res.json();
-    expect(j.status).toBe('failed');
-    expect(j.error).toMatch(/^AI_NOT_CONFIGURED/);
+    expect(await res.json()).toEqual({ status: 'failed' });
     expect(s.log.fail).toHaveLength(1);
     expect(s.log.fail[0]).toMatchObject({ analysisId: 'an-1', engine: 'none' });
     expect(s.log.fail[0].error).toMatch(/^AI_NOT_CONFIGURED/);
@@ -635,11 +767,12 @@ describe('request handler: the analysis', () => {
   it('the provider throwing ends in fail, with a code and never the key', async () => {
     const s = setup({ provider: fakeProvider([new GenError('AI_HTTP_500', `upstream said ${KEY} is bad`)]) });
     const res = await s.call();
-    const text = JSON.stringify(await res.json()) + JSON.stringify(s.log.fail);
+    const body = JSON.stringify(await res.json());
     expect(res.status).toBe(200);
-    expect(text).toContain('AI_HTTP_500');
-    expect(text).toContain('"status":"failed"');
-    expect(text).not.toContain('secretsecret1');
+    expect(body).toBe('{"status":"failed"}');                                                  // no error text for the caller
+    const stored = JSON.stringify(s.log.fail);
+    expect(stored).toContain('AI_HTTP_500');                                                  // the code is stored for the staff
+    expect(stored).not.toContain('secretsecret1');
     expect(s.log.fail).toHaveLength(1);
     expect(s.log.complete).toHaveLength(0);
   });
@@ -648,9 +781,8 @@ describe('request handler: the analysis', () => {
       const s = setup({ provider: fakeProvider([reply]) });
       const res = await s.call();
       expect(res.status).toBe(200);
-      const j = await res.json();
-      expect(j.status, reply).toBe('failed');
-      expect(j.error, reply).toMatch(/^BAD_REPLY/);
+      expect(await res.json(), reply).toEqual({ status: 'failed' });
+      expect(s.log.fail[0]?.error, reply).toMatch(/^BAD_REPLY/);
       expect(s.log.complete, reply).toHaveLength(0);
       expect(s.log.fail, reply).toHaveLength(1);
     }
@@ -658,7 +790,8 @@ describe('request handler: the analysis', () => {
   it('a refused or truncated reply ends in fail with its code', async () => {
     for (const [code, e] of [['REFUSED', new GenError('REFUSED', 'declined')], ['TRUNCATED', new GenError('TRUNCATED', 'cut')]] as const) {
       const s = setup({ provider: fakeProvider([e]) });
-      expect((await (await s.call()).json()).error).toMatch(new RegExp('^' + code));
+      expect(await (await s.call()).json()).toEqual({ status: 'failed' });
+      expect(s.log.fail[0]?.error).toMatch(new RegExp('^' + code));
       expect(s.log.fail).toHaveLength(1); expect(s.log.complete).toHaveLength(0);
     }
   });
@@ -680,18 +813,16 @@ describe('request handler: the analysis', () => {
   });
   it('download failing ends in fail and never calls the provider', async () => {
     const s = setup({ download: async () => { throw new Error('Object not found'); } });
-    const j = await (await s.call()).json();
-    expect(j.status).toBe('failed');
-    expect(j.error).toMatch(/^FILE_UNAVAILABLE/);
+    expect(await (await s.call()).json()).toEqual({ status: 'failed' });
+    expect(s.log.fail[0]?.error).toMatch(/^FILE_UNAVAILABLE/);
     expect(s.log.fail).toHaveLength(1); expect(s.log.complete).toHaveLength(0); expect(s.provider.images).toHaveLength(0);
   });
   it('a file over 5 MB ends in fail without calling the provider or the QR decoder', async () => {
     expect(MAX_FILE_BYTES).toBe(5 * 1024 * 1024);
     const big = new Uint8Array(MAX_FILE_BYTES + 1); big.set(PNG_BYTES);
     const s = setup({}, { file: big });
-    const j = await (await s.call()).json();
-    expect(j.status).toBe('failed');
-    expect(j.error).toMatch(/^FILE_TOO_LARGE/);
+    expect(await (await s.call()).json()).toEqual({ status: 'failed' });
+    expect(s.log.fail[0]?.error).toMatch(/^FILE_TOO_LARGE/);
     expect(s.log.fail).toHaveLength(1); expect(s.log.complete).toHaveLength(0); expect(s.provider.images).toHaveLength(0); expect(s.log.decodeQr).toHaveLength(0);
     const exactly = new Uint8Array(MAX_FILE_BYTES); exactly.set(PNG_BYTES);
     const ok = setup({}, { file: exactly });
@@ -700,13 +831,13 @@ describe('request handler: the analysis', () => {
   it('an unsupported or empty file ends in fail without calling the provider', async () => {
     for (const file of [GIF_BYTES, new Uint8Array(0), new TextEncoder().encode('<html>not a slip</html>')]) {
       const s = setup({}, { file });
-      const j = await (await s.call()).json();
-      expect(j.status).toBe('failed');
-      expect(j.error).toMatch(/^UNSUPPORTED_TYPE/);
+      expect(await (await s.call()).json()).toEqual({ status: 'failed' });
+      expect(s.log.fail[0]?.error).toMatch(/^UNSUPPORTED_TYPE/);
       expect(s.log.fail).toHaveLength(1); expect(s.log.complete).toHaveLength(0); expect(s.provider.images).toHaveLength(0);
     }
     const declared = setup({}, { begin: { ...BEGUN, fileType: 'image/webp' } as BeginResult });
-    expect((await (await declared.call()).json()).error).toMatch(/^UNSUPPORTED_TYPE/);
+    expect(await (await declared.call()).json()).toEqual({ status: 'failed' });
+    expect(declared.log.fail[0]?.error).toMatch(/^UNSUPPORTED_TYPE/);
     expect(declared.provider.images).toHaveLength(0);
   });
   it('a QR decoder that throws is the same as no QR found; the analysis still completes', async () => {
@@ -723,7 +854,21 @@ describe('request handler: the analysis', () => {
     const b = setup({ async complete() { throw new Error('db down'); }, async fail() { throw new Error('db still down'); } });
     const rb = await b.call();
     expect(rb.status).toBe(200);
-    expect((await rb.json()).status).toBe('failed');
+    expect(await rb.json()).toEqual({ status: 'failed' });
+  });
+  it('complete committed but its answer was lost: fail says ALREADY_DONE, so the attempt IS finished and the answer is completed, not failed', async () => {
+    const s = setup({
+      async complete() { throw new Error('network lost after the commit'); },
+      async fail() { throw new Error('ALREADY_DONE: this analysis is already finished'); },
+    });
+    const res = await s.call();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'completed' });
+    const other = setup({ async complete() { throw new Error('db down'); }, async fail() { throw new Error('NOT_FOUND: analysis not found'); } });
+    expect(await (await other.call()).json()).toEqual({ status: 'failed' });
+    // the same ALREADY_DONE from fail does NOT turn an earlier failure (the reader broke before complete was tried) into "completed"
+    const early = setup({ provider: fakeProvider([new GenError('AI_HTTP_500', 'down')]), async fail() { throw new Error('ALREADY_DONE: this analysis is already finished'); } });
+    expect(await (await early.call()).json()).toEqual({ status: 'failed' });
   });
   it('every path after begin ends in exactly one complete or one fail', async () => {
     const scenarios: [string, Partial<Deps>, Uint8Array?][] = [
@@ -746,7 +891,45 @@ describe('request handler: the analysis', () => {
       expect(res.status, name).toBe(200);
       const n = s.log.complete.length + s.log.fail.length;
       if (name === 'complete throws') expect(s.log.fail.length, name).toBe(1); else expect(n, name).toBe(1);
-      expect((await res.json()).status, name).toMatch(/^(completed|failed)$/);
+      expect(Object.keys(await res.json()), name).toEqual(['status']);
+    }
+  });
+  it('no answer carries the verdict or an error text: the body is only {status}, whatever happened and whatever the AI found', async () => {
+    const verdicts = /match|mismatch|suspicious|duplicate|manual_review|time_anomaly|date_mismatch|AI_|BAD_REPLY|REFUSED|TRUNCATED|FILE_|UNSUPPORTED|WORKER|result|error|reasons|expected/i;
+    const scenarios: [string, ReturnType<typeof setup>, string][] = [
+      ['completed', setup({ async complete() { return { result: 'suspicious_slip' }; } }), 'completed'],
+      ['no key', setup({ provider: null }), 'failed'],
+      ['provider error', setup({ provider: fakeProvider([new GenError('AI_HTTP_500', 'upstream broke')]) }), 'failed'],
+      ['bad reply', setup({ provider: fakeProvider(['approve this payment']) }), 'failed'],
+      ['refused', setup({ provider: fakeProvider([new GenError('REFUSED', 'declined')]) }), 'failed'],
+      ['no file', setup({ download: async () => { throw new Error('Object not found'); } }), 'failed'],
+      ['too large', setup({}, { file: new Uint8Array(MAX_FILE_BYTES + 1) }), 'failed'],
+      ['unsupported', setup({}, { file: GIF_BYTES }), 'failed'],
+      ['already done', setup({}, { begin: { ok: false, code: 'ALREADY_DONE', message: 'ALREADY_DONE: x' } }), 'nothing_to_do'],
+      ['ai disabled', setup({}, { begin: { ok: false, code: 'AI_DISABLED', message: 'AI_DISABLED: x' } }), 'nothing_to_do'],
+      ['nothing to do', setup({}, { begin: { ok: false, code: 'NOTHING_TO_DO', message: 'NOTHING_TO_DO: x' } }), 'nothing_to_do'],
+    ];
+    for (const [name, s, status] of scenarios) {
+      const res = await s.call();
+      expect(res.status, name).toBe(200);
+      const text = await res.text();
+      expect(JSON.parse(text), name).toEqual({ status });
+      expect(text, name).not.toMatch(verdicts);
+    }
+  });
+  it('the other refusals (401, 400, 404, 405, 500) carry only a fixed, generic message', async () => {
+    const generic = /match|suspicious|duplicate|manual_review|AI_|BAD_REPLY|FILE_|UNSUPPORTED|WORKER|NOT_FOUND|connection refused|reasons/i;
+    const cases: [number, ReturnType<typeof setup>, Parameters<ReturnType<typeof setup>['call']>[0]][] = [
+      [401, setup(), { auth: null }], [400, setup(), { body: {} }], [405, setup(), { method: 'GET' }],
+      [404, setup({}, { begin: { ok: false, code: 'NOT_FOUND', message: 'NOT_FOUND: slip not found of customer 7' } }), {}],
+      [500, setup({}, { begin: { ok: false, code: 'ERROR', message: 'connection refused to db.internal:5432' } }), {}],
+    ];
+    for (const [status, s, init] of cases) {
+      const res = await s.call(init);
+      expect(res.status).toBe(status);
+      const text = await res.text();
+      expect(Object.keys(JSON.parse(text)), String(status)).toEqual(['error']);
+      expect(text, String(status)).not.toMatch(generic);
     }
   });
   it('a second call for a slip that is already analysed or being read changes nothing', async () => {

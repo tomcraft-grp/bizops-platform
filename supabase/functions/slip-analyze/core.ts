@@ -276,8 +276,9 @@ function gregorianYear(year: number, era: 'BE' | 'CE' | null, now: Date): number
 
 const daysInMonth = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 const inRange = (v: number, lo: number, hi: number) => Number.isInteger(v) && v >= lo && v <= hi;
-/** A three-letter code other than THB: the amount is in a currency the shop does not take, so it is not compared with baht. */
-const foreignCurrency = (c: string | null) => !!c && /^[A-Za-z]{3}$/.test(c.trim()) && c.trim().toUpperCase() !== 'THB';
+/** A currency code the model read that is a known foreign currency: the amount is not in baht, so it is not compared with baht. Anything else (BHT, a symbol, text) counts as baht. */
+const FOREIGN_CURRENCIES = new Set(['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'SGD', 'MYR', 'LAK', 'KHR', 'VND', 'MMK', 'HKD', 'AUD', 'KRW', 'INR', 'TWD', 'NZD', 'CAD', 'CHF']);
+const foreignCurrency = (c: string | null) => !!c && FOREIGN_CURRENCIES.has(c.trim().toUpperCase());
 
 /**
  * Builds the p_extracted / p_signals / p_confidence of finance_analysis_complete from the parsed reply. Dates become ISO 8601 in Asia/Bangkok (+07:00).

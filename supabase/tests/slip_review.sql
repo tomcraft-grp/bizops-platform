@@ -808,6 +808,49 @@ select pg_temp.err_like('S2 request: a slip that is waiting for the reader canno
 select pg_temp.err_like('S2 request: ...nor one that is being read right now', format($q$select public.finance_request_analysis(%L)$q$, pg_temp.c('ev5')), '%ALREADY_QUEUED%');
 select pg_temp.err_like('S2 request: an unknown slip is not found', $q$select public.finance_request_analysis(gen_random_uuid())$q$, '%NOT_FOUND%');
 select pg_temp.err_like('S2 request: a payment recorded by staff has no slip image to read', format($q$select public.finance_request_analysis(%L)$q$, pg_temp.c('evCash')), '%NOTHING_TO_DO%');
+-- a worker that died (timeout, out of memory) leaves its attempt "running" for ever. After the same 5 minutes begin uses to claim such a run again, a staff re-run
+-- closes it as failed (so it is not a lock for ever) and queues a new attempt; a fresh run, or a waiting one, is still refused; the 5-attempt cap still applies.
+reset role;
+select pg_temp.mkev('evStale', 'i3id');
+select pg_temp.runs_ok('S2 setup: the attempt of a new slip has been running for 4 minutes', format($q$update public.finance_slip_analysis set status = 'running', started_at = now() - interval '4 minutes' where id = %L$q$, pg_temp.aid('evStale', 1)));
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('C')::uuid);
+select pg_temp.err_like('S2 request: a run that started 4 minutes ago is still running (ALREADY_QUEUED)', format($q$select public.finance_request_analysis(%L)$q$, pg_temp.c('evStale')), '%ALREADY_QUEUED%');
+reset role;
+select pg_temp.q('S2 request: ...and nothing was closed or queued', format($$select count(*) = 1 and bool_and(attempt = 1 and status = 'running' and result is null and error is null) from public.finance_slip_analysis where evidence_id = %L$$, pg_temp.c('evStale')));
+select pg_temp.runs_ok('S2 setup: the run of the new slip has now been running for 6 minutes (its worker died)', format($q$update public.finance_slip_analysis set started_at = now() - interval '6 minutes' where id = %L$q$, pg_temp.aid('evStale', 1)));
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('C')::uuid);
+select pg_temp.keep('raS', format($q$select public.finance_request_analysis(%L)::text$q$, pg_temp.c('evStale')));
+reset role;
+select pg_temp.q('S2 request: a run stuck for over 5 minutes is closed as failed (manual review, WORKER_STOPPED, reason AI_UNAVAILABLE, a finish time, no engine)',
+  format($$select status = 'failed' and result = 'manual_review' and error like 'WORKER_STOPPED:%%' and finished_at is not null and engine is null and extracted is null
+       and reasons -> 0 ->> 'code' = 'AI_UNAVAILABLE' and jsonb_array_length(reasons) = 1 from public.finance_slip_analysis where id = %L$$, pg_temp.aid('evStale', 1)));
+select pg_temp.q('S2 request: ...and a new attempt 2 is queued, asked by the verifier, next to the old one (the history is kept)',
+  format($$select count(*) = 2 and bool_and(case attempt when 1 then status = 'failed' else id::text = (select v from t_ctx where k = 'raS') and status = 'queued' and requested_by = %L and result is null end) from public.finance_slip_analysis where evidence_id = %L$$, pg_temp.c('C'), pg_temp.c('evStale')));
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('C')::uuid);
+select pg_temp.err_like('S2 request: with the new attempt waiting, another request is refused (ALREADY_QUEUED)', format($q$select public.finance_request_analysis(%L)$q$, pg_temp.c('evStale')), '%ALREADY_QUEUED%');
+reset role;
+select pg_temp.runs_ok('S2 setup: the waiting attempt is an hour old (waiting is not the same as dead: begin claims it)', format($q$update public.finance_slip_analysis set created_at = now() - interval '1 hour' where id::text = %L$q$, pg_temp.c('raS')));
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('C')::uuid);
+select pg_temp.err_like('S2 request: ...a waiting attempt is never closed, however old (ALREADY_QUEUED)', format($q$select public.finance_request_analysis(%L)$q$, pg_temp.c('evStale')), '%ALREADY_QUEUED%');
+reset role;
+select pg_temp.q('S2 request: ...and it is still waiting', format($$select status = 'queued' and finished_at is null from public.finance_slip_analysis where id::text = %L$$, pg_temp.c('raS')));
+-- the cap still applies: a stale 5th run is not closed and replaced (the refusal undoes everything, so it stays running)
+select pg_temp.mkev('evCap', 'i3id');
+select pg_temp.runs_ok('S2 setup: attempt 1 of a slip is failed', format($q$update public.finance_slip_analysis set status = 'failed', result = 'manual_review', error = 'test', finished_at = now() where id = %L$q$, pg_temp.aid('evCap', 1)));
+select pg_temp.runs_ok('S2 setup: attempts 2-4 are failed too', format($q$insert into public.finance_slip_analysis (evidence_id, attempt, status, result, error, finished_at) select %L::uuid, n, 'failed', 'manual_review', 'test', now() from generate_series(2, 4) n$q$, pg_temp.c('evCap')));
+select pg_temp.runs_ok('S2 setup: attempt 5 has been running for 6 minutes', format($q$insert into public.finance_slip_analysis (evidence_id, attempt, status, started_at) values (%L::uuid, 5, 'running', now() - interval '6 minutes')$q$, pg_temp.c('evCap')));
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('C')::uuid);
+select pg_temp.err_like('S2 request: a slip already read 5 times is refused (TOO_MANY_ATTEMPTS) even when its last run is stale', format($q$select public.finance_request_analysis(%L)$q$, pg_temp.c('evCap')), '%TOO_MANY_ATTEMPTS%');
+reset role;
+select pg_temp.q('S2 request: ...and nothing changed (still 5 attempts, the 5th still running)', format($$select count(*) = 5 and count(*) filter (where attempt = 5 and status = 'running') = 1 and count(*) filter (where status = 'failed') = 4 from public.finance_slip_analysis where evidence_id = %L$$, pg_temp.c('evCap')));
+-- begin still reclaims a stale run too (the other way out), and a customer cannot use the re-run to close anything
+select pg_temp.mkev('evCust', 'i3id');
+select pg_temp.runs_ok('S2 setup: another slip whose run died 6 minutes ago', format($q$update public.finance_slip_analysis set status = 'running', started_at = now() - interval '6 minutes' where id = %L$q$, pg_temp.aid('evCust', 1)));
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('A')::uuid);
+select pg_temp.err_like('S2 request: a customer cannot re-run, so cannot close a stale run either', format($q$select public.finance_request_analysis(%L)$q$, pg_temp.c('evCust')), '%not allowed%');
+reset role;
+select pg_temp.q('S2 request: ...and that run is untouched', format($$select status = 'running' and result is null from public.finance_slip_analysis where id = %L$$, pg_temp.aid('evCust', 1)));
+reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('C')::uuid);
 select pg_temp.keep('ra2', format($q$select public.finance_request_analysis(%L)::text$q$, pg_temp.c('ev3')));
 reset role;
 select pg_temp.q('S2 request: a verifier queues a new attempt (number 2, waiting, asked by them)',
