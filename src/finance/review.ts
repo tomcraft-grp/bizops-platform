@@ -226,7 +226,7 @@ export const review = {
   },
   /** from / to: calendar days (YYYY-MM-DD) or null for no end. */
   async summary(from: string | null, to: string | null): Promise<ReviewSummary> {
-    return must(await supabase.rpc('finance_review_summary', { p_from: from, p_to: to }), 'Load review summary');
+    return must(await supabase.rpc('finance_review_summary', { p_from: from || null, p_to: to || null }), 'Load review summary');
   },
   async detail(evidenceId: string): Promise<ReviewDetail> {
     return must(await supabase.rpc('finance_review_detail', { p_evidence: evidenceId }), 'Load payment');

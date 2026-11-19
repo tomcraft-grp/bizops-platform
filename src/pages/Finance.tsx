@@ -1,19 +1,21 @@
 // Payment review & invoices (staff). What a person may do here is decided by their finance role in Supabase
-// (viewer / clerk / verifier / manager); the buttons only mirror it. The shop's payment account is set from a picture of
+// (viewer / clerk / verifier / manager); the buttons only mirror it. "Slips to check" is the end-of-day review dashboard (finance/SlipReview.tsx). The shop's payment account is set from a picture of
 // the shop's own QR: the server checks it is a real Thai QR, and every customer QR is generated server-side from it
 // with the exact outstanding amount.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, ExternalLink, Plus, QrCode, Upload, XCircle } from 'lucide-react';
+import { Plus, QrCode, Upload } from 'lucide-react';
 import { toast, useLang } from '../domain/store';
 import { t as tl } from '../lib/i18n';
 import { Badge, Banner, Button, Card, Empty, Field, Input, Modal, PageHead, Select, Tabs, Tx, useConfirm } from '../ui/kit';
-import { canFinance, Evidence, finance, FinanceRole, InvoiceRow, PaymentAccount, QrInfo, Receipt, STATUS } from '../finance/api';
+import { canFinance, finance, FinanceRole, InvoiceRow, PaymentAccount, QrInfo, Receipt, STATUS } from '../finance/api';
+import { review } from '../finance/review';
+import SlipReview from '../finance/SlipReview';
+import RecordPayment, { type RecordTarget } from '../finance/RecordPayment';
 import { decodeQrFromImage } from '../finance/qrImage';
 import { dateFmt, dateTimeFmt, money } from '../lib/util';
 
 type Tab = 'slips' | 'review' | 'invoices' | 'account' | 'access';
 const ROLE_LABEL: Record<FinanceRole, string> = { viewer: 'Viewer', clerk: 'Clerk', verifier: 'Verifier', manager: 'Manager' };
-const localInput = (d = new Date()) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
 export default function Finance() {
   const lang = useLang();
@@ -22,7 +24,12 @@ export default function Finance() {
   const [tab, setTab] = useState<Tab>('slips');
   const [counts, setCounts] = useState({ slips: 0, review: 0 });
   const refreshCounts = useCallback(async () => {
-    try { const [q, r] = await Promise.all([finance.queue(), finance.reviewReceipts()]); setCounts({ slips: q.length, review: r.length }); } catch { /* shown by the tab itself */ }
+    try {
+      // awaiting = slips submitted + payments confirmed; a database without the review migration still counts the old queue
+      const awaiting = await review.summary(null, null).then((x) => x.awaiting.count).catch(() => finance.queue().then((q) => q.length));
+      const r = await finance.reviewReceipts();
+      setCounts({ slips: awaiting, review: r.length });
+    } catch { /* shown by the tab itself */ }
   }, []);
   useEffect(() => {
     finance.myRole().then((r) => { setRole(r); if (r) void refreshCounts(); })
@@ -47,88 +54,14 @@ export default function Finance() {
           ...(canFinance(role, 'manage') ? [{ v: 'access' as const, label: 'Access' }] : []),
         ]} />
         <div style={{ padding: 14 }}>
-          {tab === 'slips' && <SlipQueue role={role} onChanged={refreshCounts} />}
+          {tab === 'slips' && <SlipReview role={role} onChanged={refreshCounts} />}
           {tab === 'review' && <OverpaymentQueue role={role} onChanged={refreshCounts} />}
-          {tab === 'invoices' && <Invoices role={role} />}
+          {tab === 'invoices' && <Invoices role={role} onChanged={refreshCounts} />}
           {tab === 'account' && <AccountPanel role={role} />}
           {tab === 'access' && canFinance(role, 'manage') && <AccessPanel />}
         </div>
       </Card>
     </div>
-  );
-}
-
-// ------------------------------------------------------------------------------------------- slips
-function SlipQueue({ role, onChanged }: { role: FinanceRole; onChanged: () => void }) {
-  const lang = useLang();
-  const [rows, setRows] = useState<Awaited<ReturnType<typeof finance.queue>> | null>(null);
-  const [open, setOpen] = useState<(Evidence & { invoice_no?: string; customer_name?: string }) | null>(null);
-  const load = useCallback(() => finance.queue().then(setRows).catch((e: Error) => { toast('error', e.message); setRows([]); }), []);
-  useEffect(() => { void load(); }, [load]);
-  if (!rows) return <div className="spinner" />;
-  if (!rows.length) return <Empty title="No slips waiting" hint="New customer slips appear here." />;
-  return (
-    <>
-      <div className="table-wrap"><table className="t compact">
-        <thead><tr><th><Tx>Received</Tx></th><th><Tx>Invoice</Tx></th><th><Tx>Customer</Tx></th><th style={{ textAlign: 'right' }}><Tx>Customer says</Tx></th><th><Tx>Bank / ref</Tx></th><th /></tr></thead>
-        <tbody>{rows.map((e) => (
-          <tr key={e.id}><td className="muted">{dateTimeFmt(e.created_at)}</td><td><b>{e.invoice_no}</b></td><td>{e.customer_name}</td>
-            <td style={{ textAlign: 'right' }}>{money(e.claimed_amount)}</td><td className="muted">{[e.claimed_bank, e.claimed_ref].filter(Boolean).join(' · ') || '—'}</td>
-            <td><Button size="sm" variant="primary" onClick={() => setOpen(e)} disabled={!canFinance(role, 'verify')}><Tx>Check</Tx></Button></td></tr>))}</tbody>
-      </table></div>
-      {!canFinance(role, 'verify') && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}><Tx>Your role can view slips but not verify them.</Tx></div>}
-      {open && <VerifyModal ev={open} onClose={() => setOpen(null)} onDone={() => { setOpen(null); void load(); onChanged(); }} />}
-    </>
-  );
-  void lang;
-}
-
-function VerifyModal({ ev, onClose, onDone }: { ev: Evidence & { invoice_no?: string; customer_name?: string }; onClose: () => void; onDone: () => void }) {
-  const lang = useLang();
-  const ask = useConfirm();
-  const [url, setUrl] = useState<string | null>(null);
-  const [f, setF] = useState({ amount: '', ref: '', when: localInput(ev.claimed_transfer_at ? new Date(ev.claimed_transfer_at) : new Date()), note: '' });
-  const [busy, setBusy] = useState('');
-  useEffect(() => { if (ev.file_path) finance.slipUrl(ev.file_path).then(setUrl).catch((e: Error) => toast('error', e.message)); }, [ev.file_path]);
-  const amount = Number(f.amount);
-  const verify = async () => {
-    if (!(amount > 0) || !f.ref.trim()) return toast('error', tl(lang, 'Enter the amount and the bank transaction reference from your bank record'));
-    if (Math.abs(amount - ev.claimed_amount) > 0.004) {
-      const r = await ask({ title: tl(lang, 'The amount differs from what the customer says'), body: tl(lang, 'Customer says {c}, you entered {a}. The amount from the bank record is the one that will be recorded.', { c: money(ev.claimed_amount), a: money(amount) }), confirmLabel: tl(lang, 'Record bank amount') });
-      if (!r.ok) return;
-    }
-    setBusy('v');
-    try {
-      const res = await finance.verify({ evidenceId: ev.id, amount, bankTransRef: f.ref.trim(), transferAt: new Date(f.when).toISOString(), note: f.note });
-      toast(res.result === 'overpaid_review' ? 'info' : 'success', res.result === 'fully_paid' ? tl(lang, 'Recorded: invoice fully paid') : res.result === 'partially_paid' ? tl(lang, 'Recorded: partially paid, {n} left', { n: money(res.state.outstanding) }) : res.result === 'overpaid_credited' ? tl(lang, 'Recorded: invoice fully paid. {n} above the invoice was credited to the customer\'s wallet', { n: money(res.credited_to_wallet ?? 0) }) : tl(lang, 'Recorded as an overpayment: decide it under Overpayments'));
-      onDone();
-    } catch (e) { toast('error', (e as Error).message); } finally { setBusy(''); }
-  };
-  const reject = async () => {
-    const r = await ask({ title: tl(lang, 'Reject this slip?'), body: tl(lang, 'The customer sees your reason and can send a new slip.'), confirmLabel: tl(lang, 'Reject'), danger: true, reason: tl(lang, 'Reason (shown to the customer)') });
-    if (!r.ok) return;
-    setBusy('r');
-    try { await finance.reject(ev.id, r.reason); toast('success', tl(lang, 'Rejected')); onDone(); } catch (e) { toast('error', (e as Error).message); } finally { setBusy(''); }
-  };
-  return (
-    <Modal size="lg" title={tl(lang, 'Check slip · {n}', { n: ev.invoice_no ?? '' })} desc={ev.customer_name} onClose={onClose}
-      footer={<><Button variant="danger" onClick={reject} disabled={!!busy}><XCircle size={15} /> <Tx>Reject</Tx></Button><Button variant="primary" loading={busy === 'v'} disabled={!!busy} onClick={verify}><CheckCircle2 size={15} /> <Tx>Verify and record payment</Tx></Button></>}>
-      <div className="row gap-16 wrap" style={{ alignItems: 'flex-start' }}>
-        <div style={{ flex: '1 1 260px', minWidth: 0 }}>
-          {!url ? <div className="spinner" /> : ev.file_type === 'application/pdf'
-            ? <a href={url} target="_blank" rel="noreferrer" className="row gap-4"><ExternalLink size={14} /> <Tx>Open the PDF slip</Tx></a>
-            : <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={tl(lang, 'Payment slip')} style={{ width: '100%', maxHeight: 460, objectFit: 'contain', border: '1px solid var(--border)', borderRadius: 8 }} /></a>}
-          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}><Tx>Customer claims</Tx>: {money(ev.claimed_amount)}{ev.claimed_bank && ` · ${ev.claimed_bank}`}{ev.claimed_ref && ` · ${ev.claimed_ref}`}{ev.claimed_transfer_at && ` · ${dateTimeFmt(ev.claimed_transfer_at)}`}</div>
-        </div>
-        <div className="col gap-8" style={{ flex: '1 1 260px' }}>
-          <Banner tone="warn"><Tx>Fill these in from your bank statement or banking app, not from the slip picture alone. A slip can be faked.</Tx></Banner>
-          <Field label="Amount received (฿)" hint="If this is more than the invoice owes, the extra is credited to the customer's wallet."><Input type="number" inputMode="decimal" min={0} step="0.01" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
-          <Field label="Bank transaction reference"><Input maxLength={80} value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} /></Field>
-          <Field label="Transfer date and time"><Input type="datetime-local" value={f.when} onChange={(e) => setF({ ...f, when: e.target.value })} /></Field>
-          <Field label="Note (optional)"><Input maxLength={300} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
-        </div>
-      </div>
-    </Modal>
   );
 }
 
@@ -154,12 +87,13 @@ function OverpaymentQueue({ role, onChanged }: { role: FinanceRole; onChanged: (
 }
 
 // ------------------------------------------------------------------------------------------- invoices
-function Invoices({ role }: { role: FinanceRole }) {
+function Invoices({ role, onChanged }: { role: FinanceRole; onChanged: () => void }) {
   const lang = useLang();
   const ask = useConfirm();
   const [rows, setRows] = useState<InvoiceRow[] | null>(null);
   const [filter, setFilter] = useState('');
   const [adding, setAdding] = useState(false);
+  const [recording, setRecording] = useState<RecordTarget | null>(null);
   const load = useCallback(() => finance.overview().then(setRows).catch((e: Error) => { toast('error', e.message); setRows([]); }), []);
   useEffect(() => { void load(); }, [load]);
   if (!rows) return <div className="spinner" />;
@@ -182,9 +116,12 @@ function Invoices({ role }: { role: FinanceRole }) {
             <tr key={r.id}><td><b>{r.invoice_no}</b><div className="sub">{dateFmt(r.issue_date)}{r.source_ref ? ` · ${r.source_ref}` : ''}</div></td><td>{r.customer_name}</td><td className="muted">{dateFmt(r.due_date)}</td>
               <td style={{ textAlign: 'right' }}>{money(r.amount)}</td><td style={{ textAlign: 'right' }}>{money(r.paid)}</td><td style={{ textAlign: 'right' }}><b>{money(r.outstanding)}</b></td>
               <td><Badge tone={s.tone} dot>{lang === 'th' ? s.th : s.en}</Badge></td>
-              <td>{canFinance(role, 'manage') && r.status_code !== 8 && r.paid === 0 && <Button size="sm" variant="ghost" onClick={() => cancel(r)}><Tx>Cancel</Tx></Button>}</td></tr>); })}</tbody></table></div>
+              <td><div className="row gap-4">
+                {canFinance(role, 'verify') && r.status_code !== 8 && r.outstanding > 0 && <Button size="sm" onClick={() => setRecording({ invoiceId: r.id, invoiceNo: r.invoice_no, customer: r.customer_name, outstanding: r.outstanding, confirmedPending: r.confirmed_pending })}><Tx>Record payment</Tx></Button>}
+                {canFinance(role, 'manage') && r.status_code !== 8 && r.paid === 0 && <Button size="sm" variant="ghost" onClick={() => cancel(r)}><Tx>Cancel</Tx></Button>}</div></td></tr>); })}</tbody></table></div>
       )}
       {adding && <NewInvoice onClose={() => setAdding(false)} onDone={() => { setAdding(false); void load(); }} />}
+      {recording && <RecordPayment target={recording} onClose={() => setRecording(null)} onDone={() => { setRecording(null); void load(); onChanged(); }} />}
     </div>
   );
 }

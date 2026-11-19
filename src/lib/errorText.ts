@@ -7,7 +7,7 @@ import { Lang, t } from './i18n';
 const THAI = /[฀-๿]/;
 
 const STATUS_TH: Record<string, string> = {
-  verified: 'ยืนยันแล้ว', rejected: 'ถูกปฏิเสธแล้ว', submitted: 'ส่งแล้ว', paid: 'ชำระแล้ว', cancelled: 'ยกเลิกแล้ว', canceled: 'ยกเลิกแล้ว',
+  verified: 'ยืนยันแล้ว', confirmed: 'ยืนยันการชำระแล้ว', more_evidence: 'ขอหลักฐานเพิ่มแล้ว', rejected: 'ถูกปฏิเสธแล้ว', submitted: 'ส่งแล้ว', paid: 'ชำระแล้ว', cancelled: 'ยกเลิกแล้ว', canceled: 'ยกเลิกแล้ว',
   void: 'ยกเลิกแล้ว', voided: 'ยกเลิกแล้ว', reversed: 'กลับรายการแล้ว', closed: 'ปิดแล้ว', open: 'เปิดอยู่', draft: 'ฉบับร่าง', posted: 'ลงบัญชีแล้ว',
 };
 const st = (s: string) => STATUS_TH[s.toLowerCase()] ?? s;

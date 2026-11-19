@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 const fixture = JSON.parse(readFileSync(new URL('./catalog.fixture.json', import.meta.url), 'utf8')) as unknown[];
 import { promptPayPayload } from '../../src/lib/promptpay';
 import { FakeWallet, NOT_HANDLED } from './fakeWallet';
+import { FakeReview } from './fakeReview';
 
 export const USER_ID = '11111111-1111-4111-8111-111111111111';
 const HOST = 'hlvravynjalculvplrxc.supabase.co';
@@ -32,6 +33,8 @@ export class FakeShop {
   noBrandFilter = true;
   /** wallet, deposits and bank accounts (fakeWallet.ts) */
   w = new FakeWallet(this);
+  /** the slip-review dashboard (fakeReview.ts): slips, analyses, confirm / post / reject / request more / record payment */
+  rv = new FakeReview(this);
   private fail = new Map<string, number>();
   private drop = new Set<string>();
   private seq = 0;
@@ -151,7 +154,7 @@ export class FakeShop {
       }
       case 'finance_role': return this.w.role;
       case 'finance_staff': return null;
-      default: { const r = this.w.rpc(fn, a); return r === NOT_HANDLED ? this.admin(fn, a) : r; }
+      default: { const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
     }
   }
 
@@ -270,6 +273,11 @@ export class FakeShop {
       if (p === '/auth/v1/user') return json(route, { id: USER_ID, aud: 'authenticated', role: 'authenticated', email: this.profile.email, user_metadata: {}, app_metadata: {} });
       if (p.startsWith('/auth/v1/')) return json(route, {});
       if (p === '/rest/v1/profiles') return json(route, this.profile);
+      if (p === '/functions/v1/slip-analyze') {                                       // the AI reader (Edge Function): only recorded, it is never run here
+        let body: Record<string, unknown> = {};
+        try { body = JSON.parse(req.postData() || '{}') as Record<string, unknown>; } catch { /* no body */ }
+        return json(route, this.rv.analyze(body));
+      }
       if (p.startsWith('/rest/v1/rpc/')) {
         const fn = p.slice('/rest/v1/rpc/'.length);
         let args: Record<string, unknown> = {};

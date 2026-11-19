@@ -115,13 +115,6 @@ describe('labels of the review: AI result and stage', () => {
     expect(t('th', STATUS[10].en)).toBe(STATUS[10].th);
     expect(t('th', 'Cash received')).toBe('รับเงินสด');                      // the label of the CASH_RECEIPT ledger event
   });
-
-  it('the back-office Thai dictionary (TH_BACKOFFICE, used by Tx / T()) says the same as the label tables, so the two cannot drift', () => {
-    for (const l of [...Object.values(AI_RESULT), ...Object.values(STAGE)]) expect(t('th', l.en), l.en).toBe(l.th);
-    expect(t('th', AI_RESULT.match.hint!.en)).toBe(AI_RESULT.match.hint!.th);
-    expect(t('th', STATUS[10].en)).toBe(STATUS[10].th);
-    expect(t('th', 'Cash received')).toBe('รับเงินสด');                      // the label of the CASH_RECEIPT ledger event
-  });
 });
 
 describe('reason texts agree with the classifier in the migration', () => {
@@ -264,6 +257,8 @@ describe('review wrappers call the right function with the right parameter names
     await review.summary('2026-11-19', '2026-11-19');
     expect(m.rpc).toHaveBeenLastCalledWith('finance_review_summary', { p_from: '2026-11-19', p_to: '2026-11-19' });
     await review.summary(null, null);
+    expect(m.rpc).toHaveBeenLastCalledWith('finance_review_summary', { p_from: null, p_to: null });
+    await review.summary('', '');                                                   // an empty date box means "no end": the database gets null, never ''
     expect(m.rpc).toHaveBeenLastCalledWith('finance_review_summary', { p_from: null, p_to: null });
   });
   it('detail: finance_review_detail(p_evidence)', async () => {

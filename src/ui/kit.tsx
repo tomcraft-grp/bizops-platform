@@ -198,10 +198,11 @@ function useEsc(fn: () => void) {
 export function Modal({ title, onClose, children, footer, size, desc }: { title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; size?: 'sm' | 'lg' | 'xl'; desc?: ReactNode }) {
   useEsc(onClose);
   const lang = useLang();
+  const hid = useId();
   return createPortal(
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={cx('modal', size)} role="dialog" aria-modal="true">
-        <div className="modal-h"><div><h2>{tr(lang, title)}</h2>{desc && <div className="muted" style={{ marginTop: 2 }}>{tr(lang, desc)}</div>}</div><Button variant="ghost" icon size="sm" onClick={onClose} aria-label={t(lang, 'Close')}><X size={18} /></Button></div>
+      <div className={cx('modal', size)} role="dialog" aria-modal="true" aria-labelledby={hid}>
+        <div className="modal-h"><div><h2 id={hid}>{tr(lang, title)}</h2>{desc && <div className="muted" style={{ marginTop: 2 }}>{tr(lang, desc)}</div>}</div><Button variant="ghost" icon size="sm" onClick={onClose} aria-label={t(lang, 'Close')}><X size={18} /></Button></div>
         <div className="modal-b">{children}</div>
         {footer && <div className="modal-f">{footer}</div>}
       </div>

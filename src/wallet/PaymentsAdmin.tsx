@@ -486,7 +486,7 @@ function ReportsPanel({ T }: { T: TFn }) {
       {!rows && !error ? <Skeleton h={120} /> : rows && !rows.length ? <Empty title={T('No verified payments in this period')} /> : rows && (
         <div className="card table-wrap"><table className="t"><thead><tr><th>{T('Date')}</th><th>{T('Bank account')}</th><th className="r">{T('Deposits')}</th><th className="r">{T('Invoice transfers')}</th><th className="r">{T('Total')}</th><th className="r">{T('In the ledger')}</th><th className="r">{T('Waiting for the ledger')}</th></tr></thead>
           <tbody>{rows.map((r, i) => (
-            <tr key={i}><td>{r.day}</td><td>{r.bank_code}</td><td className="r">{money(r.deposit_amount)}<div className="sub muted">{r.deposits}</div></td><td className="r">{money(r.invoice_amount)}<div className="sub muted">{r.invoice_transfers}</div></td>
+            <tr key={i}><td>{r.day}</td><td>{r.bank_code === 'CASH' ? T('Cash') : r.bank_code}</td><td className="r">{money(r.deposit_amount)}<div className="sub muted">{r.deposits}</div></td><td className="r">{money(r.invoice_amount)}<div className="sub muted">{r.invoice_transfers}</div></td>
               <td className="r"><b>{money(r.total)}</b></td><td className="r">{money(r.in_ledger)}</td><td className="r">{r.waiting_for_ledger > 0 ? <Badge tone="warn">{money(r.waiting_for_ledger)}</Badge> : money(0)}</td></tr>))}
             <tr className="total"><td colSpan={2}>{T('Total')}</td><td className="r">{money(tot('deposit_amount'))}</td><td className="r">{money(tot('invoice_amount'))}</td><td className="r">{money(tot('total'))}</td><td className="r">{money(tot('in_ledger'))}</td><td className="r">{money(tot('waiting_for_ledger'))}</td></tr></tbody></table></div>
       )}
