@@ -477,8 +477,9 @@ test.describe('times are Bangkok time in a browser set to another zone', () => {
 });
 
 test.describe('record payment: care with files, time, banks and closing', () => {
-  const openRecord = async (page: Page, fake: FakeShop) => {
-    await openReview(page, fake, 'verifier'); await page.getByRole('tab', { name: 'Invoices' }).click();
+  /** `hold` registers a delaying route. It has to come AFTER openReview: the routes the fake adds there would otherwise be asked first and never let a request through to it. */
+  const openRecord = async (page: Page, fake: FakeShop, hold?: () => Promise<void>) => {
+    await openReview(page, fake, 'verifier'); await page.getByRole('tab', { name: 'Invoices' }).click(); if (hold) await hold();
     await page.locator('table.t tbody tr', { hasText: 'INV-000104' }).getByRole('button', { name: 'Record payment' }).click();
     return dlg(page);
   };
@@ -507,8 +508,7 @@ test.describe('record payment: care with files, time, banks and closing', () => 
 
   test('a transfer cannot be sent before the list of bank accounts has loaded', async ({ page }) => {
     const fake = new FakeShop();
-    await page.route('**/rest/v1/finance_bank_accounts*', async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.fallback(); });
-    const d = await openRecord(page, fake);
+    const d = await openRecord(page, fake, () => page.route('**/rest/v1/finance_bank_accounts*', async (route) => { await new Promise((r) => setTimeout(r, 3000)); await route.fallback(); }));
     await d.getByLabel('Amount (฿)').fill('100'); await d.getByLabel('Note').fill('Paid by phone banking'); await d.getByLabel('Bank transaction reference').fill('SCB-REC-0003');
     const ok = d.getByRole('button', { name: 'Record payment' });
     await expect(d).toContainText('Loading the bank accounts…'); await expect(ok).toBeDisabled();
@@ -518,11 +518,10 @@ test.describe('record payment: care with files, time, banks and closing', () => 
 
   test('Esc, the X and a click outside do nothing while the request runs; afterwards the form closes by itself', async ({ page }) => {
     const fake = new FakeShop();
-    await page.route('**/rest/v1/rpc/finance_record_payment', async (route) => { await new Promise((r) => setTimeout(r, 1200)); await route.fallback(); });
-    const d = await openRecord(page, fake);
+    const d = await openRecord(page, fake, () => page.route('**/rest/v1/rpc/finance_record_payment', async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.fallback(); }));
     await d.getByLabel('Payment method').selectOption('cash'); await d.getByLabel('Amount (฿)').fill('50'); await d.getByLabel('Note').fill('Cash at the counter');
     const ok = d.getByRole('button', { name: 'Record payment' }); await ok.click();
-    await expect(ok).toBeDisabled();                                                                                        // the request is running (held back for 1.2 s)
+    await expect(ok).toBeDisabled();                                                                                        // the request is running (held back for 1.5 s)
     await page.keyboard.press('Escape'); await d.getByRole('button', { name: 'Close' }).click(); await page.mouse.click(5, 5);
     await expect(d).toBeVisible();
     await expect(page.locator('.modal')).toHaveCount(0);                                                                     // the answer came: done

@@ -210,6 +210,15 @@ describe('Thai for the refusals of "record payment"', () => {
   });
 });
 
+describe('the Suspicious chip does not restyle any other screen', () => {
+  const css = readFileSync(new URL('../../src/styles.css', import.meta.url), 'utf8');
+  it('no rule of the stylesheet targets every <button class="chip"> (Receivables has one); the dashboard has its own class', () => {
+    expect(css).not.toMatch(/(^|[\s,}])button\.chip\b/m);
+    expect(css).toMatch(/^\.sr-chip \{/m); expect(css).toMatch(/^\.sr-chip\[aria-pressed="true"\]/m);
+    expect(readFileSync(new URL('../../src/finance/SlipReview.tsx', import.meta.url), 'utf8')).toMatch(/className="chip sr-chip"/);
+  });
+});
+
 describe('every sentence on the dashboard has a Thai text', () => {
   const src = (f: string) => readFileSync(new URL(`../../src/finance/${f}`, import.meta.url), 'utf8');
   const found = new Set<string>();
