@@ -7,7 +7,7 @@ import { Lang, t } from './i18n';
 const THAI = /[฀-๿]/;
 
 const STATUS_TH: Record<string, string> = {
-  verified: 'ยืนยันแล้ว', rejected: 'ถูกปฏิเสธแล้ว', submitted: 'ส่งแล้ว', paid: 'ชำระแล้ว', cancelled: 'ยกเลิกแล้ว', canceled: 'ยกเลิกแล้ว',
+  verified: 'ยืนยันแล้ว', confirmed: 'ยืนยันการชำระแล้ว', more_evidence: 'ขอหลักฐานเพิ่มแล้ว', rejected: 'ถูกปฏิเสธแล้ว', submitted: 'ส่งแล้ว', paid: 'ชำระแล้ว', cancelled: 'ยกเลิกแล้ว', canceled: 'ยกเลิกแล้ว',
   void: 'ยกเลิกแล้ว', voided: 'ยกเลิกแล้ว', reversed: 'กลับรายการแล้ว', closed: 'ปิดแล้ว', open: 'เปิดอยู่', draft: 'ฉบับร่าง', posted: 'ลงบัญชีแล้ว',
 };
 const st = (s: string) => STATUS_TH[s.toLowerCase()] ?? s;
@@ -19,6 +19,8 @@ const RULES: Array<[RegExp, (m: RegExpExecArray) => string]> = [
   [/bank transaction (\S+) was already recorded/i, (m) => `รหัสอ้างอิงการโอน ${m[1]} ถูกบันทึกไปแล้ว (อาจเป็นสลิปที่ใช้ซ้ำ)`],
   [/the transfer is older than the (invoice|deposit request)/i, (m) => `เวลาที่โอนเก่ากว่า${/invoice/i.test(m[1]) ? 'ใบแจ้งหนี้' : 'คำขอเติมเงิน'} สลิปอาจไม่ใช่ของรายการนี้`],
   [/the transfer time is in the future/i, () => 'เวลาที่โอนอยู่ในอนาคต กรุณาตรวจสอบวันและเวลาที่กรอก'],
+  [/the payment is older than the invoice/i, () => 'เวลาที่รับชำระเก่ากว่าใบแจ้งหนี้ กรุณาตรวจสอบวันและเวลาที่กรอก'],
+  [/the payment time is in the future/i, () => 'เวลาที่รับชำระอยู่ในอนาคต กรุณาตรวจสอบวันและเวลาที่กรอก'],
   [/several slips for this invoice are already waiting/i, () => 'ใบแจ้งหนี้นี้มีสลิปรอตรวจสอบหลายใบแล้ว กรุณารอร้านตรวจสอบก่อน'],
   [/only jpg, png or pdf files are accepted/i, () => 'รองรับเฉพาะไฟล์ JPG, PNG หรือ PDF'],
   [/the file must be (\d+) ?mb or smaller/i, (m) => `ไฟล์ต้องมีขนาดไม่เกิน ${m[1]} MB`],
@@ -32,6 +34,7 @@ const RULES: Array<[RegExp, (m: RegExpExecArray) => string]> = [
   [/financial records are never deleted/i, () => 'ข้อมูลการเงินห้ามลบ ให้ใช้การกลับรายการแทน'],
   [/^a reason is required/i, () => 'ต้องระบุเหตุผล'],
   [/^please sign in/i, () => 'กรุณาเข้าสู่ระบบ'],
+  [/not allowed to post cash payments/i, () => 'การลงรายการรับเงินสดทำได้เฉพาะผู้จัดการ (ผู้ตรวจสอบบันทึกรับเงินสดได้ แต่ต้องให้ผู้จัดการเป็นผู้ลงรายการ)'],
   [/you are not allowed to|permission denied|not authorized/i, () => 'คุณไม่มีสิทธิ์ทำรายการนี้'],
   [/(?:invoice|evidence|receipt|deposit|customer|order|transaction) not found/i, () => 'ไม่พบรายการที่ต้องการ (อาจถูกยกเลิก หรือคุณไม่มีสิทธิ์เห็น)'],
   [/failed to fetch|network ?error|load failed|timed? ?out|connection/i, () => 'การเชื่อมต่ออินเทอร์เน็ตมีปัญหา กรุณาตรวจสอบสัญญาณแล้วลองใหม่อีกครั้ง'],

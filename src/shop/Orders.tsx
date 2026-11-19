@@ -13,7 +13,8 @@ import { useCart } from './cart';
 import { shopDate, shopDateTime } from './format';
 import { K, useShopLang, useT } from './i18n';
 import { useShopHost, useShopNav } from './nav';
-import { ConfirmSheet, ErrorBox, errText, OrderBadge, orderSteps, PayBadge, ProductImage } from './ui';
+import { CANCEL_CODES, OPEN_CODES } from './pay';
+import { ConfirmSheet, ErrorBox, errText, OrderBadge, orderSteps, PayBadge, PayNotes, ProductImage } from './ui';
 
 const FILTERS: OrderFilter[] = ['all', 'unpaid', 'to_ship', 'to_receive', 'done', 'cancelled'];
 const PAGE = 20;
@@ -62,7 +63,8 @@ function OrderList({ onOpen }: { onOpen: (id: string) => void }) {
                     <div className="grow"><span className="sp-clamp">{o.items[0]?.name}</span><small>{o.items.length > 1 ? `+${o.items.length - 1} · ` : ''}{t('ord.n', { n: o.items.reduce((s, i) => s + i.qty, 0) })} · {shopDate(o.created_at, lang)}</small></div>
                     <ChevronRight size={18} aria-hidden />
                   </div>
-                  <div className="row between"><PayBadge code={o.invoice.status_code} /><b>{baht(o.total)}</b></div>
+                  <div className="row between" style={{ gap: 8 }}><PayBadge code={o.invoice.status_code} /><b>{baht(o.total)}</b></div>
+                  <PayNotes inv={o.invoice} />
                 </button>
               </li>))}</ul>}
       {!st.error && st.orders.length > 0 && st.orders.length < st.total && <button type="button" className="btn block sp-more" disabled={st.loading} onClick={() => load(st.orders.length)}>{st.loading ? '…' : t('common.loadMore')}</button>}
@@ -102,7 +104,7 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
   if (o === null) return <div className="sp-page">{back}<Empty title={t('od.notFound')} /></div>;
 
   const code = o.invoice.status_code;
-  const canCancel = o.status === 'new' && [0, 1, 7, 9].includes(code);
+  const canCancel = o.status === 'new' && CANCEL_CODES.includes(code);   // never while a slip waits (3, also one the shop confirmed) or more evidence is requested (10)
   const steps = orderSteps(o.fulfilment);
   const at = steps.indexOf(o.status);
   const orderAgain = () => {
@@ -137,7 +139,7 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
       )}
 
       <section className="sp-sec"><h3>{t('od.payment')}</h3>
-        <InvoiceCard inv={o.invoice} lang={lang} preferred={o.payment_pref} defaultOpen={[0, 1, 7, 9].includes(code) && o.status !== 'cancelled'} onChanged={() => void load()} />
+        <InvoiceCard inv={o.invoice} lang={lang} preferred={o.payment_pref} defaultOpen={OPEN_CODES.includes(code) && o.status !== 'cancelled'} onChanged={() => void load()} />
       </section>
 
       <section className="sp-sec"><h3>{t('od.items')}</h3>

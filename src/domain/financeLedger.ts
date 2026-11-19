@@ -1,4 +1,4 @@
-// Posting of the central finance queue (wallet deposits, wallet payments, bank receipts, refunds, adjustments, invoices) to the
+// Posting of the central finance queue (wallet deposits, wallet payments, bank and cash receipts, refunds, adjustments, invoices) to the
 // general ledger that lives on this device. Same pattern as daily expenses: the central database writes a queue row in the same
 // transaction as the money event; the accountant's device turns it into a journal with the EXISTING posting engine (roles bank / ar /
 // customer_credit / sales / output_vat, account validation, period lock) and confirms the journal number back, so that a unique
@@ -20,6 +20,7 @@ const MEMO: Record<string, string> = {
   INVOICE_ISSUE: 'Invoice issued', INVOICE_CANCEL: 'Invoice cancelled', BANK_RECEIPT: 'Bank transfer received', RECEIPT_REAPPLY: 'Customer credit applied to invoice',
   RECEIPT_REVERSAL: 'Receipt reversed', WALLET_DEPOSIT: 'Wallet deposit', WALLET_PAYMENT: 'Invoice paid from wallet', WALLET_REFUND: 'Refund to wallet',
   WALLET_ADJUSTMENT: 'Wallet adjustment', WALLET_REVERSAL: 'Wallet transaction reversed',
+  CASH_RECEIPT: 'Cash received',   // a payment staff recorded as cash: Dr cash on hand (role cash) / Cr receivable. Its reversal is a RECEIPT_REVERSAL that credits role cash.
 };
 export const eventLabel = (t: string) => MEMO[t] ?? t;
 

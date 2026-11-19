@@ -11,7 +11,8 @@ export const TH_SHOP: Record<string, string> = {
   'Paid so far': 'ยอดที่ชำระไปแล้ว', 'Pay this invoice': 'ชำระเงิน', 'Payment QR': 'QR ชำระเงิน', 'Payment history': 'ประวัติการชำระเงิน', 'Ref': 'อ้างอิง', 'Reference on slip': 'เลขอ้างอิงในสลิป',
   'Save QR image': 'บันทึกรูป QR', 'Slip': 'สลิป', 'Slip preview': 'ตัวอย่างสลิป', 'Slip sent. The shop will verify it shortly.': 'ส่งสลิปแล้ว ร้านจะตรวจสอบโดยเร็ว',
   'Submit this slip': 'ส่งสลิปนี้', 'Total outstanding': 'ยอดค้างชำระรวม', 'Transfer date and time': 'วันและเวลาที่โอน', 'Upload payment slip': 'อัปโหลดสลิปการโอนเงิน',
-  'Valid until': 'ใช้ได้ถึง', 'waiting for the shop to check': 'รอร้านตรวจสอบ',
+  'Valid until': 'ใช้ได้ถึง', 'waiting for the shop to check': 'รอร้านตรวจสอบ', 'replaced by the slip you sent after': 'ถูกแทนที่ด้วยสลิปที่คุณส่งมาใหม่',
+  'the shop confirmed it; being recorded': 'ร้านยืนยันแล้ว กำลังบันทึก', 'the shop asked for more evidence': 'ร้านขอหลักฐานเพิ่ม', 'Payment recorded by the shop': 'ร้านบันทึกการชำระเงิน',
 
   // back office: Online shop page
   'Online shop': 'ร้านค้าออนไลน์',

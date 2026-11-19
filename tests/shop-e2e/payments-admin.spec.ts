@@ -3,6 +3,7 @@
 // these tests prove that staff can DO the work on the screens, that the screens only offer what a role may do, and that they
 // send only identifiers and the staff member's own inputs (never a balance).
 import AxeBuilder from '@axe-core/playwright';
+import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { FakeShop } from './fakeBackend';
 import type { FRole } from './fakeWallet';
@@ -205,6 +206,22 @@ test.describe('accounting ledger and reports', () => {
     const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export CSV' }).click()]);
     expect(dl.suggestedFilename()).toMatch(/^bank-report-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv$/);
     await page.getByLabel('Bank account').selectOption({ label: 'BBL' }); await expect(rows).toHaveCount(2);
+  });
+});
+
+test.describe('the cash line of the bank report', () => {
+  test('cash received at the back office is labelled Cash (not the raw code), in both languages, and the CSV keeps the code', async ({ page }) => {
+    const fake = new FakeShop(); seedDeposit(fake, 'bank-scb', 400); fake.w.verify('DEP-202611-00001', 400); fake.w.cashToday = 150;
+    await openPayments(page, fake, 'viewer'); await tabBtn(page, 'Reports').click();
+    const rows = page.locator('table.t tbody tr');
+    await expect(rows).toHaveCount(3);                                                              // SCB, CASH and the total
+    await expect(rows.filter({ hasText: 'Cash' })).toHaveCount(1); await expect(rows.filter({ hasText: 'Cash' })).toContainText('฿150.00');
+    await expect(page.locator('table.t')).not.toContainText('CASH');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export CSV' }).click()]);
+    expect(readFileSync((await dl.path())!, 'utf8')).toContain(',CASH,');                           // a file keeps the stable code
+    const page2 = await page.context().newPage(); const fake2 = new FakeShop(); seedDeposit(fake2, 'bank-scb', 400); fake2.w.verify('DEP-202611-00001', 400); fake2.w.cashToday = 150;
+    await openPayments(page2, fake2, 'viewer', 'th'); await tabBtn(page2, 'รายงาน').click();
+    await expect(page2.locator('table.t tbody tr', { hasText: 'เงินสด' })).toHaveCount(1);
   });
 });
 

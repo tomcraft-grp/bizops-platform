@@ -27,6 +27,8 @@ export class FakeWallet {
   promptpay = true;                   // false = no PromptPay account is set up (the QR is not offered), like production today
   settings = { min_deposit: 100, max_deposit: 100000, max_open_deposits: 3, adjustment_limit: 5000, adjustment_role: 'settlement_variance', invoice_vat_mode: 'unset' as 'unset' | 'none' | 'inclusive', vat_rate: 7, updated_at: new Date().toISOString() };
   queue: { id: string; seq: number; event_type: string; ref_no: string; amount: number; plan: unknown[]; status: 'pending' | 'posted' | 'void'; journal_no: string | null; event_date: string }[] = [];
+  /** cash received at the back office and posted today (the CASH line of the daily bank report); 0 = none */
+  cashToday = 0;
   invoiceBank = new Map<string, string>();       // invoice slip -> bank id (what the customer chose)
   private keys = new Map<string, { hash: string; out: unknown }>();
   private n = 0;
@@ -214,6 +216,7 @@ export class FakeWallet {
       case 'finance_bank_daily_report': {
         this.need('viewer');
         const day = new Date().toISOString().slice(0, 10); const out: Record<string, unknown>[] = [];
+        if (this.cashToday > 0 && !a.p_bank) out.push({ day, bank_code: 'CASH', bank_account_id: null, deposits: 0, deposit_amount: 0, invoice_transfers: 1, invoice_amount: this.cashToday, total: this.cashToday, in_ledger: 0, waiting_for_ledger: this.cashToday });
         for (const b of this.banks) {
           if (a.p_bank && a.p_bank !== b.id) continue;
           const ds = this.deposits.filter((d) => d.bank_id === b.id && d.status === 'verified');
