@@ -8,6 +8,7 @@ const fixture = JSON.parse(readFileSync(new URL('./catalog.fixture.json', import
 import { promptPayPayload } from '../../src/lib/promptpay';
 import { FakeWallet, NOT_HANDLED } from './fakeWallet';
 import { FakeReview } from './fakeReview';
+import { FakeRewards } from './fakeRewards';
 
 export const USER_ID = '11111111-1111-4111-8111-111111111111';
 const HOST = 'hlvravynjalculvplrxc.supabase.co';
@@ -39,6 +40,8 @@ export class FakeShop {
   w = new FakeWallet(this);
   /** the slip-review dashboard (fakeReview.ts): slips, analyses, confirm / post / reject / request more / record payment */
   rv = new FakeReview(this);
+  /** points, per-bill board picks and the event boards (fakeRewards.ts) */
+  rw = new FakeRewards(this);
   private fail = new Map<string, number>();
   private drop = new Set<string>();
   private seq = 0;
@@ -191,7 +194,7 @@ export class FakeShop {
       }
       case 'finance_role': return this.w.role;
       case 'finance_staff': return null;
-      default: { const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
+      default: { const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
     }
   }
 
