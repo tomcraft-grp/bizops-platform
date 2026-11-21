@@ -324,3 +324,24 @@ div.wl-card .wl-no { user-select: all; }
 .rw-preview svg { flex: none; margin-top: 2px; }
 .rw-preview p { margin: 0; } .rw-preview p + p { margin-top: 6px; }
 .rw-preview small { display: block; font-size: 12.5px; }
+.rw-points { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: var(--radius); background: var(--brand-soft); color: var(--brand-text); border: 1px solid color-mix(in srgb, var(--brand) 25%, transparent); }
+.rw-points svg { flex: none; }
+.rw-points p { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: 14px; }
+.rw-points b { font-size: 28px; line-height: 1.1; color: var(--text); }
+.rw-hist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.rw-hist li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--hairline); }
+.rw-hist li:last-child { border-bottom: 0; }
+.rw-hist-main { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.rw-hist-main small { color: var(--muted); font-size: 12.5px; }
+.rw-hist-pts { flex: none; font-size: 16px; color: var(--good-text); }
+.rw-hist-pts.neg { color: var(--crit-text); }
+.rw-rules { display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 1.45; }
+.rw-rules ul { margin: 0; padding-left: 18px; }
+.rw-rules small { color: var(--muted); font-size: 12.5px; }
+.rw-parts { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.rw-parts small { color: var(--text-2); font-size: 12.5px; }
+.rw-stale { display: flex; align-items: center; gap: 6px; align-self: flex-start; padding: 4px 10px; border-radius: 999px; background: var(--warn-soft); color: var(--warn-text); font-size: 12.5px; }
+.rw-mine li { flex-direction: column; align-items: flex-start; gap: 0; padding: 5px 12px; border-radius: 12px; }
+.rw-mine li .who { display: inline-flex; align-items: center; gap: 4px; }
+.rw-mine li small { font-size: 12px; font-weight: 500; }
+.rw-mine li[data-reserved] { border: 1.5px dashed var(--brand); }

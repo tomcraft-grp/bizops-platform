@@ -1,15 +1,16 @@
 // The customer's Rewards screen (Account → "Rewards & event") and the cart's preview line.
 // Board picks are PER BILL: each paid bill earns floor(eligible bill amount / step) picks and bills are never added together, so the screen shows, bill by bill,
 // the eligible amount and the picks it earned ("counts once paid" for an unpaid bill, "taken back" when its payment was reversed), then "Earned 4 · Used 1 · 3 left to pick",
-// then the three shared number boards. The browser never decides anything: it shows what rw_my_rewards and rw_board_state say, sends a claim only after the customer
+// then the three shared number boards, and under them the customer's own numbers (always, whatever the event is doing). In the points-only phase (boards not open yet) the
+// screen shows the points and what moved them instead of any picks wording. The browser never decides anything: it shows what rw_my_rewards and rw_board_state say, sends a claim only after the customer
 // confirms in an inline bar, and shows the board the server answers with. Other customers' identities are never sent to the browser.
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
-import { ArrowLeft, Check, CheckCircle2, ChevronRight, Clock, Gift, Info, Lock, Minus, Undo2, User, Users, X } from 'lucide-react';
+import { ArrowLeft, Check, CheckCircle2, ChevronRight, Clock, Coins, Gift, Info, Lock, Minus, Undo2, User, Users, X } from 'lucide-react';
 import { cx } from '../lib/util';
-import { isRewardsError, rewards, type BoardCell, type BoardRevs, type BoardState, type CartPreview, type MyRewards } from '../rewards/api';
+import { isRewardsError, rewards, type BoardCell, type BoardRevs, type BoardState, type CartPreview, type MyRewards, type PublicBoard, type Rights } from '../rewards/api';
 import { ShopError } from './api';
 import { newKey, toQuoteItems, type CartLine } from './cart';
-import { baht, shopDate } from './format';
+import { baht, shopDate, shopDateTime } from './format';
 import { useShopLang, useT } from './i18n';
 import { useShopHost, useShopNav } from './nav';
 import * as V from './rewardsView';
@@ -30,9 +31,12 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
   const [boardsOff, setBoardsOff] = useState(false);
   const [boardId, setBoardId] = useState<string | null>(null);
   const [pending, setPending] = useState<{ boardId: string; n: number } | null>(null);
+  const [held, setHeld] = useState<{ id: string; boardName: string; n: number } | null>(null);   // the claim worked, the follow-up confirm did not: the number is held, not confirmed
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<Msg | null>(null);
+  const [stale, setStale] = useState(false);                     // two revision reads in a row failed: the board may be out of date
   const [allBills, setAllBills] = useState(false);
+  const [allHistory, setAllHistory] = useState(false);
   const [focusIdx, setFocusIdx] = useState(0);
   const alive = useRef(true);
   const seq = useRef(0);                                         // the newest board request: an older answer is dropped
@@ -40,6 +44,7 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
   const boardRef = useRef<BoardState | null>(null);              // the board on screen, for code that runs after an await
   const attempt = useRef<{ boardId: string; n: number; key: string } | null>(null);   // the idempotency key of the claim being made / retried
   const inflight = useRef(false);
+  const pollFails = useRef(0);
   const lastBack = useRef(0);
   const returnFocus = useRef(false);
   const focusConfirm = useRef(false);                            // the question was opened from the keyboard: move focus to it
@@ -55,37 +60,49 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
   const loadMine = useCallback(async () => {
     try { const m = await rewards.mine(); if (alive.current) { setMine(m); setMineErr(null); } } catch (e) { if (alive.current) setMineErr(e); }
   }, []);
-  const loadBoard = useCallback(async () => {
+  /** Reload the board. Resolves false only when the load FAILED (a superseded request, or "boards are off", is not a failure). */
+  const loadBoard = useCallback(async (): Promise<boolean> => {
     const id = ++seq.current;
     try {
       const s = await rewards.boardState(null);
-      if (!alive.current || id !== seq.current) return;
-      shown.current = V.revsOf(s); setBoard(s); setBoardErr(null); setBoardsOff(false);
+      if (!alive.current || id !== seq.current) return true;
+      shown.current = V.revsOf(s); setBoard(s); setBoardErr(null); setBoardsOff(false); return true;
     } catch (e) {
-      if (!alive.current || id !== seq.current) return;
-      if (isRewardsError(e, 'BOARDS_OFF', 'REWARDS_OFF')) { shown.current = null; setBoard(null); setBoardsOff(true); } else setBoardErr(e);
+      if (!alive.current || id !== seq.current) return true;
+      if (isRewardsError(e, 'BOARDS_OFF', 'REWARDS_OFF')) { shown.current = null; setBoard(null); setBoardsOff(true); return true; }
+      setBoardErr(e); return false;
     }
   }, []);
   useEffect(() => { void loadMine(); void loadBoard(); }, [loadMine, loadBoard]);
 
-  // Keep the board current: every 5 s ask for the three revision numbers (only while this screen is mounted and the page is visible) and reload the board ONLY when
-  // one changed; when the customer comes back to the page, reload at once. Missing a poll costs nothing: the server checks every claim anyway.
+  // Keep the screen current. While a board is on screen: every 5 s ask for the three revision numbers (only while this screen is mounted and the page is visible) and
+  // reload the board ONLY when one changed; two failed reads in a row show a small "may be out of date" note, the next success clears it. Coming back to the page
+  // reloads everything at once. Missing a poll costs nothing: the server checks every claim anyway.
   const live = board !== null;
   useEffect(() => {
-    if (!live) return;
     let polling = false;
     const tick = async () => {
       if (document.visibilityState !== 'visible' || polling) return;
       polling = true;
-      try { const r = await rewards.boardRevs(null); if (alive.current && V.revsChanged(shown.current, r)) await loadBoard(); } catch { /* the next poll tries again */ } finally { polling = false; }
+      let ok = true;
+      try {
+        const r = await rewards.boardRevs(null);
+        if (alive.current && V.revsChanged(shown.current, r)) { ok = await loadBoard(); void loadMine(); }
+      } catch (e) {
+        if (isRewardsError(e, 'BOARDS_OFF', 'REWARDS_OFF')) { await loadBoard(); void loadMine(); }   // switched off meanwhile: not a connection problem, look again at what is on
+        else ok = false;
+      } finally { polling = false; }
+      if (!alive.current) return;
+      const h = V.pollHealth(pollFails.current, ok); pollFails.current = h.fails; setStale(h.stale);
     };
-    const timer = setInterval(() => { void tick(); }, V.POLL_MS);
+    const timer = live ? setInterval(() => { void tick(); }, V.POLL_MS) : null;
     const back = () => { if (Date.now() - lastBack.current < 1000) return; lastBack.current = Date.now(); void loadBoard(); void loadMine(); };
     const onFocus = () => back();
     const onVisible = () => { if (document.visibilityState === 'visible') back(); };
     window.addEventListener('focus', onFocus); document.addEventListener('visibilitychange', onVisible);
-    return () => { clearInterval(timer); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onVisible); };
+    return () => { if (timer) clearInterval(timer); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onVisible); };
   }, [live, loadBoard, loadMine]);
+  useEffect(() => { if (!live) { pollFails.current = 0; setStale(false); } }, [live]);
 
   // ------------------------------------------------------------ derived
   const ev = board?.event ?? null;
@@ -93,13 +110,12 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
   const cur = boards.find((b) => b.id === boardId) ?? boards[0] ?? null;
   const picks = (mine?.picks ?? []).filter((p) => !ev || !p.event_id || p.event_id === ev.id);
   const rights = ev && board ? board.rights : V.sumPicks(picks);
-  const rule = V.pickRule(picks);
+  const rules = V.pickRules(picks);
   const access = V.boardAccess(ev, cur, rights);
-  const bills = picks.flatMap((p) => p.bills).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const bills = V.groupBills(picks);
   const maxN = ev?.number_max ?? 99;
   const pad = (n: number) => V.padNumber(n, maxN);
-  const chips = board ? V.mineChips(board) : [];
-  const stepText = rule ? baht(rule.step) : null;
+  const stepText = rules.length ? baht(V.smallestStep(rules)!) : null;
 
   // an open confirm bar for a number that is no longer pickable (somebody was faster, the board was locked…) closes with the reason, never a stale question
   useEffect(() => {
@@ -111,10 +127,10 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
     if (b && c?.s === 'mine') { attempt.current = null; setMsg({ tone: 'good', text: t('rw.done', { board: b.name, n: pad(pending.n), left: board.rights.remaining }) }); return; }
     setMsg({ tone: 'bad', text: t(!b || !c ? 'rw.err.event' : V.accessKey(a) ?? (a === 'no_rights' ? 'rw.err.noRights' : 'rw.err.taken')) });
   }, [board]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (pending && focusConfirm.current) { focusConfirm.current = false; confirmRef.current?.focus(); } }, [pending]);
-  useEffect(() => { if (!pending && returnFocus.current) { returnFocus.current = false; cellRefs.current[focusIdx]?.focus(); } }, [pending, focusIdx]);
+  useEffect(() => { if ((pending || held) && focusConfirm.current) { focusConfirm.current = false; confirmRef.current?.focus(); } }, [pending, held]);
+  useEffect(() => { if (!pending && !held && returnFocus.current) { returnFocus.current = false; cellRefs.current[focusIdx]?.focus(); } }, [pending, held, focusIdx]);
 
-  const closeBar = () => { if (dockRef.current?.contains(document.activeElement)) returnFocus.current = true; setPending(null); };
+  const closeBar = () => { if (dockRef.current?.contains(document.activeElement)) returnFocus.current = true; setPending(null); setHeld(null); };
   const chooseBoard = (id: string) => { if (id === cur?.id) return; setBoardId(id); setPending(null); setMsg(null); setFocusIdx(0); };
   const onCell = (c: BoardCell, idx: number, fromKeyboard: boolean) => {
     if (!cur || busy) return;
@@ -123,7 +139,7 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
     if (kind === 'taken') { setPending(null); setMsg({ tone: 'info', text: t('rw.tap.taken', { board: cur.name, n: pad(c.n) }) }); return; }
     if (kind === 'mine') { setPending(null); setMsg({ tone: 'info', text: t('rw.tap.mine', { board: cur.name, n: pad(c.n) }) }); return; }
     if (kind === 'blocked') { setPending(null); const k = V.accessKey(access); setMsg({ tone: 'info', text: k ? t(k) : stepText ? t('rw.noRights', { amount: stepText }) : t('rw.noRightsUnknown') }); return; }
-    setMsg(null); focusConfirm.current = fromKeyboard; setPending({ boardId: cur.id, n: c.n });
+    setMsg(null); setHeld(null); focusConfirm.current = fromKeyboard; setPending({ boardId: cur.id, n: c.n });   // (a number still held from before stays held: it is listed under "Your numbers")
   };
   const onGridKey = (e: KeyboardEvent) => {
     if (!cur || !NAV_KEYS.has(e.key)) return;
@@ -131,24 +147,44 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
     e.preventDefault();
     const j = V.gridMove(i, e.key, V.GRID_COLS, cur.numbers.length); setFocusIdx(j); cellRefs.current[j]?.focus();
   };
+  /** Put the server's answer (its board and its rights) on screen; a board load that started before it must not overwrite it. */
+  const showServerBoard = (b: PublicBoard, r: Rights) => {
+    seq.current++;
+    const cur0 = boardRef.current;
+    if (cur0) { const next = V.replaceBoard(cur0, b, r); shown.current = V.revsOf(next); boardRef.current = next; setBoard(next); }
+  };
+  const done = (boardName: string, n: number, left: number) => setMsg({ tone: 'good', text: t('rw.done', { board: boardName, n: pad(n), left }) });
 
   /** Confirm: ONE claim per attempt. A double tap does nothing (inflight); a retry after a lost answer reuses the key, so the server returns the first result. */
   const confirm = async () => {
-    if (!pending || !ev || inflight.current) return;
+    if (inflight.current) return;
+    if (held) return confirmHeld();
+    if (!pending || !ev) return;
     const b = boardRef.current?.boards.find((x) => x.id === pending.boardId); if (!b) return;
     inflight.current = true; setBusy(true); setMsg(null);
     const a = attempt.current && attempt.current.boardId === pending.boardId && attempt.current.n === pending.n ? attempt.current : (attempt.current = { boardId: pending.boardId, n: pending.n, key: newKey() });
     try {
       let r = await rewards.claim(ev.id, pending.boardId, pending.n, a.key);
+      attempt.current = null;                                      // the claim is done: a later failure is about the confirm, not about the claim
       // an event with a hold reserves the number first: the customer already confirmed, so finish it in the same go
-      if (r.selection.status === 'reserved') { const c = await rewards.confirm(r.selection.id); r = { ...r, selection: c.selection, board: c.board, rights: c.rights }; }
-      attempt.current = null;
+      if (r.selection.status === 'reserved') {
+        try { const c = await rewards.confirm(r.selection.id); r = { ...r, selection: c.selection, board: c.board, rights: c.rights }; }
+        catch (e) {
+          if (!alive.current) return;
+          // the number IS held for the customer (the claim's own answer says so) but it is not confirmed: never say "picked"
+          const plan = V.confirmPlan(e instanceof ShopError ? e.code : 'ERROR');
+          showServerBoard(r.board, r.rights);
+          setPending(null);
+          if (plan.keepBar) setHeld({ id: r.selection.id, boardName: b.name, n: pending.n }); else closeBar();
+          setMsg({ tone: 'bad', text: t(plan.message, { board: b.name, n: pad(pending.n) }) });
+          void loadMine(); if (!plan.keepBar) void loadBoard();
+          return;
+        }
+      }
       if (!alive.current) return;
-      seq.current++;                                              // a board load that started before this answer must not overwrite it
-      const cur0 = boardRef.current;
-      if (cur0) { const next = V.replaceBoard(cur0, r.board, r.rights); shown.current = V.revsOf(next); boardRef.current = next; setBoard(next); }
+      showServerBoard(r.board, r.rights);
       closeBar();
-      setMsg({ tone: 'good', text: t('rw.done', { board: b.name, n: pad(pending.n), left: r.rights.remaining }) });
+      done(b.name, pending.n, r.rights.remaining);
       void loadMine();
     } catch (e) {
       if (!alive.current) return;
@@ -159,8 +195,26 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
       if (plan.refresh) { void loadBoard(); void loadMine(); }
     } finally { inflight.current = false; if (alive.current) setBusy(false); }
   };
+  /** Confirm again a number that is held but not confirmed: the same selection, so the pick is never used twice. */
+  const confirmHeld = async () => {
+    if (!held || inflight.current) return;
+    inflight.current = true; setBusy(true); setMsg(null);
+    try {
+      const c = await rewards.confirm(held.id);
+      if (!alive.current) return;
+      showServerBoard(c.board, c.rights); setHeld(null); closeBar();
+      done(held.boardName, held.n, c.rights.remaining);
+      void loadMine();
+    } catch (e) {
+      if (!alive.current) return;
+      const plan = V.confirmPlan(e instanceof ShopError ? e.code : 'ERROR');
+      if (!plan.keepBar) closeBar();
+      setMsg({ tone: 'bad', text: t(plan.message, { board: held.boardName, n: pad(held.n) }) });
+      if (plan.refresh) { void loadBoard(); void loadMine(); }
+    } finally { inflight.current = false; if (alive.current) setBusy(false); }
+  };
   useEffect(() => {   // Escape closes the question
-    const k = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape' && pending && !inflight.current) closeBar(); };
+    const k = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape' && (pending || held) && !inflight.current) closeBar(); };
     window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k);
   }); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -175,16 +229,71 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
   if (!mine) return frame(mineErr ? <ErrorBox message={errText(t, mineErr)} onRetry={() => { setMineErr(null); void loadMine(); }} /> : <div className="muted" aria-busy="true">{t('rw.loading')}</div>);
   if (!mine.enabled) return frame(<div className="rw-note" data-testid="rw-off"><Info size={18} aria-hidden /><span>{t('rw.off')}</span></div>);
 
+  /** "Your numbers": what the server says the customer holds, whatever the event is doing (open, paused, closed) and whether or not a board is on screen. */
+  const numbers = V.myNumbers(mine.selections ?? []);
+  const myList = numbers.length > 0 && (
+    <div className="rw-mine" data-testid="rw-mine">
+      <b>{t('rw.mineList')}</b>
+      <ul>
+        {numbers.map((m) => (
+          <li key={m.id} data-reserved={m.reserved || undefined}>
+            <span className="who"><Check size={14} aria-hidden />{m.board} #{pad(m.n)}</span>
+            <small>{m.reserved ? (m.expires_at ? t('rw.mine.reserved', { time: shopDateTime(m.expires_at, lang) }) : t('rw.mine.reservedNoTime')) : t('rw.mine.confirmed')}</small>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+
+  // The points-only phase (rewards on, boards not open yet; rw_my_rewards sends no picks then): the points and what moved them, and the note. No picks wording at all.
+  if (!mine.boards_enabled) {
+    const history = mine.points_history ?? [];
+    const hist = V.visibleHistory(history, allHistory);
+    return frame(
+      <>
+        <section className="rw-points" data-testid="rw-points" aria-label={t('rw.pointsBalance')}>
+          <Coins size={26} aria-hidden />
+          <p><span>{t('rw.pointsBalance')}</span><b>{mine.points.toLocaleString('en-US')}</b> <span>{t('rw.pointsUnit')}</span></p>
+        </section>
+        <Section title={t('rw.hist.title')}>
+          {history.length === 0 ? <p className="sp-note">{t('rw.hist.none')}</p> : (
+            <>
+              <ul className="rw-hist" data-testid="rw-history">
+                {hist.map((h, i) => (
+                  <li key={`${h.at}-${i}`} data-kind={h.kind}>
+                    <span className="rw-hist-main"><b>{t(V.historyKey(h.kind))}</b>
+                      <small>{[h.order_no ? t('rw.order', { no: h.order_no }) : null, h.note, shopDate(h.at, lang)].filter(Boolean).join(' · ')}</small></span>
+                    <b className={cx('rw-hist-pts', h.points < 0 && 'neg')}>{V.signedPoints(h.points)}</b>
+                  </li>
+                ))}
+              </ul>
+              {history.length > V.HISTORY_COLLAPSED && !allHistory && <button type="button" className="sp-link" onClick={() => setAllHistory(true)}>{t('rw.hist.showAll', { n: history.length })}</button>}
+            </>
+          )}
+        </Section>
+        <div className="rw-note" data-testid="rw-boards-off"><Info size={18} aria-hidden /><span>{t('rw.boardsOff')}</span></div>
+        {myList}
+      </>,
+    );
+  }
+
   const hint = stepText ? t('rw.noRights', { amount: stepText }) : t('rw.noRightsUnknown');
   const eventKey = ev && ev.status !== 'active' ? V.accessKey(`event_${ev.status}` as V.Access) : null;
   const readOnly = access !== 'ok';
+  const barOpen = !!held || (!!pending && !!cur);
   return frame(
     <>
       <section className="rw-summary" data-testid="rw-summary" aria-label={t('rw.summaryLabel')}>
         <Gift size={26} aria-hidden />
         <p><span>{t('rw.earned', { n: rights.earned })}</span>{' · '}<span>{t('rw.used', { n: rights.used })}</span>{' · '}<b>{t('rw.left', { n: rights.remaining })}</b></p>
       </section>
-      <p className="sp-note" data-testid="rw-rule">{rule ? t(rule.reward === 1 ? 'rw.rule1' : 'rw.ruleN', { amount: baht(rule.step), n: rule.reward }) : t('rw.ruleUnknown')}</p>
+      {rules.length > 1 ? (
+        <div className="rw-rules" data-testid="rw-rule">
+          <b>{t('rw.rulesTitle')}</b>
+          <ul>{rules.map((r) => <li key={r.id}>{t(r.reward === 1 ? 'rw.ruleItem1' : 'rw.ruleItemN', { name: r.name, amount: baht(r.step), n: r.reward })}</li>)}</ul>
+          <small>{t('rw.rulesNote')}</small>
+        </div>
+      ) : <p className="sp-note" data-testid="rw-rule">{rules.length === 1 ? t(rules[0].reward === 1 ? 'rw.rule1' : 'rw.ruleN', { amount: baht(rules[0].step), n: rules[0].reward }) : t('rw.ruleUnknown')}</p>}
       {mine.points > 0 && <p className="sp-note"><b>{t('rw.points', { n: mine.points.toLocaleString('en-US') })}</b></p>}
 
       <Section title={t('rw.bills')}>
@@ -193,14 +302,22 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
             <ul className="rw-bills" data-testid="rw-bills">
               {V.visibleBills(bills, allBills).map((b) => {
                 const v = V.billView(b); const Icon = BILL_ICON[v.kind]; const amount = baht(b.eligible_amount);
-                const line = v.kind === 'earned' ? t(v.picks === 1 ? 'rw.billEarned1' : 'rw.billEarnedN', { amount, n: v.picks })
-                  : v.kind === 'none' ? (stepText ? t('rw.billNoneStep', { amount, step: stepText }) : t('rw.billNone', { amount }))
-                    : v.kind === 'waiting' ? t('rw.billWaiting', { amount }) : t('rw.billBack', { amount });
+                const several = b.parts.length > 1 && !b.sameAmount;          // rules that saw different eligible amounts: the row shows the total, each rule its own part
+                const wording = (kind: V.BillKind, picks: number, amt: string) => kind === 'earned' ? t(picks === 1 ? 'rw.billEarned1' : 'rw.billEarnedN', { amount: amt, n: picks })
+                  : kind === 'none' ? (rules.length === 1 && stepText ? t('rw.billNoneStep', { amount: amt, step: stepText }) : t('rw.billNone', { amount: amt }))
+                    : kind === 'waiting' ? t('rw.billWaiting', { amount: amt }) : t('rw.billBack', { amount: amt });
+                const line = several && v.kind === 'earned' ? t('rw.billSum', { n: v.picks }) : wording(v.kind, v.picks, amount);
                 return (
                   <li key={b.order_id} data-order={b.order_no} data-kind={v.kind}>
                     <button type="button" className="rw-bill" title={t('rw.billOpen')} onClick={() => { useShopNav.getState().openOrder(b.order_id); host.goTab('pay'); }}>
                       <span className="rw-bill-ic" aria-hidden><Icon size={18} /></span>
-                      <span className="rw-bill-main"><b>{t('rw.order', { no: b.order_no })}</b><small>{shopDate(b.created_at, lang)}</small><span>{line}</span></span>
+                      <span className="rw-bill-main"><b>{t('rw.order', { no: b.order_no })}</b><small>{shopDate(b.created_at, lang)}</small><span>{line}</span>
+                        {several && (
+                          <span className="rw-parts" data-testid="rw-parts">
+                            {b.parts.map((p) => { const pv = V.billView(p); return <small key={p.rule_id}>{p.rule_name}: {wording(pv.kind, pv.picks, baht(p.eligible_amount))}</small>; })}
+                          </span>
+                        )}
+                      </span>
                       <ChevronRight size={18} aria-hidden />
                     </button>
                   </li>
@@ -213,11 +330,12 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
       </Section>
 
       <Section title={t('rw.boards')}>
-        {boardsOff || !mine.boards_enabled ? <div className="rw-note"><Info size={18} aria-hidden /><span>{t('rw.boardsOff')}</span></div>
+        {boardsOff ? <div className="rw-note" data-testid="rw-boards-off"><Info size={18} aria-hidden /><span>{t('rw.boardsOff')}</span></div>
           : !board ? (boardErr ? <ErrorBox message={errText(t, boardErr)} onRetry={() => { setBoardErr(null); void loadBoard(); }} /> : <div className="muted" aria-busy="true">{t('rw.loading')}</div>)
             : !ev || !cur ? <div className="rw-note" data-testid="rw-no-event"><Info size={18} aria-hidden /><span>{t('rw.noEvent')}</span></div> : (
               <>
                 <p className="rw-event"><b>{ev.name}</b>{ev.ends_at ? <small> · {t('rw.until', { date: shopDate(ev.ends_at, lang) })}</small> : null}</p>
+                {stale && <div className="rw-stale" data-testid="rw-stale" role="status"><Clock size={14} aria-hidden /><span>{t('rw.stale')}</span></div>}
                 {eventKey && <div className="rw-note warn" data-testid="rw-event-banner" role="status"><Info size={18} aria-hidden /><span>{t(eventKey)}</span></div>}
                 <div className="rw-tabs" role="group" aria-label={t('rw.pickBoard')}>
                   {boards.map((b) => (
@@ -247,14 +365,14 @@ export function RewardsView({ onBack }: { onBack: () => void }) {
                   <li><span className="rw-key" data-s="mine" aria-hidden>07</span>{t('rw.legend.mine')}</li>
                   {cur.mode === 'shared' && <li><span className="rw-key" data-s="shared" aria-hidden>07<span className="rw-c">2</span></span>{t('rw.legend.shared')}</li>}
                 </ul>
-                {chips.length > 0 && <div className="rw-mine" data-testid="rw-mine"><b>{t('rw.mineList')}</b><ul>{chips.map((c) => <li key={c.board + c.n}><Check size={14} aria-hidden />{c.board} #{pad(c.n)}</li>)}</ul></div>}
               </>
             )}
+        {myList}
         <div className="rw-dock" ref={dockRef} aria-live="polite">
           {msg && <div className={cx('rw-msg', msg.tone)} data-testid="rw-msg"><span>{msg.text}</span><button type="button" aria-label={t('rw.dismiss')} onClick={() => setMsg(null)}><X size={16} aria-hidden /></button></div>}
-          {pending && cur && (
+          {barOpen && (
             <div className="rw-confirm" data-testid="rw-confirm">
-              <p>{t('rw.confirm.q', { board: cur.name, n: pad(pending.n) })}</p>
+              <p>{held ? t('rw.held.q', { board: held.boardName, n: pad(held.n) }) : t('rw.confirm.q', { board: cur!.name, n: pad(pending!.n) })}</p>
               <div className="rw-confirm-btns">
                 <button type="button" className="btn" data-testid="rw-confirm-no" onClick={() => { if (!busy) closeBar(); }} aria-disabled={busy || undefined}>{t('rw.confirm.no')}</button>
                 <button type="button" className="btn primary" data-testid="rw-confirm-yes" ref={confirmRef} onClick={() => { void confirm(); }} aria-disabled={busy || undefined} aria-busy={busy}>{busy ? '…' : t('rw.confirm.yes')}</button>

@@ -29,11 +29,20 @@ async function openRewards(page: Page, lang: 'th' | 'en' = 'th') {
   await expect(page.getByTestId('rewards-screen')).toBeVisible();
   await expect(page.getByTestId('rw-summary')).toBeVisible();
 }
+/** the same, for a state that has no picks summary (points only): waits for the screen to finish loading instead */
+async function openRewardsScreen(page: Page, lang: 'th' | 'en' = 'th') {
+  await tab(page, (lang === 'th' ? t : en)('nav.account')).click();
+  await page.getByTestId('rewards-row').click();
+  await expect(page.getByTestId('rewards-screen')).toBeVisible();
+  await expect(page.locator('[data-testid="rewards-screen"] [aria-busy="true"]')).toHaveCount(0);
+}
 /** a customer with rewards on and an active event; `bills` are paid bills of these eligible amounts */
 function shopWith(...bills: number[]) { const fake = new FakeShop(); fake.decorate(); fake.rw.enable(); for (const b of bills) fake.rw.addBill(b); return fake; }
 const cell = (page: Page, n: number) => page.locator(`[data-testid="rw-grid"] [data-n="${n}"]`);
 /** a customer's tap on a number the screen marks as unavailable (aria-disabled): Playwright would wait for it to become enabled, a finger does not */
 const tapDisabled = (page: Page, n: number) => cell(page, n).click({ force: true });
+/** the "My numbers" list */
+const listed2 = (page: Page) => page.getByTestId('rw-mine');
 const claims = (fake: FakeShop) => fake.calls.filter((c) => c.fn === 'rw_claim_number');
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -264,11 +273,12 @@ test.describe('the number board', () => {
     await cell(page, 30).click(); await expect(page.getByTestId('rw-confirm')).toBeVisible();
   });
 
-  test('a paused event and a closed event are read-only with their banners; no event says so', async ({ page }) => {
+  test('a paused event is read-only with its banner (the server still offers it); a closed event is never offered: "no event is running"', async ({ page }) => {
     const fake = shopWith(900); fake.rw.setEventStatus('paused'); await open(page, fake); await openRewards(page);
     await expect(page.getByTestId('rw-event-banner')).toContainText(t('rw.ev.paused')); await tapDisabled(page, 1); await expect(page.getByTestId('rw-confirm')).toHaveCount(0);
+    expect(claims(fake).length).toBe(0);
     fake.rw.setEventStatus('closed'); await page.reload(); await openRewards(page);
-    await expect(page.getByTestId('rw-event-banner')).toContainText(t('rw.ev.closed'));
+    await expect(page.getByTestId('rw-no-event')).toContainText(t('rw.noEvent')); await expect(page.getByTestId('rw-grid')).toHaveCount(0); await expect(page.getByTestId('rw-event-banner')).toHaveCount(0);
   });
   test('no event is running', async ({ page }) => {
     const fake = new FakeShop(); fake.rw.enabled = true; await open(page, fake); await openRewards(page);
@@ -299,7 +309,7 @@ test.describe('the number board', () => {
     fake.rw.lockBoard(1, false); await page.getByTestId('rw-tab-2').click(); await page.getByTestId('rw-tab-1').click();
     await page.reload(); await page.route('**/rest/v1/rpc/rw_board_rev', (route) => route.abort()); await openRewards(page);
     fake.rw.setEventStatus('closed'); await cell(page, 2).click(); await page.getByTestId('rw-confirm-yes').click();
-    await expect(page.getByTestId('rw-msg')).toContainText(t('rw.err.event')); await expect(page.getByTestId('rw-event-banner')).toContainText(t('rw.ev.closed'));
+    await expect(page.getByTestId('rw-msg')).toContainText(t('rw.err.event')); await expect(page.getByTestId('rw-no-event')).toBeVisible();   // the refreshed board: a closed event is no longer offered
     expect(fake.rw.held()).toBe(0);
   });
 });
@@ -486,8 +496,162 @@ test.describe('when something is wrong', () => {
     await page.getByRole('button', { name: t('common.retry') }).click();
     await expect(page.getByTestId('rw-grid')).toBeVisible(); await expect(page.locator('.sp-error')).toHaveCount(0);
   });
-  test('boards switched off: the picks and bills show and the board area says it is not open yet', async ({ page }) => {
-    const fake = shopWith(900); fake.rw.boardsEnabled = false; await open(page, fake); await openRewards(page);
-    await expect(page.getByTestId('rw-summary')).toBeVisible(); await expect(page.getByText(t('rw.boardsOff'))).toBeVisible(); await expect(page.getByTestId('rw-grid')).toHaveCount(0);
+  test('boards switched off while the screen is open: no false "out of date" warning, the screen flips to points and the note that boards are not open', async ({ page }) => {
+    const fake = shopWith(900); await open(page, fake); await openRewards(page);
+    fake.rw.boardsEnabled = false;
+    await expect(page.getByTestId('rw-boards-off')).toContainText(t('rw.boardsOff'), { timeout: 12_000 });   // the next poll finds out
+    await expect(page.getByTestId('rw-summary')).toHaveCount(0); await expect(page.getByTestId('rw-grid')).toHaveCount(0); await expect(page.getByTestId('rw-stale')).toHaveCount(0);
+  });
+});
+
+test.describe('my numbers, whatever the event is doing', () => {
+  const listed = (page: Page) => page.getByTestId('rw-mine');
+  test('an open event: after a pick the list shows the number with its status', async ({ page }) => {
+    const fake = shopWith(900); await open(page, fake); await openRewards(page);
+    await expect(listed(page)).toHaveCount(0);
+    await cell(page, 7).click(); await page.getByTestId('rw-confirm-yes').click();
+    await expect(listed(page)).toContainText('Board A #07'); await expect(listed(page)).toContainText(t('rw.mine.confirmed'));
+  });
+  test('a CLOSED event: "No event is running" AND the customer\'s own numbers, listed below it', async ({ page }) => {
+    const fake = shopWith(900); fake.rw.pickFor(1, 7); fake.rw.pickFor(2, 12); fake.rw.setEventStatus('closed'); await open(page, fake); await openRewards(page);
+    await expect(page.getByTestId('rw-no-event')).toContainText(t('rw.noEvent'));
+    await expect(listed(page)).toContainText('Board A #07'); await expect(listed(page)).toContainText('Board B #12');
+    const note = await page.getByTestId('rw-no-event').boundingBox(); const list = await listed(page).boundingBox(); expect(list!.y).toBeGreaterThan(note!.y);
+    await expect(page.getByTestId('rw-grid')).toHaveCount(0);
+  });
+  test('a PAUSED event: read-only board with the paused banner AND the numbers', async ({ page }) => {
+    const fake = shopWith(900); fake.rw.pickFor(3, 21); fake.rw.setEventStatus('paused'); await open(page, fake); await openRewards(page);
+    await expect(page.getByTestId('rw-event-banner')).toContainText(t('rw.ev.paused')); await expect(page.getByTestId('rw-grid')).toBeVisible();
+    await tapDisabled(page, 30); await expect(page.getByTestId('rw-confirm')).toHaveCount(0);
+    await expect(listed(page)).toContainText('Board C #21');
+  });
+  test('boards switched off: the note and the numbers the customer already holds', async ({ page }) => {
+    const fake = shopWith(900); fake.rw.pickFor(1, 4); fake.rw.boardsEnabled = false; await open(page, fake); await openRewardsScreen(page);
+    await expect(page.getByTestId('rw-boards-off')).toBeVisible(); await expect(listed(page)).toContainText('Board A #04');
+  });
+  test('a held number says it is not confirmed yet and until when', async ({ page }) => {
+    const fake = shopWith(900); fake.rw.enable({ hold_minutes: 5 }); fake.rw.holdFor(1, 9, 5); fake.rw.pickFor(2, 8); await open(page, fake); await openRewards(page);
+    const held = listed(page).locator('li', { hasText: '#09' }); await expect(held).toContainText('จองไว้ ยังไม่ยืนยัน'); await expect(held).toContainText(/\d{1,2}:\d{2}/);
+    await expect(listed(page).locator('li', { hasText: '#08' })).toContainText(t('rw.mine.confirmed'));
+  });
+});
+
+test.describe('several rules on one event', () => {
+  /** rule 1: every ฿300 = 1 pick on everything; rule 2: every ฿500 = 1 pick on everything */
+  function twoRules() { const fake = new FakeShop(); fake.decorate(); fake.rw.enable(); fake.rw.addRule({ name: 'ซื้อครบ 500', step: 500 }); return fake; }
+  test('a bill is ONE row (picks summed over the rules), the rules are each described, and React reports no duplicate keys', async ({ page }) => {
+    const fake = twoRules(); fake.rw.addBill(850); fake.rw.addBill(450);                          // 850: 2 + 1 = 3 picks; 450: 1 + 0 = 1 pick
+    const warnings: string[] = []; page.on('console', (m) => { if (/same key|unique "key"/i.test(m.text())) warnings.push(m.text()); });
+    await open(page, fake); await openRewards(page);
+    const bills = page.getByTestId('rw-bills'); const nos = fake.orders.map((o) => o.order_no);
+    await expect(bills.locator('li')).toHaveCount(2);
+    await expect(bills.locator(`li[data-order="${nos[0]}"]`)).toContainText(t('rw.billEarnedN', { amount: '฿850', n: 3 })); await expect(bills.locator(`li[data-order="${nos[0]}"]`)).toHaveAttribute('data-kind', 'earned');
+    await expect(bills.locator(`li[data-order="${nos[1]}"]`)).toContainText(t('rw.billEarned1', { amount: '฿450' }));
+    await expect(page.getByTestId('rw-summary')).toContainText(t('rw.earned', { n: 4 }));
+    const rules = page.getByTestId('rw-rule');
+    await expect(rules).toContainText(t('rw.ruleItem1', { name: 'สิทธิ์เลือกเลขต่อบิล', amount: '฿300' })); await expect(rules).toContainText(t('rw.ruleItem1', { name: 'ซื้อครบ 500', amount: '฿500' }));
+    await expect(rules).toContainText(t('rw.rulesNote'));
+    expect(warnings).toEqual([]);
+  });
+  test('rules with different eligible amounts (different scopes): one row with the total and each rule\'s own amount', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate(); fake.rw.enable(); fake.rw.addRule({ name: 'เฉพาะสตรอเบอร์รี่', step: 500, onlySkus: ['FG-000002'] });
+    fake.rw.addBill(400, { second: 500 });                                                        // rule 1 sees ฿900 (3 picks); rule 2 sees only the ฿500 line (1 pick)
+    await open(page, fake); await openRewards(page);
+    const row = page.getByTestId('rw-bills').locator('li'); await expect(row).toHaveCount(1);
+    await expect(row).toContainText(t('rw.billSum', { n: 4 }));
+    const parts = row.getByTestId('rw-parts'); await expect(parts).toContainText('สิทธิ์เลือกเลขต่อบิล'); await expect(parts).toContainText(t('rw.billEarnedN', { amount: '฿900', n: 3 }));
+    await expect(parts).toContainText('เฉพาะสตรอเบอร์รี่'); await expect(parts).toContainText(t('rw.billEarned1', { amount: '฿500' }));
+    await expect(page.getByTestId('rw-summary')).toContainText(t('rw.earned', { n: 4 }));
+    await page.screenshot({ path: `${process.env.SHOP_SHOTS ?? 'test-results/shop'}/rewards-two-rules-mobile.png`, fullPage: true });
+  });
+  test('an unpaid bill under both rules reads "counts once paid" once; the "no picks" hint uses the smallest step', async ({ page }) => {
+    const fake = twoRules(); fake.rw.addBill(700, { paid: false }); await open(page, fake); await openRewards(page);
+    await expect(page.getByTestId('rw-bills').locator('li')).toHaveCount(1); await expect(page.getByTestId('rw-bills')).toContainText(t('rw.billWaiting', { amount: '฿700' }));
+    await expect(page.getByTestId('rw-hint')).toContainText(t('rw.noRights', { amount: '฿300' }));
+  });
+});
+
+test.describe('the points-only phase (rewards on, boards not open yet)', () => {
+  const hist = (n: number) => ({ at: new Date(Date.UTC(2026, 10, 20, 3, n)).toISOString(), points: 8, kind: 'earn' as const, note: null, order_no: `ORD-00000${n}` });
+  test('shows the points and their history with order numbers and notes, the boards note, and NO picks summary, rule sentence or "no eligible bills"', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate(); fake.rw.enable(); fake.rw.boardsEnabled = false; fake.rw.points = 120;
+    fake.rw.history = [hist(1), { at: '2026-11-19T03:00:00Z', points: -3, kind: 'reverse', note: 'payment reversed', order_no: 'ORD-000002' }, { at: '2026-11-18T03:00:00Z', points: 20, kind: 'adjust', note: 'welcome', order_no: null }];
+    await open(page, fake); await openRewardsScreen(page);
+    await expect(page.getByTestId('rw-points')).toContainText('120'); await expect(page.getByTestId('rw-points')).toContainText(t('rw.pointsBalance'));
+    const h = page.getByTestId('rw-history'); await expect(h.locator('li')).toHaveCount(3);
+    await expect(h.locator('li').nth(0)).toContainText('+8'); await expect(h.locator('li').nth(0)).toContainText(t('rw.hist.earn')); await expect(h.locator('li').nth(0)).toContainText(t('rw.order', { no: 'ORD-000001' }));
+    await expect(h.locator('li').nth(1)).toContainText('−3'); await expect(h.locator('li').nth(1)).toContainText(t('rw.hist.reverse')); await expect(h.locator('li').nth(1)).toContainText('payment reversed'); await expect(h.locator('li').nth(1)).toContainText('ORD-000002');
+    await expect(h.locator('li').nth(2)).toContainText('+20'); await expect(h.locator('li').nth(2)).toContainText(t('rw.hist.adjust')); await expect(h.locator('li').nth(2)).toContainText('welcome');
+    await expect(page.getByTestId('rw-boards-off')).toContainText(t('rw.boardsOff'));
+    await expect(page.getByTestId('rw-summary')).toHaveCount(0); await expect(page.getByTestId('rw-rule')).toHaveCount(0); await expect(page.getByTestId('rw-bills')).toHaveCount(0);
+    await expect(page.getByText(t('rw.noBills'))).toHaveCount(0); await expect(page.getByTestId('rewards-screen')).not.toContainText('เหลือ 0'); await expect(page.getByTestId('rw-grid')).toHaveCount(0);
+  });
+  test('a long history shows five entries until the customer asks for all', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate(); fake.rw.enable(); fake.rw.boardsEnabled = false; fake.rw.points = 56; fake.rw.history = [1, 2, 3, 4, 5, 6, 7].map(hist);
+    await open(page, fake); await openRewardsScreen(page);
+    await expect(page.getByTestId('rw-history').locator('li')).toHaveCount(5);
+    await page.getByRole('button', { name: t('rw.hist.showAll', { n: 7 }) }).click(); await expect(page.getByTestId('rw-history').locator('li')).toHaveCount(7);
+  });
+  test('no points yet: says so, still no picks wording', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate(); fake.rw.enable(); fake.rw.boardsEnabled = false; await open(page, fake); await openRewardsScreen(page);
+    await expect(page.getByTestId('rw-points')).toContainText('0'); await expect(page.getByText(t('rw.hist.none'))).toBeVisible(); await expect(page.getByTestId('rw-summary')).toHaveCount(0);
+  });
+  test('English wording, 390 px without horizontal scroll, axe clean', async ({ page }) => {
+    const fake = new FakeShop(); fake.decorate(); fake.rw.enable(); fake.rw.boardsEnabled = false; fake.rw.points = 120; fake.rw.history = [hist(1), hist(2)]; fake.rw.pickFor(1, 4);
+    await open(page, fake, 'en'); await openRewardsScreen(page, 'en');
+    await expect(page.getByTestId('rw-points')).toContainText('Your points'); await expect(page.getByTestId('rw-history')).toContainText('Points earned'); await expect(page.getByTestId('rw-boards-off')).toContainText(en('rw.boardsOff'));
+    await noOverflow(page);
+    await page.screenshot({ path: `${process.env.SHOP_SHOTS ?? 'test-results/shop'}/rewards-points-mobile.png`, fullPage: true });
+    const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+    const bad = r.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious').map((v) => `${v.id}: ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(' | ')}`);
+    expect(bad, bad.join('\n')).toEqual([]);
+  });
+});
+
+test.describe('a number that is held but not confirmed', () => {
+  test('the claim worked but the confirm lost its connection: it says "held, not confirmed" (never "picked"), keeps the question, and Confirm again confirms the SAME selection', async ({ page }) => {
+    const fake = shopWith(900); fake.rw.enable({ hold_minutes: 5 }); await open(page, fake); await openRewards(page);
+    const confirms: string[] = []; let n = 0;
+    await page.route('**/rest/v1/rpc/rw_confirm_selection', async (route) => { confirms.push((JSON.parse(route.request().postData() || '{}') as { p_selection: string }).p_selection); if (n++ === 0) await route.abort('connectionreset'); else await route.fallback(); });
+    await cell(page, 14).click(); await page.getByTestId('rw-confirm-yes').click();
+    await expect(page.getByTestId('rw-msg')).toContainText(t('rw.held.msg', { board: 'Board A', n: '14' }));
+    await expect(page.getByTestId('rw-msg')).not.toContainText('เรียบร้อย');                          // not "Picked …"
+    await expect(page.getByTestId('rw-confirm')).toContainText(t('rw.held.q', { board: 'Board A', n: '14' }));
+    expect(fake.rw.world.selections[0].status).toBe('reserved'); expect(claims(fake).length).toBe(1);
+    await expect(listed2(page)).toContainText('จองไว้ ยังไม่ยืนยัน');                                  // and the list says so too
+    await page.getByTestId('rw-confirm-yes').click();
+    await expect(page.getByTestId('rw-confirm')).toHaveCount(0);
+    await expect(page.getByTestId('rw-msg')).toContainText(t('rw.done', { board: 'Board A', n: '14', left: 2 }));
+    expect(confirms.length).toBe(2); expect(confirms[0]).toBe(confirms[1]); expect(claims(fake).length).toBe(1);   // the same selection, and no second claim
+    expect(fake.rw.world.selections[0].status).toBe('confirmed'); expect(fake.rw.held()).toBe(1);
+    await expect(listed2(page)).toContainText(t('rw.mine.confirmed'));
+  });
+  test('the hold ran out meanwhile: the question closes with the reason and the board refreshes', async ({ page }) => {
+    const fake = shopWith(900); fake.rw.enable({ hold_minutes: 5 }); await open(page, fake);
+    await page.route('**/rest/v1/rpc/rw_board_rev', (route) => route.abort());
+    await openRewards(page);
+    let n = 0; await page.route('**/rest/v1/rpc/rw_confirm_selection', async (route) => { if (n++ === 0) await route.abort('connectionreset'); else await route.fallback(); });
+    await cell(page, 15).click(); await page.getByTestId('rw-confirm-yes').click(); await expect(page.getByTestId('rw-confirm')).toContainText('#15');
+    fake.rw.world.selections[0].expires_at = new Date(Date.now() - 1000).toISOString();           // the hold expires
+    await page.getByTestId('rw-confirm-yes').click();
+    await expect(page.getByTestId('rw-msg')).toContainText(t('rw.err.hold')); await expect(page.getByTestId('rw-confirm')).toHaveCount(0);
+  });
+});
+
+test.describe('a poll that keeps failing', () => {
+  test('after two failed reads in a row a small "may be out of date, retrying" note appears; the next success clears it', async ({ page }) => {
+    const fake = shopWith(900); await open(page, fake); await openRewards(page);
+    await page.route('**/rest/v1/rpc/rw_board_rev', (route) => route.abort('connectionreset'));
+    await expect(page.getByTestId('rw-stale')).toHaveCount(0);
+    await expect(page.getByTestId('rw-stale')).toContainText(t('rw.stale'), { timeout: 14_000 });   // polls at 5 s and 10 s
+    await expect(cell(page, 1)).toHaveAttribute('data-s', 'free');                                  // the board itself stays usable
+    await page.unroute('**/rest/v1/rpc/rw_board_rev');
+    await expect(page.getByTestId('rw-stale')).toHaveCount(0, { timeout: 8_000 });
+  });
+  test('one failed read between successes never warns', async ({ page }) => {
+    const fake = shopWith(900); await open(page, fake); await openRewards(page);
+    let n = 0; await page.route('**/rest/v1/rpc/rw_board_rev', async (route) => { if (n++ === 0) await route.abort('connectionreset'); else await route.fallback(); });
+    await expect.poll(() => n, { timeout: 12_000 }).toBeGreaterThanOrEqual(2);                      // one failure, then a success
+    await expect(page.getByTestId('rw-stale')).toHaveCount(0);
   });
 });

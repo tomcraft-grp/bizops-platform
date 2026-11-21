@@ -23,6 +23,7 @@ export class RewardsWorld {
   n = 0;
 }
 type FOrder = FakeShop['orders'][number];
+export interface FRule { id: string; name: string; step: number; reward: number; excludeSkus: string[]; onlySkus: string[] }
 
 /** floor(amount / step) x reward in whole satang: never a float, never rounded up. */
 export const picksFor = (amount: number, step: number, reward = 1): number => Math.floor(Math.round(amount * 100) / Math.round(step * 100)) * reward;
@@ -36,10 +37,16 @@ export class FakeRewards {
   /** the signed-in customer's identity in the shared world (never sent to the browser) */
   me = 'cust-a';
   world = new RewardsWorld();
-  rule = { id: 'rule-1', name: 'สิทธิ์เลือกเลขต่อบิล', step: 300, reward: 1, excludeSkus: [] as string[], onlySkus: [] as string[] };
+  /** the board-pick rules of the event (the first is the one most specs use through `rule`); a bill's eligible amount is counted per rule from its in-scope lines */
+  rules: FRule[] = [{ id: 'rule-1', name: 'สิทธิ์เลือกเลขต่อบิล', step: 300, reward: 1, excludeSkus: [], onlySkus: [] }];
+  get rule(): FRule { return this.rules[0]; }
+  /** a second board-pick rule on the same event (ids rule-2, rule-3 …) */
+  addRule(over: Partial<FRule> = {}): FRule { const r: FRule = { id: `rule-${this.rules.length + 1}`, name: `กติกา ${this.rules.length + 1}`, step: 500, reward: 1, excludeSkus: [], onlySkus: [], ...over }; this.rules.push(r); return r; }
   /** false = an older server that leaves spend_step / reward_amount out of rw_my_rewards.picks[] and next_reward_total out of rw_preview_cart (the screen must then invent no numbers) */
   sendStep = true;
   points = 0;
+  /** the last points movements as rw_my_rewards sends them (newest first) */
+  history: { at: string; points: number; kind: 'earn' | 'reverse' | 'adjust'; note: string | null; order_no: string | null }[] = [];
   /** orders whose payment was reversed (their picks are taken back) */
   private reversed = new Set<string>();
 
@@ -58,10 +65,12 @@ export class FakeRewards {
     Object.assign(this.world.event, over);
     return this;
   }
-  /** an order of this customer whose eligible amount is `amount` (one line), optionally paid in full */
-  addBill(amount: number, opts: { paid?: boolean } = {}): FOrder {
-    const o = this.shop.seedOrder(amount);
-    const l = o.items[0]; l.unit_price = amount; l.qty = 1; l.line_total = amount; o.subtotal = amount; o.total = amount; o.invoice.amount = amount;
+  /** an order of this customer whose eligible amount is `amount` (one FG-000001 line), optionally with a second FG-000002 line of `second` baht, optionally paid in full */
+  addBill(amount: number, opts: { paid?: boolean; second?: number } = {}): FOrder {
+    const total = amount + (opts.second ?? 0);
+    const o = this.shop.seedOrder(total);
+    const l = o.items[0]; l.unit_price = amount; l.qty = 1; l.line_total = amount; o.subtotal = total; o.total = total; o.invoice.amount = total;
+    if (opts.second) o.items.push({ ...l, line_no: 2, sku_code: 'FG-000002', unit_price: opts.second, line_total: opts.second });
     if (opts.paid !== false) this.shop.verifyPayment(o.order_no);
     return o;
   }
@@ -76,6 +85,12 @@ export class FakeRewards {
   }
   /** this customer already used a pick on a number (without going through the screen) */
   pickFor(slot: 1 | 2 | 3, n: number, who = this.me) { this.takeElsewhere(slot, n, who); }
+  /** a number held for this customer but not confirmed yet (an event with a hold); it uses a pick, like a claim */
+  holdFor(slot: 1 | 2 | 3, n: number, minutes = 5, who = this.me): FSelection {
+    const ev = this.world.event!; const b = ev.boards.find((x) => x.slot === slot)!;
+    const s: FSelection = { id: `sel-${++this.world.n}`, board_id: b.id, number: n, who, status: 'reserved', exclusive: b.mode === 'exclusive', expires_at: new Date(Date.now() + minutes * 60_000).toISOString() };
+    this.world.selections.push(s); b.rev++; return s;
+  }
   lockBoard(slot: 1 | 2 | 3, locked = true) { const b = this.world.event!.boards.find((x) => x.slot === slot)!; b.state = locked ? 'locked' : 'open'; b.rev++; }
   setEventStatus(status: EventStatus) { this.world.event!.status = status; this.world.event!.boards.forEach((b) => b.rev++); }
   setMode(slot: 1 | 2 | 3, mode: Mode) { const b = this.world.event!.boards.find((x) => x.slot === slot)!; b.mode = mode; b.rev++; }
@@ -83,21 +98,21 @@ export class FakeRewards {
   held(who = this.me) { return this.world.selections.filter((s) => s.who === who && active(s)).length; }
 
   // ------------------------------------------------------------ what the customer's bills earn
-  private ruleOk(sku: string) { return !this.rule.excludeSkus.includes(sku) && (!this.rule.onlySkus.length || this.rule.onlySkus.includes(sku)); }
-  private bills() {
+  private ruleOk(sku: string, r: FRule = this.rule) { return !r.excludeSkus.includes(sku) && (!r.onlySkus.length || r.onlySkus.includes(sku)); }
+  private bills(r: FRule = this.rule) {
     const rows: { order_id: string; order_no: string; created_at: string; eligible_amount: number; rights: number; state: 'counted' | 'waiting_payment' | 'taken_back' }[] = [];
     for (const o of [...this.shop.orders].sort((x, y) => y.created_at.localeCompare(x.created_at))) {
-      const eligible = o.items.filter((i) => this.ruleOk(i.sku_code)).reduce((s, i) => s + i.line_total, 0);
+      const eligible = o.items.filter((i) => this.ruleOk(i.sku_code, r)).reduce((s, i) => s + i.line_total, 0);
       const code = this.shop.invoiceState(o.invoice).status_code;
       const reversed = this.reversed.has(o.id);
       if (!reversed && (o.status === 'cancelled' || o.status === 'returned' || eligible <= 0)) continue;
       const state = reversed ? 'taken_back' : [5, 6].includes(code) ? 'counted' : 'waiting_payment';
-      rows.push({ order_id: o.id, order_no: o.order_no, created_at: o.created_at, eligible_amount: eligible, rights: state === 'counted' ? picksFor(eligible, this.rule.step, this.rule.reward) : 0, state });
+      rows.push({ order_id: o.id, order_no: o.order_no, created_at: o.created_at, eligible_amount: eligible, rights: state === 'counted' ? picksFor(eligible, r.step, r.reward) : 0, state });
     }
     return rows;
   }
   private rights() {
-    const earned = this.bills().reduce((s, b) => s + b.rights, 0); const used = this.held();
+    const earned = this.rules.reduce((n, r) => n + this.bills(r).reduce((s, b) => s + b.rights, 0), 0); const used = this.held();
     return { earned, used, remaining: Math.max(earned - used, 0) };
   }
 
@@ -111,10 +126,16 @@ export class FakeRewards {
       const s = mineHere ? 'mine' : here.some((x) => x.exclusive) ? 'taken' : here.length ? 'shared' : 'free';
       numbers.push({ n, s, c: here.length });
     }
-    return { id: b.id, slot: b.slot, name: b.name, color: b.color, mode: b.mode, state: b.state, rev: b.rev, taken: numbers.filter((x) => x.c > 0).length, numbers };
+    return { id: b.id, slot: b.slot, name: b.name, color: b.color, mode: b.mode, state: b.state, rev: b.rev, taken: numbers.filter((x) => x.c > 0).length, remaining: this.rights().remaining, numbers };
+  }
+  /** like rw_board_state(null): the active in-window event, else a PAUSED one (read-only); a draft or CLOSED event is never offered */
+  private shown(): FEvent | null {
+    const ev = this.world.event; if (!ev) return null;
+    const inWindow = (!ev.starts_at || new Date(ev.starts_at).getTime() <= Date.now()) && (!ev.ends_at || new Date(ev.ends_at).getTime() >= Date.now());
+    return (ev.status === 'active' && inWindow) || ev.status === 'paused' ? ev : null;
   }
   private boardState() {
-    const ev = this.world.event; if (!this.boardsEnabled) throw new Error('BOARDS_OFF');
+    const ev = this.shown(); if (!this.boardsEnabled) throw new Error('BOARDS_OFF');
     if (!ev) return { event: null, boards: [], rights: this.rights() };
     return { event: { id: ev.id, name: ev.name, status: ev.status, number_min: ev.number_min, number_max: ev.number_max, hold_minutes: ev.hold_minutes, starts_at: ev.starts_at, ends_at: ev.ends_at },
       boards: ev.boards.map((b) => this.publicBoard(b)), rights: this.rights() };
@@ -126,29 +147,37 @@ export class FakeRewards {
       case 'rw_my_rewards': {
         if (!this.enabled) return { enabled: false, boards_enabled: false, points: 0, points_history: [], picks: [], selections: [] };
         const r = this.rights(); const ev = this.world.event;
-        const extra = this.sendStep ? { spend_step: this.rule.step, reward_amount: this.rule.reward } : {};
-        return { enabled: true, boards_enabled: this.boardsEnabled, points: this.points, points_history: [],
-          picks: [{ rule_id: this.rule.id, rule_name: this.rule.name, event_id: ev?.id ?? null, ...r, bills: this.bills(), ...extra }],
+        // like the server: with the boards off only points are live (no picks); the customer's live numbers are listed whatever the event's status
+        let left = r.used;                                                                            // the oldest rights are used first
+        const picks = !this.boardsEnabled ? [] : this.rules.map((rule) => {
+          const bills = this.bills(rule); const earned = bills.reduce((n, b) => n + b.rights, 0); const used = Math.min(earned, left); left -= used;
+          return { rule_id: rule.id, rule_name: rule.name, event_id: ev?.id ?? null, earned, used, remaining: earned - used, bills, ...(this.sendStep ? { spend_step: rule.step, reward_amount: rule.reward } : {}) };
+        });
+        return { enabled: true, boards_enabled: this.boardsEnabled, points: this.points, points_history: this.history,
+          picks,
           selections: this.world.selections.filter((s) => s.who === this.me && active(s)).map((s) => { const b = ev?.boards.find((x) => x.id === s.board_id); return { id: s.id, event_id: ev?.id ?? '', board_id: s.board_id, board_name: b?.name ?? '', number: s.number, status: s.status as 'reserved' | 'confirmed', expires_at: s.expires_at }; }) };
       }
       case 'rw_preview_cart': {
         if (!this.enabled) return { enabled: false, lines: [] };
         const items = Array.isArray(a.p_items) ? (a.p_items as { sku_code: string; qty: number }[]) : [];
-        const eligible = items.reduce((s, i) => s + (this.shop.items.find((x) => x.sku_code === i.sku_code && this.ruleOk(x.sku_code))?.price ?? 0) * (Number(i.qty) || 0), 0);
-        const step = this.rule.step; const rem = Math.round(eligible * 100) % Math.round(step * 100) / 100;
-        const more = Math.round((step - rem) * 100) / 100;                       // baht more on this bill for the next step
-        return { enabled: true, lines: [{ kind: 'board_pick', name: this.rule.name, eligible_amount: eligible, reward: picksFor(eligible, step, this.rule.reward), next_reward_in: more,
-          ...(this.sendStep ? { next_reward_total: picksFor(Math.round((eligible + more) * 100) / 100, step, this.rule.reward) } : {}) }] };
+        return { enabled: true, lines: this.rules.map((r) => {
+          const eligible = items.reduce((s, i) => s + (this.shop.items.find((x) => x.sku_code === i.sku_code && this.ruleOk(x.sku_code, r))?.price ?? 0) * (Number(i.qty) || 0), 0);
+          const step = r.step; const rem = Math.round(eligible * 100) % Math.round(step * 100) / 100;
+          const more = Math.round((step - rem) * 100) / 100;                       // baht more on this bill for the next step
+          return { kind: 'board_pick', name: r.name, eligible_amount: eligible, reward: picksFor(eligible, step, r.reward), next_reward_in: more,
+            ...(this.sendStep ? { next_reward_total: picksFor(Math.round((eligible + more) * 100) / 100, step, r.reward) } : {}) };
+        }) };
       }
       case 'rw_board_rev': {
         if (!this.enabled) throw new Error('REWARDS_OFF'); if (!this.boardsEnabled) throw new Error('BOARDS_OFF');
-        const ev = this.world.event; return { event_status: ev?.status ?? null, boards: (ev?.boards ?? []).map((b) => ({ id: b.id, rev: b.rev, state: b.state })) };
+        const ev = this.shown(); return { event_status: ev?.status ?? null, boards: (ev?.boards ?? []).map((b) => ({ id: b.id, rev: b.rev, state: b.state })) };
       }
       case 'rw_board_state': if (!this.enabled) throw new Error('REWARDS_OFF'); return this.boardState();
       case 'rw_claim_number': return this.claim(String(a.p_event), String(a.p_board), Number(a.p_number), String(a.p_key));
       case 'rw_confirm_selection': {
         const s = this.world.selections.find((x) => x.id === a.p_selection && x.who === this.me); if (!s) throw new Error('NOT_FOUND');
         if (s.status === 'reserved' && s.expires_at && new Date(s.expires_at).getTime() < Date.now()) { s.status = 'released'; throw new Error('HOLD_EXPIRED'); }
+        if (this.world.event!.status !== 'active') throw new Error('EVENT_NOT_ACTIVE');
         s.status = 'confirmed'; s.expires_at = null; const b = this.world.event!.boards.find((x) => x.id === s.board_id)!; b.rev++;
         return { selection: this.selJson(s), board: this.publicBoard(b), rights: this.rights() };
       }

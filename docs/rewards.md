@@ -70,6 +70,21 @@ ADMIN staff can see owners and edit event details (not close an event or change 
 * Ledger, rights, selections, resets and the audit log are never deleted or edited (guard triggers).
 * A reward error never blocks a payment: the three triggers (`finance_receipts`, `finance_allocations`, `shop_orders`) call settle inside an exception block and log `settle_error`. When many payments of one customer collide, a reward update can be skipped (logged) and is healed the next time the customer opens Rewards or staff press re-settle.
 
+## Go-live (in this order; every step after the first needs the owner's explicit go)
+
+1. **Before anything**: run the three SQL suites and the three down-proofs once more on a fresh checkout (`node scripts/local-pg/run.mjs …`, see `scripts/local-pg/README.md`), or in rollback mode against the live project once a valid `~/.supabase-token` exists (`scripts/run-rewards-core-sql-tests.sh` and its two siblings; they were only syntax-checked, never run, because production is off limits to the build). Note that the invented local data cannot prove behaviour on real data: the existing suites fail a few checks on production for the same reason (real orders and wallets).
+2. **Read-only before-picture** (`scripts/db-readonly.sh`): counts of `shop_orders`, `finance_invoices`, `finance_receipts`, `finance_allocations`; the md5 of `shop_catalog(...)`; `select count(*) from sku_registry`.
+3. **Apply the migrations BEFORE publishing the app**, in one transaction, in this order (one command; it refuses anything already recorded):
+   `scripts/apply-migrations.sh 20261121100000:rewards_core:supabase/migrations/20261121100000_rewards_core.sql 20261121110000:event_boards:supabase/migrations/20261121110000_event_boards.sql 20261121120000:sku_registry_sync:supabase/migrations/20261121120000_sku_registry_sync.sql`
+   The migration waits at most 3 seconds for the locks of the busy finance and order tables and otherwise rolls the whole batch back; if that happens, retry at a quiet moment. Do it outside opening hours.
+4. **After-picture** (read-only): the counts and the catalogue md5 from step 2 are unchanged; `select enabled, boards_enabled from rw_settings` is `false, false`; `rw_settings` has exactly one row; no `rw_*` row exists in the ledger, rights or selections.
+5. **Publish the app** (same procedure as the slip review: build, commit `dist/index.html`, push `main`, then `gh-pages`). Until a Super Admin switches rewards on, customers see nothing new; staff see the new "Online shop" tabs and the sync banner on Products (which starts working at once: the first sync is a full snapshot).
+6. **Set up** (staff): create the event, its three boards, the pick rule and any packs; use the simulator; check the Products page shows no sync error.
+7. **One real test order** paid end to end; confirm the rewards show on the customer's Rewards screen and a reversal takes them back.
+8. **Switch on** rewards first (points and picks accrue), the event boards later (a separate switch). Before that, the owner's legal review of purchase-linked prize events (see the Events page notice) must be done.
+
+Rolling the app back does not need the database to move: the screens only call functions that remain. Rolling the database back uses the files below, in reverse order (SKU sync, boards, core).
+
 ## Rollback
 
 Each rollback file refuses to run once it would destroy history: core (any ledger, right or sold pack, or while boards are installed), boards (any selection), sync (any change-log row). The sync rollback also restores one widened check constraint on `sku_code_history`.

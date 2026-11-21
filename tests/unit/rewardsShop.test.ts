@@ -2,10 +2,11 @@
 // when the 5 s poll reloads the board, which server error refreshes the board or keeps the idempotency key, keyboard movement in the grid, the cart preview text.
 // The rules themselves (per-bill arithmetic, exclusivity) live in the database and are tested there; these tests prove what the SCREEN does with the answers.
 import { describe, expect, it } from 'vitest';
-import type { BoardCell, BoardState, CartPreview, PickSummary, PublicBoard } from '../../src/rewards/api';
+import type { BoardCell, BoardState, CartPreview, MySelection, PickBill, PickSummary, PointsEntry, PublicBoard } from '../../src/rewards/api';
 import { SHOP_KEYS, tr } from '../../src/shop/i18n';
 import {
-  accessKey, boardAccess, billView, cellKind, claimPlan, gridMove, mineChips, padNumber, pickRule, previewView, replaceBoard, revsChanged, revsOf, safeColor, sumPicks, visibleBills,
+  accessKey, boardAccess, billView, cellKind, claimPlan, confirmPlan, gridMove, groupBills, myNumbers, padNumber, pickRules, pollHealth, previewView, replaceBoard, revsChanged, revsOf, safeColor,
+  signedPoints, smallestStep, STALE_AFTER, sumPicks, visibleBills, visibleHistory, historyKey,
 } from '../../src/shop/rewardsView';
 
 const cell = (n: number, s: BoardCell['s'] = 'free', c = 0): BoardCell => ({ n, s, c });
@@ -23,17 +24,6 @@ describe('picks summary', () => {
     expect(sumPicks([pick(), pick({ rule_id: 'r2', earned: 2, used: 0, remaining: 2 })])).toEqual({ earned: 6, used: 1, remaining: 5 });
     expect(sumPicks([])).toEqual({ earned: 0, used: 0, remaining: 0 });
   });
-  it('the step and the picks per step are read from the rule the server sends', () => {
-    expect(pickRule([pick()])).toEqual({ step: 300, reward: 1 });
-    expect(pickRule([pick({ spend_step: 300, reward_amount: 2 })])).toEqual({ step: 300, reward: 2 });
-    expect(pickRule([pick({ spend_step: 0 }), pick({ rule_id: 'r2', spend_step: 500, reward_amount: 1 })])).toEqual({ step: 500, reward: 1 });   // the first usable rule
-  });
-  it('a server that leaves a number out (or sends nonsense) gets wording without a number: nothing is guessed', () => {
-    const bare = (o: object) => pick(o as Partial<PickSummary>);
-    expect(pickRule([bare({ spend_step: undefined })])).toBeNull(); expect(pickRule([bare({ reward_amount: undefined })])).toBeNull();
-    expect(pickRule([pick({ spend_step: 0 })])).toBeNull(); expect(pickRule([pick({ reward_amount: 0 })])).toBeNull(); expect(pickRule([bare({ spend_step: '300' })])).toBeNull();
-    expect(pickRule([])).toBeNull();
-  });
 });
 
 describe('what each bill says', () => {
@@ -45,6 +35,93 @@ describe('what each bill says', () => {
   it('a long list shows the first three until the customer asks for all', () => {
     const many = Array.from({ length: 7 }, (_, i) => bill({ order_id: 'o' + i }));
     expect(visibleBills(many, false)).toHaveLength(3); expect(visibleBills(many, true)).toHaveLength(7); expect(visibleBills(many.slice(0, 3), false)).toHaveLength(3);
+  });
+});
+
+describe('one row per bill, whatever the number of rules (groupBills)', () => {
+  const bill = (over: Partial<PickBill> = {}): PickBill => ({ order_id: 'o1', order_no: 'ORD-000001', created_at: '2026-11-20T03:00:00Z', eligible_amount: 850, rights: 2, state: 'counted', ...over });
+  const rule = (id: string, bills: PickBill[], over: Partial<PickSummary> = {}) => pick({ rule_id: id, rule_name: 'Rule ' + id, bills, ...over });
+  it('a bill that two rules list becomes ONE row and its picks are the sum over the rules', () => {
+    const g = groupBills([rule('r1', [bill({ rights: 2 })]), rule('r2', [bill({ rights: 1 })], { spend_step: 500 })]);
+    expect(g).toHaveLength(1); expect(g[0]).toMatchObject({ order_id: 'o1', rights: 3, state: 'counted', eligible_amount: 850, sameAmount: true });
+    expect(g[0].parts.map((x) => [x.rule_id, x.rights])).toEqual([['r1', 2], ['r2', 1]]);
+    expect(billView(g[0])).toEqual({ kind: 'earned', picks: 3 });
+  });
+  it('every order id appears once (no duplicate React keys), newest first', () => {
+    const g = groupBills([rule('r1', [bill({ order_id: 'o1', created_at: '2026-11-18T00:00:00Z' }), bill({ order_id: 'o2', order_no: 'ORD-000002', created_at: '2026-11-20T00:00:00Z' })]), rule('r2', [bill({ order_id: 'o2', order_no: 'ORD-000002', created_at: '2026-11-20T00:00:00Z' })])]);
+    expect(g.map((x) => x.order_id)).toEqual(['o2', 'o1']);
+  });
+  it('state: counted if ANY rule counts the bill, else taken back if any rule took it back, else waiting for payment', () => {
+    const st = (...states: PickBill['state'][]) => groupBills(states.map((s, i) => rule('r' + i, [bill({ state: s, rights: s === 'counted' ? 1 : 0 })])))[0].state;
+    expect(st('counted', 'waiting_payment')).toBe('counted'); expect(st('waiting_payment', 'counted')).toBe('counted'); expect(st('taken_back', 'counted')).toBe('counted');
+    expect(st('waiting_payment', 'taken_back')).toBe('taken_back'); expect(st('taken_back', 'waiting_payment')).toBe('taken_back');
+    expect(st('waiting_payment', 'waiting_payment')).toBe('waiting_payment'); expect(st('taken_back')).toBe('taken_back'); expect(st('waiting_payment')).toBe('waiting_payment');
+  });
+  it('only rules that count a bill add picks to it: a counted bill is never inflated by a rule that took it back', () => {
+    const g = groupBills([rule('r1', [bill({ state: 'counted', rights: 2 })]), rule('r2', [bill({ state: 'taken_back', rights: 5 })])]);
+    expect(g[0]).toMatchObject({ state: 'counted', rights: 2 });
+  });
+  it('a counted bill that no rule paid anything for reads "no picks"; a waiting one claims none whatever the server says', () => {
+    expect(billView(groupBills([rule('r1', [bill({ eligible_amount: 250, rights: 0 })])])[0])).toEqual({ kind: 'none', picks: 0 });
+    expect(billView(groupBills([rule('r1', [bill({ state: 'waiting_payment', rights: 3 })])])[0])).toEqual({ kind: 'waiting', picks: 0 });
+  });
+  it('rules that saw different eligible amounts (different scopes) are told apart: the row shows the total and each rule its own amount', () => {
+    const g = groupBills([rule('r1', [bill({ eligible_amount: 900, rights: 3 })]), rule('r2', [bill({ eligible_amount: 500, rights: 1 })], { spend_step: 500 })])[0];
+    expect(g.sameAmount).toBe(false); expect(g.rights).toBe(4); expect(g.eligible_amount).toBe(900);
+    expect(g.parts.map((x) => [x.rule_name, x.eligible_amount, x.rights])).toEqual([['Rule r1', 900, 3], ['Rule r2', 500, 1]]);
+  });
+  it('a bill listed by only one of the rules is a one-part row', () => {
+    const g = groupBills([rule('r1', [bill()]), rule('r2', [])]); expect(g).toHaveLength(1); expect(g[0].parts).toHaveLength(1); expect(g[0].sameAmount).toBe(true);
+  });
+  it('no rules, no bills', () => { expect(groupBills([])).toEqual([]); expect(groupBills([rule('r1', [])])).toEqual([]); });
+  it('the collapsed list works on grouped rows', () => {
+    const many = Array.from({ length: 5 }, (_, i) => bill({ order_id: 'o' + i, created_at: '2026-11-1' + i + 'T00:00:00Z' }));
+    expect(visibleBills(groupBills([rule('r1', many)]), false)).toHaveLength(3);
+  });
+});
+
+describe('the rules, described one by one', () => {
+  it('every rule with usable numbers is listed with its name, step and picks per step', () => {
+    expect(pickRules([pick({ rule_id: 'r1', rule_name: 'Per bill', spend_step: 300, reward_amount: 1 }), pick({ rule_id: 'r2', rule_name: 'Big bill', spend_step: 1000, reward_amount: 3 })]))
+      .toEqual([{ id: 'r1', name: 'Per bill', step: 300, reward: 1 }, { id: 'r2', name: 'Big bill', step: 1000, reward: 3 }]);
+  });
+  it('a rule without usable numbers is left out (nothing is invented); none usable = empty', () => {
+    const bare = pick({ rule_id: 'r3' }) as unknown as Record<string, unknown>; delete bare.spend_step;
+    expect(pickRules([pick({ rule_id: 'r1' }), bare as unknown as PickSummary]).map((r) => r.id)).toEqual(['r1']); expect(pickRules([bare as unknown as PickSummary])).toEqual([]); expect(pickRules([])).toEqual([]);
+  });
+  it('a missing, zero or non-numeric step or reward is never turned into a number', () => {
+    const odd = (o: object) => pick(o as Partial<PickSummary>);
+    for (const bad of [odd({ spend_step: undefined }), odd({ reward_amount: undefined }), pick({ spend_step: 0 }), pick({ reward_amount: 0 }), odd({ spend_step: '300' }), odd({ spend_step: null })]) expect(pickRules([bad])).toEqual([]);
+  });
+  it('the picks per step are kept (a rule that gives 2 per step)', () => { expect(pickRules([pick({ spend_step: 300, reward_amount: 2 })])[0]).toMatchObject({ step: 300, reward: 2 }); });
+  it('"how much more on a bill earns a pick" uses the smallest step of the rules', () => {
+    expect(smallestStep(pickRules([pick({ spend_step: 500 }), pick({ rule_id: 'r2', spend_step: 300 })]))).toBe(300); expect(smallestStep([])).toBeNull();
+  });
+});
+
+describe('points (the phase where only points are live)', () => {
+  const e = (over: Partial<PointsEntry> = {}): PointsEntry => ({ at: '2026-11-20T03:00:00Z', points: 8, kind: 'earn', note: null, order_no: 'ORD-000001', ...over });
+  it('shows a sign on every movement', () => { expect([8, -3, 0, 1200].map(signedPoints)).toEqual(['+8', '−3', '0', '+1,200']); });
+  it('the history shows the latest five until the customer asks for all', () => {
+    const h = Array.from({ length: 12 }, (_, i) => e({ order_no: 'ORD-' + i }));
+    expect(visibleHistory(h, false)).toHaveLength(5); expect(visibleHistory(h, true)).toHaveLength(12); expect(visibleHistory(h.slice(0, 5), false)).toHaveLength(5);
+  });
+  it('every kind of movement has its own words in both languages', () => {
+    for (const k of ['earn', 'reverse', 'adjust'] as const) { const key = historyKey(k); expect(tr('th', key).length, k).toBeGreaterThan(0); expect(tr('en', key).length, k).toBeGreaterThan(0); }
+    expect(new Set(['earn', 'reverse', 'adjust'].map((k) => historyKey(k as 'earn'))).size).toBe(3);
+  });
+});
+
+describe('a poll that keeps failing is not silent forever', () => {
+  it('stays quiet after one failure and warns after two in a row', () => {
+    expect(STALE_AFTER).toBe(2);
+    let h = pollHealth(0, false); expect(h).toEqual({ fails: 1, stale: false });
+    h = pollHealth(h.fails, false); expect(h).toEqual({ fails: 2, stale: true });
+    h = pollHealth(h.fails, false); expect(h).toEqual({ fails: 3, stale: true });
+  });
+  it('one success clears the warning and the count', () => {
+    expect(pollHealth(5, true)).toEqual({ fails: 0, stale: false });
+    const h = pollHealth(pollHealth(0, false).fails, true); expect(h).toEqual({ fails: 0, stale: false });   // a single failure between two successes never warns
   });
 });
 
@@ -115,9 +192,20 @@ describe('the server answer replaces the board (never a guess)', () => {
     expect(s.boards[0].numbers[7].s).toBe('free');          // the old state is untouched
   });
   it('a board the screen does not know is ignored', () => { const s = state(); expect(replaceBoard(s, board('zzz'), s.rights).boards.map((b) => b.id)).toEqual(['b1', 'b2', 'b3']); });
-  it('lists my numbers across the boards from the server\'s own marks', () => {
-    const s = state({ boards: [board('b1', { numbers: [cell(7, 'mine'), cell(8)] }), board('b2', { slot: 2, name: 'Board B', numbers: [cell(23, 'mine'), cell(5, 'shared', 3)] }), board('b3', { slot: 3, name: 'Board C' })] });
-    expect(mineChips(s)).toEqual([{ board: 'Board A', n: 7 }, { board: 'Board B', n: 23 }]);
+});
+
+describe('my numbers (rw_my_rewards.selections: live numbers of any event, even a paused or closed one)', () => {
+  const sel = (over: Partial<MySelection>): MySelection => ({ id: 's1', event_id: 'e1', board_id: 'b1', board_name: 'Board A', number: 7, status: 'confirmed', expires_at: null, ...over });
+  it('lists board and number, ordered by board then number', () => {
+    const rows = myNumbers([sel({ id: 'a', board_name: 'Board B', number: 3 }), sel({ id: 'b', number: 23 }), sel({ id: 'c', number: 7 })]);
+    expect(rows.map((r) => [r.board, r.n])).toEqual([['Board A', 7], ['Board A', 23], ['Board B', 3]]);
+  });
+  it('a reserved (held) number says it is not confirmed yet and carries its deadline; a confirmed one does not', () => {
+    const [held, done] = myNumbers([sel({ id: 'h', number: 1, status: 'reserved', expires_at: '2026-11-21T10:05:00Z' }), sel({ id: 'd', number: 2 })]);
+    expect(held).toMatchObject({ id: 'h', reserved: true, expires_at: '2026-11-21T10:05:00Z' }); expect(done).toMatchObject({ id: 'd', reserved: false, expires_at: null });
+  });
+  it('nothing in, nothing out; a status the screen does not know is not shown as a live number', () => {
+    expect(myNumbers([])).toEqual([]); expect(myNumbers([sel({ status: 'released' as unknown as MySelection['status'] })])).toEqual([]);
   });
 });
 
@@ -138,6 +226,17 @@ describe('what a claim answer does to the screen', () => {
       const m = claimPlan(code).message; expect(tr('th', m).length, code).toBeGreaterThan(0); expect(tr('en', m).length, code).toBeGreaterThan(0);
     }
     expect(tr('th', claimPlan('NUMBER_TAKEN').message)).not.toBe(tr('th', 'err.generic'));
+  });
+});
+
+describe('a number that is held but not confirmed (the claim worked, the confirm did not)', () => {
+  it('a lost connection or an unknown failure keeps the question open and says the number is held, never "picked"', () => {
+    for (const code of ['NETWORK', 'ERROR']) { const p = confirmPlan(code); expect(p.message, code).toBe('rw.held.msg'); expect(p.keepBar, code).toBe(true); expect(p.refresh, code).toBe(true); }
+    expect(tr('th', 'rw.held.msg', { board: 'Board A', n: '14' })).toContain('ยังไม่ได้ยืนยัน'); expect(tr('en', 'rw.held.msg', { board: 'Board A', n: '14' })).toContain('not confirmed');
+    expect(tr('en', 'rw.held.msg', { board: 'Board A', n: '14' })).not.toMatch(/^Picked/);
+  });
+  it('any other answer is the same as for a claim: an expired hold or a closed event closes the question with its reason', () => {
+    expect(confirmPlan('HOLD_EXPIRED')).toEqual(claimPlan('HOLD_EXPIRED')); expect(confirmPlan('EVENT_NOT_ACTIVE')).toEqual(claimPlan('EVENT_NOT_ACTIVE')); expect(confirmPlan('NOT_FOUND').keepBar).toBe(false);
   });
 });
 

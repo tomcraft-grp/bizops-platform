@@ -1,7 +1,7 @@
 // Pure helpers of the customer Rewards screen (Rewards.tsx) and the cart preview line: what each bill says, when the board is read-only, when the 5 s poll
 // reloads the board, what a failed claim does to the screen, keyboard movement in the number grid. No React, no network: tests/unit/rewardsShop.test.ts.
 // The rules themselves (per-bill arithmetic, who may hold a number) are decided by the database; nothing here computes picks or checks ownership.
-import type { BoardRevs, BoardState, CartPreview, PickBill, PickSummary, PublicBoard, BoardCell, Rights } from '../rewards/api';
+import type { BillState, BoardRevs, BoardState, CartPreview, MySelection, PickSummary, PointsEntry, PublicBoard, BoardCell, Rights } from '../rewards/api';
 import type { K } from './i18n';
 
 /** How often the open board asks the server for its three revision numbers. */
@@ -9,31 +9,82 @@ export const POLL_MS = 5000;
 export const GRID_COLS = 10;
 /** The bills list shows this many until the customer asks for all. */
 export const BILLS_COLLAPSED = 3;
+/** The points history shows this many until the customer asks for all. */
+export const HISTORY_COLLAPSED = 5;
+/** This many failed revision reads in a row and the board says it may be out of date. */
+export const STALE_AFTER = 2;
 
 // ------------------------------------------------------------------------------------------------ the summary
 export const sumPicks = (picks: PickSummary[]): Rights => picks.reduce((a, p) => ({ earned: a.earned + p.earned, used: a.used + p.used, remaining: a.remaining + p.remaining }), { earned: 0, used: 0, remaining: 0 });
 
-/**
- * "Every ฿300 on one bill earns 2 picks": the rule's step and reward come with each picks[] entry (rw_my_rewards). If a server leaves either out, the screen words
- * things without a number (null here) rather than invent one.
- */
-export function pickRule(picks: PickSummary[]): { step: number; reward: number } | null {
+/** A rule of the event as the customer is told about it. */
+export interface PickRuleInfo { id: string; name: string; step: number; reward: number }
+/** "Every ฿300 on one bill earns 2 picks": every rule whose step and picks-per-step the server sent (rw_my_rewards). An entry without usable numbers is left out: nothing is invented. */
+export function pickRules(picks: PickSummary[]): PickRuleInfo[] {
+  const out: PickRuleInfo[] = [];
   for (const p of picks) {
     const step: unknown = p.spend_step; const reward: unknown = p.reward_amount;
-    if (typeof step === 'number' && step > 0 && typeof reward === 'number' && reward > 0) return { step, reward };
+    if (typeof step === 'number' && step > 0 && typeof reward === 'number' && reward > 0) out.push({ id: p.rule_id, name: p.rule_name, step, reward });
   }
-  return null;
+  return out;
 }
+/** "How much more on one bill earns a pick": the smallest step of the rules. */
+export const smallestStep = (rules: PickRuleInfo[]): number | null => (rules.length ? Math.min(...rules.map((r) => r.step)) : null);
 
 // ------------------------------------------------------------------------------------------------ bills
 export type BillKind = 'earned' | 'none' | 'waiting' | 'taken_back';
 /** What a bill's row says. An unpaid bill never claims picks and a reversed one is "taken back", whatever `rights` holds. */
-export function billView(b: PickBill): { kind: BillKind; picks: number } {
+export function billView(b: { state: BillState; rights: number }): { kind: BillKind; picks: number } {
   if (b.state === 'waiting_payment') return { kind: 'waiting', picks: 0 };
   if (b.state === 'taken_back') return { kind: 'taken_back', picks: 0 };
   return b.rights > 0 ? { kind: 'earned', picks: b.rights } : { kind: 'none', picks: 0 };
 }
-export const visibleBills = (bills: PickBill[], all: boolean): PickBill[] => (all || bills.length <= BILLS_COLLAPSED ? bills : bills.slice(0, BILLS_COLLAPSED));
+export const visibleBills = <T,>(bills: T[], all: boolean): T[] => (all || bills.length <= BILLS_COLLAPSED ? bills : bills.slice(0, BILLS_COLLAPSED));
+
+/** What one rule said about a bill. */
+export interface BillPart { rule_id: string; rule_name: string; eligible_amount: number; rights: number; state: BillState }
+/** ONE row per bill, whatever the number of rules that listed it. `sameAmount` = every rule saw the same eligible amount (then the row shows that amount and the total picks; otherwise each rule's part is shown). */
+export interface BillGroup { order_id: string; order_no: string; created_at: string; eligible_amount: number; rights: number; state: BillState; parts: BillPart[]; sameAmount: boolean }
+/**
+ * Bills of every rule of the event, grouped by order. Picks = the sum over the rules that COUNT the bill. State: counted if any rule counts it, otherwise taken back if
+ * any rule took it back, otherwise waiting for payment. Newest bill first.
+ */
+export function groupBills(picks: PickSummary[]): BillGroup[] {
+  const by = new Map<string, BillGroup>();
+  for (const p of picks) {
+    for (const b of p.bills) {
+      const part: BillPart = { rule_id: p.rule_id, rule_name: p.rule_name, eligible_amount: b.eligible_amount, rights: b.rights, state: b.state };
+      const g = by.get(b.order_id);
+      if (g) g.parts.push(part); else by.set(b.order_id, { order_id: b.order_id, order_no: b.order_no, created_at: b.created_at, eligible_amount: 0, rights: 0, state: 'waiting_payment', parts: [part], sameAmount: true });
+    }
+  }
+  const out = [...by.values()];
+  for (const g of out) {
+    const counted = g.parts.filter((x) => x.state === 'counted');
+    g.state = counted.length ? 'counted' : g.parts.some((x) => x.state === 'taken_back') ? 'taken_back' : 'waiting_payment';
+    g.rights = counted.reduce((n, x) => n + x.rights, 0);
+    g.eligible_amount = Math.max(...g.parts.map((x) => x.eligible_amount));
+    g.sameAmount = g.parts.every((x) => x.eligible_amount === g.parts[0].eligible_amount);
+  }
+  return out.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.order_no.localeCompare(a.order_no));
+}
+
+// ------------------------------------------------------------------------------------------------ points
+export const visibleHistory = <T,>(h: T[], all: boolean): T[] => (all || h.length <= HISTORY_COLLAPSED ? h : h.slice(0, HISTORY_COLLAPSED));
+/** "+8", "−3" (a real minus sign), "0". */
+export const signedPoints = (n: number): string => (n > 0 ? '+' : n < 0 ? '\u2212' : '') + Math.abs(n).toLocaleString('en-US');
+export const historyKey = (k: PointsEntry['kind']): K => (k === 'earn' ? 'rw.hist.earn' : k === 'reverse' ? 'rw.hist.reverse' : 'rw.hist.adjust');
+
+// ------------------------------------------------------------------------------------------------ my numbers
+export interface MyNumber { id: string; board: string; n: number; reserved: boolean; expires_at: string | null }
+/**
+ * The customer's live numbers from rw_my_rewards.selections, ordered by board then number. The server lists them for ANY event status (a paused or closed event
+ * does not hide what the customer holds), so this list does not depend on a board being loaded.
+ */
+export const myNumbers = (sel: MySelection[]): MyNumber[] =>
+  sel.filter((s) => s.status === 'reserved' || s.status === 'confirmed')
+    .map((s) => ({ id: s.id, board: s.board_name, n: s.number, reserved: s.status === 'reserved', expires_at: s.status === 'reserved' ? s.expires_at : null }))
+    .sort((a, b) => a.board.localeCompare(b.board) || a.n - b.n);
 
 // ------------------------------------------------------------------------------------------------ the board
 export type Access = 'ok' | 'no_event' | 'event_draft' | 'event_paused' | 'event_closed' | 'locked' | 'no_rights';
@@ -79,9 +130,6 @@ export function gridMove(i: number, key: string, cols: number, total: number): n
     default: return i;
   }
 }
-/** The numbers the server marked as mine, board by board (what "Your numbers" lists). */
-export const mineChips = (s: BoardState): { board: string; n: number }[] =>
-  [...s.boards].sort((a, b) => a.slot - b.slot).flatMap((b) => b.numbers.filter((c) => c.s === 'mine').map((c) => ({ board: b.name, n: c.n })));
 
 // ------------------------------------------------------------------------------------------------ the poll and the server's answers
 export const revsOf = (s: BoardState): BoardRevs => ({ event_status: s.event?.status ?? null, boards: s.boards.map((b) => ({ id: b.id, rev: b.rev, state: b.state })) });
@@ -91,6 +139,8 @@ export function revsChanged(shown: BoardRevs | null, polled: BoardRevs): boolean
   const by = new Map(shown.boards.map((b) => [b.id, b] as const));
   return polled.boards.some((b) => { const s = by.get(b.id); return !s || s.rev !== b.rev || s.state !== b.state; });
 }
+/** Failed revision reads in a row: two or more and the screen says it may be out of date; one success clears it (a single failure between successes never warns). */
+export const pollHealth = (fails: number, ok: boolean): { fails: number; stale: boolean } => (ok ? { fails: 0, stale: false } : { fails: fails + 1, stale: fails + 1 >= STALE_AFTER });
 /** The server's answer to a claim (its board and its rights) goes into the shown state as it is; the other boards stay. */
 export const replaceBoard = (s: BoardState, board: PublicBoard, rights: Rights): BoardState => ({ ...s, boards: s.boards.map((b) => (b.id === board.id ? board : b)), rights });
 
@@ -116,6 +166,16 @@ export function claimPlan(code: string): ClaimPlan {
     case 'FORBIDDEN': return { message: 'err.signin', refresh: false, keepKey: false, keepBar: false };
     default: return stale('err.generic');           // KEY_REUSED, INVALID_KEY, NOT_FOUND, a code from a newer server: a new attempt gets a new key
   }
+}
+
+/**
+ * What a failed rw_confirm_selection does AFTER a successful claim (an event with a hold): the number is already held for the customer, so a lost connection must
+ * NOT read "picked": it says the number is held but not confirmed and keeps the question open so that Confirm can be tried again (same selection). Any other
+ * answer is the same as for a claim.
+ */
+export function confirmPlan(code: string): ClaimPlan {
+  if (code === 'NETWORK' || code === 'ERROR') return { message: 'rw.held.msg', refresh: true, keepKey: false, keepBar: true };
+  return claimPlan(code);
 }
 
 // ------------------------------------------------------------------------------------------------ cart preview
