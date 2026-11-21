@@ -1,11 +1,13 @@
 // The top of the Account tab: who the customer is, how many orders / payments are open, shortcuts and the language choice.
 // (The name / phone / consent form and the feedback centre below it stay in pages/CustomerApp.tsx.)
-import { useEffect, useState } from 'react';
-import { ChevronRight, ClipboardList, ShoppingBag, ShoppingCart, Wallet as WalletIcon } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ChevronRight, ClipboardList, Gift, ShoppingBag, ShoppingCart, Wallet as WalletIcon } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 import { cx } from '../lib/util';
 import { shop } from './api';
 import { wallet } from '../wallet/api';
+import { rewards } from '../rewards/api';
+import { RewardsView } from './Rewards';
 import { baht } from './format';
 import { useCartCount } from './cart';
 import { useShopHost } from './nav';
@@ -21,6 +23,10 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
   const [orders, setOrders] = useState<number | null>(null);
   const [toPay, setToPay] = useState<number | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
+  const [rewardsOn, setRewardsOn] = useState(false);          // the "Rewards & event" row: only when the server says rewards are on (ships dark; an older database simply has none)
+  const [inRewards, setInRewards] = useState(false);
+  const rewardsRow = useRef<HTMLButtonElement>(null);
+  const wasInRewards = useRef(false);
   const picture = (session?.user.user_metadata as { picture?: string } | undefined)?.picture;
 
   useEffect(() => {
@@ -28,8 +34,11 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
     shop.myOrders('all', 1, 0).then((r) => { if (on) setOrders(r.total); }).catch(() => undefined);
     shop.myOrders('unpaid', 1, 0).then((r) => { if (on) setToPay(r.total); }).catch(() => undefined);
     wallet.summary().then((r) => { if (on) setBalance(r.balance); }).catch(() => undefined);   // hidden when the wallet is not available
+    rewards.settings().then((r) => { if (on) setRewardsOn(!!r.enabled); }).catch(() => undefined);   // hidden when rewards are off or the call fails
     return () => { on = false; };
   }, []);
+
+  useEffect(() => { if (wasInRewards.current && !inRewards) rewardsRow.current?.focus(); wasInRewards.current = inRewards; }, [inRewards]);   // Back lands on the row that opened the screen
 
   const row = (icon: JSX.Element, title: string, hint: string, to: 'pay' | 'cart' | 'shop', badge?: number) => (
     <button type="button" className="sp-linkrow" onClick={() => host.goTab(to)}>
@@ -39,6 +48,8 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
       <ChevronRight size={18} aria-hidden />
     </button>
   );
+  // The Rewards screen takes the place of this page (shop.css hides what the host renders after it: the member form, the feedback centre).
+  if (inRewards) return <div className="sp-account rw-open"><RewardsView onBack={() => setInRewards(false)} /></div>;
   return (
     <div className="sp-account">
       <div className="sp-me">
@@ -60,6 +71,13 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
         {row(<ClipboardList size={20} />, t('acc.myOrders'), t('acc.myOrdersHint'), 'pay', toPay || 0)}
         {row(<ShoppingCart size={20} />, t('acc.cart'), t('acc.cartHint'), 'cart', cartN)}
         {row(<ShoppingBag size={20} />, t('acc.shop'), t('acc.shopHint'), 'shop')}
+        {rewardsOn && (
+          <button type="button" className="sp-linkrow" ref={rewardsRow} onClick={() => setInRewards(true)} data-testid="rewards-row">
+            <span className="sp-linkrow-ic"><Gift size={20} /></span>
+            <span className="grow"><b>{t('acc.rewards')}</b><small>{t('acc.rewardsHint')}</small></span>
+            <ChevronRight size={18} aria-hidden />
+          </button>
+        )}
       </div>
       <div className="sp-lang" role="group" aria-label={t('acc.language')}>
         <span>{t('acc.language')}</span>

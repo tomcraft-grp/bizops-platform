@@ -7,6 +7,8 @@ import type { ReactNode } from 'react';
 import { TH_BACKOFFICE } from './i18n.backoffice';
 import { TH_FEEDBACK } from './i18n.feedback';
 import { TH_SHOP } from './i18n.shop';
+import { TH_REWARDS } from './i18n.rewards';
+import { TH_SKUSYNC } from './i18n.skusync';
 
 export type Lang = 'en' | 'th';
 
@@ -130,6 +132,9 @@ for (const [k, v] of Object.entries(TH_BACKOFFICE)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_FEEDBACK)) if (!(k in TH)) TH[k] = v;
 // Customer shop payment card + back-office Online shop page — lib/i18n.shop.ts.
 for (const [k, v] of Object.entries(TH_SHOP)) if (!(k in TH)) TH[k] = v;
+// Rewards (promotion rules, packs, event boards) and SKU sync screens — lib/i18n.rewards.ts, lib/i18n.skusync.ts.
+for (const [k, v] of Object.entries(TH_REWARDS)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_SKUSYNC)) if (!(k in TH)) TH[k] = v;
 
 /** Translate an English source string. `{name}` placeholders are filled from `vars` AFTER lookup, so the
  *  dictionary key is the template (e.g. 'Type {word} to confirm') and dynamic values are never translated. */

@@ -6,6 +6,7 @@ import {
   Palette, Landmark,
 } from 'lucide-react';
 import { act, setLang, setTheme, toggleCollapsed, setUI, useDB, useLang, useStore } from '../domain/store';
+import { startSkuSyncWatch, syncSkus } from '../domain/skuSync';
 import { currentUser, hasPerm, userPerms } from '../domain/core';
 import { Avatar, Badge, Button, Empty, Popover, Modal, useUser } from './kit';
 import { useAlerts } from './data';
@@ -14,6 +15,7 @@ import { CHANNELS } from '../domain/meta';
 import { FeedbackButton } from './FeedbackWidget';
 import { t } from '../lib/i18n';
 import { useAuth } from '../auth/AuthProvider';
+import { DEMO_SEED } from '../domain/demo';
 import { BrandMark } from './Brand';
 import { BRAND } from '../brand';
 
@@ -77,6 +79,15 @@ export function Shell() {
   const perms = userPerms(db, user);
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => { setUI({ sidebarOpen: false }); }, [loc.pathname]);
+  // Once per sign-in, bring in what changed in the central SKU registry. It never throws: a failure is only stored and shown by the Products banner.
+  const signedIn = !!profile?.id, canSyncSkus = hasPerm(perms, 'catalog:edit');
+  // (Not in the demo build: its catalogue is invented and a real staff login must never pull the real registry into it.)
+  // and keep a screen that stays open all day current (when the tab becomes visible, and every 10 minutes while visible).
+  useEffect(() => {
+    if (DEMO_SEED || !signedIn || !canSyncSkus) return undefined;
+    void syncSkus();
+    return startSkuSyncWatch();
+  }, [signedIn, canSyncSkus]);
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen(true); } };
     window.addEventListener('keydown', h);

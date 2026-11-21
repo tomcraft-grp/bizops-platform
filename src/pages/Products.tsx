@@ -3,6 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import { ImagePlus, Plus, Star, Trash2 } from 'lucide-react';
 import { useDB, useLang } from '../domain/store';
 import { saveProduct, setProductActive } from '../domain/master';
+import { newSkuDetails, pushSkuDetails, saveProductEdit, setSkuActive, syncAgeLabel, syncSkusIfStale, useSkuSync } from '../domain/skuSync';
+import { rewardsAdmin } from '../rewards/api';
+import { DEMO_SEED } from '../domain/demo';
 import { PRODUCT_KIND_LABEL, CHANNEL_LIST } from '../domain/meta';
 import { globalAvgCost, lotsFor } from '../domain/inventory';
 import { bomForProduct, rollup, versionAt } from '../domain/bom';
@@ -12,7 +15,7 @@ import { LineChart } from '../ui/charts';
 import { MediaImg, ProductEmoji } from '../ui/shared';
 import { uploadMedia } from '../ui/upload';
 import { toast } from '../domain/store';
-import { dateFmt, money, money0, pct, qtyFmt, shortDay, dayKey } from '../lib/util';
+import { cx, dateFmt, money, money0, pct, qtyFmt, shortDay, dayKey } from '../lib/util';
 import type { DB, ID, Product, ProductKind } from '../domain/types';
 import { t as tl } from '../lib/i18n';
 import { PullSkuButton } from '../ui/PullSkuButton';
@@ -20,23 +23,34 @@ import { SkuCodesButton } from '../ui/SkuCodesButton';
 import { KINDS_OF_CATEGORY, SKU_CATEGORIES, SKU_CATEGORY_LABEL, isStandardSku, skuCategoryOf, type SkuCategory } from '../domain/sku';
 import { newClientRef, peekSku, reserveSku, voidSku } from '../lib/skuApi';
 
+/** The marketplace prices the central registry owns (its e-commerce price, see importSkuMaster): read-only on this device for products that have a registry code. */
+const REGISTRY_MARKET: string[] = ['SHOPEE', 'LAZADA', 'TIKTOK'];
+
 export default function Products() {
   const db = useDB();
+  const lang = useLang();
   const [sp, setSp] = useSearchParams();
   const canCreate = useHas('catalog:create');
   const canEdit = useHas('catalog:edit');
   const canCost = useHas('finance:cost');
   const [kind, setKind] = useState<string>('');
-  const [status, setStatus] = useState<'' | 'active' | 'inactive'>('');
+  const [status, setStatus] = useState<'' | 'active' | 'inactive' | 'unsynced'>('');
   const [skuType, setSkuType] = useState<'' | SkuCategory>('');
   const [adding, setAdding] = useState(false);
+  const sync = useSkuSync();
+  const packs = usePackCodes();
+  // Opening the page brings in what changed in the central registry (one small call when nothing did), unless that already happened within the last 5 minutes.
+  useEffect(() => { if (canEdit && !DEMO_SEED) void syncSkusIfStale(); }, [canEdit]);
   const openId = sp.get('p');
   const stock = useMemo(() => { const m: Record<ID, number> = {}; for (const k in db.balances) { const pid = k.split('|')[1]; m[pid] = (m[pid] || 0) + db.balances[k].qty; } return m; }, [db.balances]);
-  const rows = db.products.filter((p) => (!kind || p.kind === kind) && (!skuType || skuCategoryOf(p.kind) === skuType) && (!status || (status === 'active') === p.active));
+  // "Not synced yet": no registry code (the product exists only on this device), or its price and details are still waiting to be uploaded.
+  const notSynced = (p: Product) => !isStandardSku(p.sku) || sync.waiting.includes(p.sku);
+  const rows = db.products.filter((p) => (!kind || p.kind === kind) && (!skuType || skuCategoryOf(p.kind) === skuType) && (!status || (status === 'unsynced' ? notSynced(p) : (status === 'active') === p.active)));
   return (
     <>
       <PageHead title="Products" desc="One catalog for resale goods, manufactured goods, menu items (recipes), raw materials and packaging — with channel prices, images and cost history."
         actions={<>{canEdit && <SkuCodesButton />}{canEdit && <PullSkuButton />}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>}</>} />
+      {canEdit && !DEMO_SEED && <SyncBanner sync={sync} />}
       <div className="grid g4 mb16">
         <Kpi label="Products" value={db.products.length} sub={<Tx vars={{ n: db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).length }}>{'{n} sellable'}</Tx>} />
         <Kpi label="Menu items (recipes)" value={db.products.filter((p) => p.kind === 'menu').length} sub="stock deducted by BOM" />
@@ -45,9 +59,9 @@ export default function Products() {
       </div>
       <Card flush>
         <DataTable rows={rows} rowKey={(p) => p.id} pageSize={14} onRow={(p) => setSp({ p: p.id })} search={(p) => `${p.name} ${p.sku} ${p.legacySku ?? ''} ${p.barcode ?? ''} ${p.brand ?? ''} ${p.category} ${p.description ?? ''}`}
-          toolbar={<><Select sm style={{ width: 'auto' }} value={skuType} onChange={(e) => setSkuType(e.target.value as typeof skuType)}><option value="">All SKU types</option>{SKU_CATEGORIES.map((c) => <option key={c} value={c}>{SKU_CATEGORY_LABEL[c]}</option>)}</Select><Select sm style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}><option value="">All types</option>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select><Select sm style={{ width: 'auto' }} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></Select></>}
+          toolbar={<><Select sm style={{ width: 'auto' }} value={skuType} onChange={(e) => setSkuType(e.target.value as typeof skuType)}><option value="">All SKU types</option>{SKU_CATEGORIES.map((c) => <option key={c} value={c}>{SKU_CATEGORY_LABEL[c]}</option>)}</Select><Select sm style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}><option value="">All types</option>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select><Select sm style={{ width: 'auto' }} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="unsynced">Not synced yet</option></Select></>}
           cols={[
-            { key: 'n', header: 'Product', sort: (p) => p.name, render: (p) => <div className="row"><ProductEmoji p={p} size={36} /><div><b>{p.name}</b><div className="sub">{p.sku}{p.barcode ? ` · ${p.barcode}` : ''}</div></div></div> },
+            { key: 'n', header: 'Product', sort: (p) => p.name, render: (p) => <div className="row"><ProductEmoji p={p} size={36} /><div><b>{p.name}</b>{packs.has(p.sku) && <>{' '}<span title={tl(lang, 'Promotion pack')}><Badge tone="info">Pack</Badge></span></>}<div className="sub">{p.sku}{p.barcode ? ` · ${p.barcode}` : ''}</div></div></div> },
             { key: 'k', header: 'Type', hideSm: true, render: (p) => <Badge><Tx>{PRODUCT_KIND_LABEL[p.kind]}</Tx></Badge> },
             { key: 'c', header: 'Category', hideSm: true, render: (p) => p.category },
             { key: 'p', header: 'Price', num: true, sort: (p) => p.price, render: (p) => (p.price ? money(p.price) : <span className="muted">–</span>) },
@@ -61,14 +75,73 @@ export default function Products() {
     </>
   );
 }
-/** Status badge (always visible) + on/off switch (only for people who can edit the catalogue; others just see the badge). */
+/** Products that are packs of the online shop's promotions (rewardsAdmin.packs). Failure-silent: without the list there is simply no badge. */
+function usePackCodes(): Set<string> {
+  const [codes, setCodes] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (DEMO_SEED) return undefined;                  // the demo build has no online shop and must not call the real project
+    let live = true;
+    rewardsAdmin.packs().then((ps) => { if (live && Array.isArray(ps)) setCodes(new Set(ps.map((x) => x.pack_sku_code))); }).catch(() => undefined);
+    return () => { live = false; };
+  }, []);
+  return codes;
+}
+
+/** "Synced 2 min ago" / "Sync failed - retry", plus the SKUs the device could not apply and the details still waiting to be uploaded. */
+function SyncBanner({ sync }: { sync: ReturnType<typeof useSkuSync> }) {
+  const lang = useLang();
+  const [now, setNow] = useState(() => Date.now());
+  const [open, setOpen] = useState(false);
+  useEffect(() => { const i = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(i); }, []);
+  const age = syncAgeLabel(sync.lastOkAt, now);
+  const syncing = sync.state === 'syncing';
+  const failed = sync.state === 'error';
+  const unapplied = !failed && sync.failed.length > 0;
+  return (
+    <div className={cx('banner mb16', failed ? 'bad' : unapplied ? 'warn' : '')} role="status">
+      <div className="grow">
+        <div>
+          {syncing ? tl(lang, 'Syncing SKUs…') : failed ? tl(lang, sync.error ?? 'The SKU service returned an error.') : age ? tl(lang, age.text, age.vars) : tl(lang, 'Not synced on this device yet')}
+          {unapplied && <> · {tl(lang, '{n} SKUs could not be applied', { n: sync.failed.length })}{' '}<Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>{tl(lang, open ? 'Hide details' : 'Show details')}</Button></>}
+          {sync.waiting.length > 0 && <> · {tl(lang, '{n} waiting to upload', { n: sync.waiting.length })}</>}
+        </div>
+        {unapplied && open && (
+          <div className="sub mt8">
+            {sync.failed.slice(0, 10).map((f) => <div key={f.sku}><span className="mono">{f.sku}</span>{' '}{f.error}</div>)}
+            {sync.failed.length > 10 && <div>…</div>}
+            <div>{tl(lang, 'They are tried again at every sync.')}</div>
+          </div>
+        )}
+      </div>
+      {failed
+        ? <Button size="sm" onClick={() => sync.run()}>{tl(lang, 'Sync failed - retry')}</Button>
+        : <Button size="sm" variant="ghost" onClick={() => sync.run()} disabled={syncing}>{tl(lang, 'Sync now')}</Button>}
+    </div>
+  );
+}
+
+/**
+ * Status badge (always visible) + on/off switch (only for people who can edit the catalogue; others just see the badge).
+ * A product that has a registry code is switched in the central registry (it owns the status; the device is then re-synced), so the next sync cannot flip it back and
+ * other devices follow. A product without a registry code (it exists only on this device) is switched locally, as before.
+ */
 function ProductStatus({ p }: { p: Product }) {
+  const lang = useLang();
   const run = useRun();
   const canEdit = useHas('catalog:edit');
+  const [busy, setBusy] = useState(false);
   // The switch takes effect at once (FB-001005): no confirmation dialog. It is fully reversible (nothing is deleted; past orders, stock and reports keep
   // the product), and the toast says what happened, so a wrong tap is one tap to undo.
-  const toggle = (next: boolean) => {
-    run((d, c) => setProductActive(d, c, p.id, next), { ok: next ? 'Product activated' : 'Product deactivated', perm: 'catalog:edit' });
+  const toggle = async (next: boolean) => {
+    if (!isStandardSku(p.sku)) { run((d, c) => setProductActive(d, c, p.id, next), { ok: next ? 'Product activated' : 'Product deactivated', perm: 'catalog:edit' }); return; }
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await setSkuActive(p, next);
+      if (!r.ok) toast('error', tl(lang, 'Could not change the status of {sku}: {e}', { sku: p.sku, e: tl(lang, r.error) }));
+      else if (next && r.localActive === false) toast('info', tl(lang, 'Activated in the central database, but it has no price there, so it stays inactive on this device until a price is set.'));
+      else toast('success', tl(lang, next ? 'Product activated' : 'Product deactivated'));
+    } finally { setBusy(false); }
   };
   return (
     <div className="row gap-8">
@@ -120,6 +193,10 @@ function NewProduct({ onClose, onCreated }: { onClose: () => void; onCreated: (i
         return;
       }
       toast('success', tl(lang, 'Product created — SKU code {code} was generated automatically', { code: sku.code }));
+      // The registry only knows the name so far: send the price, cost, barcode, brand and unit too, so the shop and the other devices have them. The product is
+      // already saved here; if the upload fails it is kept and re-sent by the next sync, and the person is told.
+      const up = await pushSkuDetails(sku.code, newSkuDetails({ name: f.name, price: f.price, stdCost: f.stdCost, barcode: f.barcode, brand: f.brand, unit: f.unit }));
+      if (!up.ok) toast('error', tl(lang, 'The product is saved on this device, but its price and details could not be sent to the central database ({e}). They will be sent again at the next sync.', { e: tl(lang, up.error) }));
       onCreated(id);
     } catch (e) {
       toast('error', (e as Error).message);
@@ -158,6 +235,7 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
   const [f, setF] = useState<Product | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   if (!p) return null;
   const cur = f ?? p;
   const set = (patch: Partial<Product>) => setF({ ...cur, ...patch });
@@ -169,10 +247,23 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
   const lots = lotsFor(db, p.id);
   const balances = db.warehouses.map((w) => ({ w, b: db.balances[`${w.id}|${p.id}`] })).filter((x) => x.b && Math.abs(x.b.qty) > 0.0005);
   const avg = globalAvgCost(db, p.id);
+  // The registry owns name, price, cost, barcode, brand, unit and status: for a product with a registry code those go to the registry first and are saved here only once it
+  // accepted them. On a refusal the error is shown, nothing is changed on this device, and the drawer stays open with the edits (see saveProductEdit).
+  const saveDetails = async () => {
+    if (!f || saving) return;
+    setSaving(true);
+    try {
+      const r = await saveProductEdit(p, f);
+      if (!r.ok) { toast('error', tl(lang, r.error)); return; }
+      toast('success', tl(lang, 'Product saved'));
+      if (f.active && !p.active && r.localActive === false) toast('info', tl(lang, 'Activated in the central database, but it has no price there, so it stays inactive on this device until a price is set.'));
+      setF(null);
+    } finally { setSaving(false); }
+  };
 
   return (
     <Drawer title={<span className="row gap-6"><ProductEmoji p={p} size={32} />{p.name}</span>} sub={<>{p.sku} · <Tx>{PRODUCT_KIND_LABEL[p.kind]}</Tx></>} onClose={onClose}
-      footer={tab === 'details' && canEdit ? <><Button onClick={() => setF(null)} disabled={!f}><Tx>Reset</Tx></Button><Button variant="primary" disabled={!f} onClick={() => run((d, c) => saveProduct(d, c, f!), { ok: 'Product saved', perm: 'catalog:edit', onOk: () => setF(null) })}><Tx>Save changes</Tx></Button></> : undefined}>
+      footer={tab === 'details' && canEdit ? <><Button onClick={() => setF(null)} disabled={!f}><Tx>Reset</Tx></Button><Button variant="primary" disabled={!f || saving} onClick={saveDetails}><Tx>Save changes</Tx></Button></> : undefined}>
       <Tabs value={tab} onChange={setTab} tabs={[{ v: 'details', label: 'Details' }, { v: 'images', label: 'Images', count: imgs.length || '' }, { v: 'stock', label: 'Stock & cost' }, { v: 'channels', label: 'Channels' }]} />
       {tab === 'details' && (
         <div className="form-grid">
@@ -189,7 +280,8 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
           <div className="full"><Check checked={cur.active} onChange={(v) => canEdit && set({ active: v })}><Tx>Active (available for sale)</Tx></Check></div>
           {['resale', 'finished', 'menu'].includes(cur.kind) && (
             <div className="full"><div className="lbl-s mb8"><Tx>Channel-specific prices (blank = default)</Tx></div>
-              <div className="grid g3" style={{ gap: 10 }}>{CHANNEL_LIST.filter((c) => c.code !== 'POS').map((c) => <Field key={c.code} label={c.short}><NumInput value={cur.channelPrices[c.code] ?? ''} disabled={!canEdit} onChange={(n) => set({ channelPrices: { ...cur.channelPrices, [c.code]: isNaN(n) ? undefined : n } })} /></Field>)}</div></div>
+              {isStandardSku(cur.sku) && <div className="muted mb8" style={{ fontSize: 12 }}><Tx>Marketplace prices (Shopee, Lazada, TikTok) are set in the central registry and cannot be changed here.</Tx></div>}
+              <div className="grid g3" style={{ gap: 10 }}>{CHANNEL_LIST.filter((c) => c.code !== 'POS').map((c) => <Field key={c.code} label={c.short}><NumInput value={cur.channelPrices[c.code] ?? ''} disabled={!canEdit || (isStandardSku(cur.sku) && REGISTRY_MARKET.includes(c.code))} onChange={(n) => set({ channelPrices: { ...cur.channelPrices, [c.code]: isNaN(n) ? undefined : n } })} /></Field>)}</div></div>
           )}
           <div className="full"><div className="lbl-s mb8"><Tx>Reorder levels per warehouse</Tx></div>
             {db.warehouses.map((w) => <div key={w.id} className="row mb8"><span style={{ width: 190 }}>{w.name}</span><NumInput style={{ width: 90 }} placeholder={tl(lang, 'min')} disabled={!canEdit} value={cur.levels[w.id]?.min ?? ''} onChange={(n) => set({ levels: { ...cur.levels, [w.id]: { min: n || 0, max: cur.levels[w.id]?.max ?? 0 } } })} /><NumInput style={{ width: 90 }} placeholder={tl(lang, 'max')} disabled={!canEdit} value={cur.levels[w.id]?.max ?? ''} onChange={(n) => set({ levels: { ...cur.levels, [w.id]: { min: cur.levels[w.id]?.min ?? 0, max: n || 0 } } })} /></div>)}</div>
