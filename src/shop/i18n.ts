@@ -176,6 +176,7 @@ const D = {
   'rw.err.locked': ['บอร์ดนี้ถูกล็อกอยู่ ตอนนี้เลือกเลขไม่ได้ ยังไม่ได้ใช้สิทธิ์ของคุณ', 'This board is locked right now, so nothing was picked. Your pick was not used.'],
   'rw.err.noRights': ['คุณไม่มีสิทธิ์เลือกเลขเหลืออยู่', 'You have no picks left.'], 'rw.err.event': ['กิจกรรมนี้ยังไม่เปิดหรือปิดไปแล้ว ยังไม่ได้ใช้สิทธิ์ของคุณ', 'This event is not open right now. Your pick was not used.'],
   'rw.err.hold': ['หมดเวลาการจองเลขนี้แล้ว กรุณาเลือกใหม่', 'Your hold on this number has expired. Please pick again.'], 'rw.err.range': ['เลขนี้อยู่นอกช่วงของบอร์ด', 'That number is outside this board.'],
+  'rw.err.network': ['เชื่อมต่อไม่ได้ กดยืนยันอีกครั้งได้อย่างปลอดภัย ระบบจะไม่นับสิทธิ์เลือกเลขซ้ำ', 'Could not connect. You can safely confirm again: the same pick is never counted twice.'],
   'rw.err.limit': ['คุณเลือกครบจำนวนที่กำหนดสำหรับกิจกรรมนี้แล้ว', 'You have reached the number of picks allowed for this event.'],
   'rw.cart.picks1': ['{amount} ของสินค้าที่ร่วมรายการ: ได้ 1 สิทธิ์เลือกเลขเมื่อชำระเงินแล้ว', '{amount} of eligible items: you will earn 1 pick once paid'],
   'rw.cart.picksN': ['{amount} ของสินค้าที่ร่วมรายการ: ได้ {n} สิทธิ์เลือกเลขเมื่อชำระเงินแล้ว', '{amount} of eligible items: you will earn {n} picks once paid'],

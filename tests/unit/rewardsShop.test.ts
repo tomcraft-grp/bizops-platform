@@ -57,6 +57,18 @@ describe('board access: when the grid is read-only', () => {
     for (const status of ['paused', 'closed', 'draft'] as const) expect(boardAccess({ ...s.event!, status }, board('b1', { state: 'locked' }), s.rights)).toBe('event_' + status);
   });
   it('no event at all', () => { expect(boardAccess(null, null, s.rights)).toBe('no_event'); });
+  // review round 1: a right is valid on the board slots of its rule, so event-wide picks do not make EVERY board pickable
+  it('picks left on the event but none valid on THIS board: read-only (the server would refuse the tap)', () => {
+    expect(boardAccess(s.event, board('b1', { remaining: 0 }), { earned: 3, used: 0, remaining: 3 })).toBe('no_rights');
+  });
+  it('picks valid on this board: the customer can pick, even when another board has none', () => {
+    expect(boardAccess(s.event, board('b2', { remaining: 2 }), { earned: 2, used: 0, remaining: 2 })).toBe('ok');
+  });
+  it('an older server without the per-board count: the event-wide picks decide, as before', () => {
+    const old = board('b1'); delete (old as { remaining?: number }).remaining;
+    expect(boardAccess(s.event, old, { earned: 1, used: 0, remaining: 1 })).toBe('ok');
+    expect(boardAccess(s.event, old, { earned: 1, used: 1, remaining: 0 })).toBe('no_rights');
+  });
   it('each reason has its own banner text, in both languages; the others have none', () => {
     for (const a of ['event_draft', 'event_paused', 'event_closed', 'locked'] as const) { const k = accessKey(a)!; expect(tr('th', k).length, a).toBeGreaterThan(0); expect(tr('en', k).length, a).toBeGreaterThan(0); }
     expect(accessKey('ok')).toBeNull(); expect(accessKey('no_rights')).toBeNull(); expect(accessKey('no_event')).toBeNull();
@@ -117,7 +129,7 @@ describe('what a claim answer does to the screen', () => {
     }
   });
   it('a dropped connection keeps the key and the confirm bar so that Confirm retries the SAME request', () => {
-    expect(claimPlan('NETWORK')).toMatchObject({ keepKey: true, keepBar: true, message: 'err.network' });
+    expect(claimPlan('NETWORK')).toMatchObject({ keepKey: true, keepBar: true, message: 'rw.err.network' });
     expect(claimPlan('ERROR')).toMatchObject({ keepKey: true, keepBar: true });
   });
   it('a reused or invalid key gets a new key next time; every message exists in both languages', () => {

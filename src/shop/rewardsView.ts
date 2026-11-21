@@ -42,7 +42,9 @@ export function boardAccess(event: BoardState['event'], board: PublicBoard | nul
   if (!event || !board) return 'no_event';
   if (event.status !== 'active') return `event_${event.status}`;
   if (board.state === 'locked') return 'locked';
-  return rights.remaining > 0 ? 'ok' : 'no_rights';
+  // a right is valid on the board slots of its rule: the picks that count are the ones THIS board can take (an older server without the per-board count: the event-wide picks)
+  const left = typeof board.remaining === 'number' ? board.remaining : rights.remaining;
+  return left > 0 ? 'ok' : 'no_rights';
 }
 /** The banner text of a reason the board cannot be picked (no picks left has its own hint, because it carries the amount). */
 export function accessKey(a: Access): K | null {
@@ -109,7 +111,7 @@ export function claimPlan(code: string): ClaimPlan {
     case 'NUMBER_OUT_OF_RANGE': return stale('rw.err.range');
     case 'LIMIT_REACHED': return stale('rw.err.limit');
     case 'REWARDS_OFF': case 'BOARDS_OFF': return stale('rw.off');
-    case 'NETWORK': return { message: 'err.network', refresh: true, keepKey: true, keepBar: true };
+    case 'NETWORK': return { message: 'rw.err.network', refresh: true, keepKey: true, keepBar: true };      // its own wording: the checkout's "no duplicate order" does not apply to a pick
     case 'ERROR': return { message: 'err.generic', refresh: true, keepKey: true, keepBar: true };
     case 'FORBIDDEN': return { message: 'err.signin', refresh: false, keepKey: false, keepBar: false };
     default: return stale('err.generic');           // KEY_REUSED, INVALID_KEY, NOT_FOUND, a code from a newer server: a new attempt gets a new key

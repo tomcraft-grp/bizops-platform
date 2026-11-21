@@ -186,7 +186,7 @@ test.describe('the number board', () => {
     const keys: string[] = []; let n = 0;
     await page.route('**/rest/v1/rpc/rw_claim_number', async (route) => { keys.push((JSON.parse(route.request().postData() || '{}') as { p_key: string }).p_key); if (n++ === 0) await route.abort('connectionreset'); else await route.fallback(); });   // the first request never reaches the server
     await cell(page, 23).click(); await page.getByTestId('rw-confirm-yes').click();
-    await expect(page.getByTestId('rw-msg')).toContainText(t('err.network'));
+    await expect(page.getByTestId('rw-msg')).toContainText(t('rw.err.network'));
     await expect(page.getByTestId('rw-confirm')).toBeVisible(); await expect(cell(page, 23)).toHaveAttribute('data-s', 'free');
     await page.getByTestId('rw-confirm-yes').click();
     await expect(cell(page, 23)).toHaveAttribute('data-s', 'mine');
