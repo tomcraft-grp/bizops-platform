@@ -89,6 +89,30 @@ Rolling the app back does not need the database to move: the screens only call f
 
 Each rollback file refuses to run once it would destroy history: core (any ledger, right or sold pack, or while boards are installed), boards (any selection), sync (any change-log row). The sync rollback also restores one widened check constraint on `sku_code_history`.
 
+## Verification (2026-11-21, branch `feat/rewards-boards-sku-sync`; nothing was applied to production)
+
+Run on a local PostgreSQL 17 (`scripts/local-pg/`, invented data, not Supabase) and a fake backend for the screens:
+
+| What | Result |
+|---|---|
+| SQL suites: rewards core / event boards / SKU sync | 369 / 341 / 119 checks, all passed |
+| Rollback proofs (schema identical after rollback) | 10 of 10, for each of the three |
+| Existing SQL suites with the new migrations installed | 180, 99, 162, 22, 1000: identical to before |
+| Real-concurrency checks (separate connections, committed rows) | core 25, boards 29, SKU sync 29: all passed |
+| Unit tests | 972 passed (720 before this work); `tsc` clean |
+| Shop browser tests (Playwright, fake backend, one worker) | 317 of 317 passed |
+| Production build | built; the page grew by about 192 kB (8.3%) |
+
+Mutation checks show the new tests can fail: removing the activation stamp, the eligibility snapshot or the "nothing outstanding" condition each makes the matching tests fail.
+
+**Not verified**: the six `scripts/run-*.sh` production runners (syntax-checked only: production is off limits to the build, and `~/.supabase-token` was invalid); anything on the real Supabase project, real data or real roles (PostgREST); a real phone or Safari (Chrome at 390 px only); the Thai wording has had no native-speaker review.
+
 ## Known limitations
 
-See the final report of the implementation session; the main ones: legal review of purchase-linked prize boards is the owner's responsibility; marketplace channel prices edited in the Products drawer stay local; a cleared brand or barcode does not propagate to other devices; the allow-list shows customers as short ids when a rule is reopened; Thai wording has had no native review.
+* **Legal review** of purchase-linked prize boards is the owner's responsibility before go-live (the Events page says so).
+* **Late rewards under load**: when many payments of one customer collide, the reward update of one of them can be skipped (logged as `settle_error`) and arrives the next time the customer opens Rewards or staff press re-settle. There is no scheduled reconcile.
+* **A lapsed hold** is physically released by the next claim, reset, release or staff sweep; readers already treat it as free and the pick as returned.
+* **Staff powers kept as built**: any ADMIN can edit central SKU prices (audited in `sku_registry_changes`) and pause an event; closing an event, the number range once numbers are taken, and the six board operations need SUPER_ADMIN.
+* **Admin screens**: a customer on a rule's allow-list shows as a short id when the rule is reopened; the staff simulator shows "฿X more" without the resulting total; a held number in "Your numbers" has no Confirm button (the customer confirms at the moment of picking).
+* **SKU sync**: names imported from the workbook that start with digits lose them on every sync (as before); friend and wholesale prices stay in the product description, which the device owns.
+* **Status of an old customer app**: an app build from before this release keeps working (nothing it calls changed).
