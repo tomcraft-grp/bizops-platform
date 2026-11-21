@@ -699,11 +699,7 @@ begin
   return null;
 end $$;
 
--- A receipt is inserted BEFORE its allocation, and a reversal deactivates the allocation BEFORE it flips the receipt: money only counts once the allocation
--- exists, so the allocation is watched as well as the receipt (the receipt trigger covers a receipt that is posted or reversed on its own).
-create trigger rw_settle_after_receipt after insert or update of status on public.finance_receipts for each row execute function public.rw_trg_receipt();
-create trigger rw_settle_after_allocation after insert or update of active on public.finance_allocations for each row execute function public.rw_trg_allocation();
-create trigger rw_settle_after_order after update of status on public.shop_orders for each row when (old.status is distinct from new.status) execute function public.rw_trg_order();
+-- (The three CREATE TRIGGER statements that call these live at the very END of this file: see "19 hot-table triggers".)
 
 -- ====================================================================================================================== 12 hooks the event-boards migration replaces
 -- (create or replace there.) Here no board exists yet.
@@ -836,6 +832,12 @@ begin
     v_pp := case when jsonb_typeof(p_patch -> 'points_per_pack') = 'null' then null else public.rw_j_whole(p_patch -> 'points_per_pack', 'the points per pack', 0, 'BAD_PACK') end;
     if sold and v_pp is distinct from pk.points_per_pack then raise exception 'BAD_PACK: this pack has been sold, so its points are locked (create a new pack instead)'; end if;
   end if;
+  if v_ev is not null and v_ev > v_price then raise exception 'BAD_PACK: the eligible value cannot be more than the price'; end if;
+
+  -- LOCK ORDER (see the sync migration): the registry (its change feed takes a global advisory lock) BEFORE the pack items (whose foreign keys take key-share locks on component
+  -- SKUs), so a pack edit and a staff edit of a component SKU can never wait for each other in a circle. Everything is one transaction: a refusal below undoes this too.
+  update public.sku_registry set name_full = v_name, selling_price = v_price, ecommerce_price = case when nullif(ecommerce_price, 0) is not null then v_price else ecommerce_price end, updated_at = now()
+    where sku_code = p_pack and (name_full is distinct from v_name or selling_price is distinct from v_price or (nullif(ecommerce_price, 0) is not null and ecommerce_price is distinct from v_price));
   if p_patch ? 'items' then
     v_items := public.rw_check_pack_items(p_patch -> 'items');
     if public.rw_items_sig(v_items) is distinct from (select coalesce(string_agg(i.component_sku_code || ':' || i.qty::text, ',' order by i.component_sku_code), '') from public.promo_pack_items i where i.pack_sku_code = p_pack) then
@@ -844,11 +846,7 @@ begin
       insert into public.promo_pack_items (pack_sku_code, component_sku_code, qty) select p_pack, e ->> 'sku_code', (e ->> 'qty')::integer from jsonb_array_elements(v_items) e;
     end if;
   end if;
-  if v_ev is not null and v_ev > v_price then raise exception 'BAD_PACK: the eligible value cannot be more than the price'; end if;
-
   update public.promo_packs set active = v_act, eligible_value = v_ev, points_per_pack = v_pp, updated_by = auth.uid(), updated_at = now() where pack_sku_code = p_pack;
-  update public.sku_registry set name_full = v_name, selling_price = v_price, ecommerce_price = case when nullif(ecommerce_price, 0) is not null then v_price else ecommerce_price end, updated_at = now()
-    where sku_code = p_pack and (name_full is distinct from v_name or selling_price is distinct from v_price or (nullif(ecommerce_price, 0) is not null and ecommerce_price is distinct from v_price));
   perform public.rw_log('pack.save', 'pack', p_pack, null, null, jsonb_build_object('patch', p_patch, 'before', before));
   return public.rw_pack_json(p_pack);
 end $$;
@@ -1110,3 +1108,15 @@ grant execute on function
   public.rw_admin_customer_search(text, integer), public.rw_preview_cart(jsonb), public.rw_admin_simulate(jsonb, uuid), public.rw_my_rewards(), public.rw_admin_customer(uuid),
   public.rw_admin_adjust_points(uuid, integer, text), public.rw_admin_resettle(uuid), public.rw_admin_review_queue(), public.rw_admin_resolve_review(uuid, text, text)
   to authenticated;
+
+-- ====================================================================================================================== 19 hot-table triggers (last on purpose)
+-- CREATE TRIGGER takes a SHARE ROW EXCLUSIVE lock on the table and holds it until the transaction commits (apply-migrations.sh applies every pending migration in ONE
+-- transaction). These are the three busiest tables of the shop, so the statements come last (the shortest possible hold) and wait for their lock at most 3 seconds: if a
+-- payment is in the middle of something, the whole batch fails and rolls back (nothing is half applied) instead of queuing behind payments and blocking the next ones.
+-- The setting stays in force for the rest of the batch (the later migrations also touch busy tables) and ends with the transaction.
+set local lock_timeout = '3s';
+-- A receipt is inserted BEFORE its allocation, and a reversal deactivates the allocation BEFORE it flips the receipt: money only counts once the allocation
+-- exists, so the allocation is watched as well as the receipt (the receipt trigger covers a receipt that is posted or reversed on its own).
+create trigger rw_settle_after_receipt after insert or update of status on public.finance_receipts for each row execute function public.rw_trg_receipt();
+create trigger rw_settle_after_allocation after insert or update of active on public.finance_allocations for each row execute function public.rw_trg_allocation();
+create trigger rw_settle_after_order after update of status on public.shop_orders for each row when (old.status is distinct from new.status) execute function public.rw_trg_order();

@@ -112,6 +112,16 @@ create index if not exists rw_selections_profile_idx on public.rw_selections (pr
 create index if not exists rw_selections_reset_idx on public.rw_selections (reset_id) where reset_id is not null;
 
 -- the core migration created these columns as plain uuids; now the tables they point at exist
+-- The core migration could not check event ids (the table did not exist yet). If it was applied alone earlier and a rule or a right already names an event that does not
+-- exist, say exactly which, instead of failing on the constraint with a raw error (nothing is half applied either way: the migration is one transaction).
+do $orphans$ declare v text; begin
+  select string_agg('rule "' || r.name || '" (' || r.id || ') -> event ' || r.event_id, '; ') into v
+    from public.rw_rules r where r.event_id is not null and not exists (select 1 from public.rw_events e where e.id = r.event_id);
+  if v is not null then raise exception 'Cannot add the event link: rules point to events that do not exist: %. Fix or remove those rules first (rules are never deleted: switch them off and point them at a real event).', v; end if;
+  select string_agg(distinct x.event_id::text, ', ') into v
+    from public.rw_entitlements x where x.event_id is not null and not exists (select 1 from public.rw_events e where e.id = x.event_id);
+  if v is not null then raise exception 'Cannot add the event link: pick rights point to events that do not exist: %.', v; end if;
+end $orphans$;
 alter table public.rw_entitlements drop constraint if exists rw_entitlements_event_fk;
 alter table public.rw_entitlements add constraint rw_entitlements_event_fk foreign key (event_id) references public.rw_events (id) on delete restrict;
 alter table public.rw_rules drop constraint if exists rw_rules_event_fk;

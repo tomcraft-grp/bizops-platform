@@ -153,6 +153,31 @@ await withRunDb({ skip: ['sku_registry_sync'], files: [MIG] }, async (db) => {
     check('E. exactly ONE change row and ONE history row (idempotent under concurrency)', c === 1 && h === 1, `change rows ${c}, history rows ${h}`);
   }
 
+  // ------------------------------------------------------------------------------------------------------ G. a staff edit of a SKU does not block checkout (review round 1)
+  // An order line's foreign key to sku_registry takes a KEY SHARE lock on the SKU row. sku_set_details / sku_set_status lock the row FOR NO KEY UPDATE, which does not conflict with
+  // it: a customer placing an order for that SKU is never held up by a staff edit that is still open (FOR UPDATE would block it until the edit commits).
+  {
+    const [w1] = await db.connect(1, { as: ADMIN });
+    const [fk] = await db.connect(1);                                                         // the database owner: FOR KEY SHARE needs UPDATE rights, which a client has not
+    const edit = w1.query(`select public.sku_set_details('${code(80)}', '{"selling_price": 55}'); select pg_sleep(1.2)`);   // the edit stays open for 1.2 s
+    await sleep(350);
+    const t0 = Date.now(); let blocked = false, err = '';
+    try { await fk.query(`set lock_timeout = '300ms'; select 1 from public.sku_registry where sku_code = '${code(80)}' for key share`); } catch (e) { blocked = true; err = e.message; }
+    const took = Date.now() - t0;
+    await edit;
+    check('G. a key-share lock (what an order line takes) is NOT blocked while a staff edit of the same SKU is open', !blocked && took < 300, `blocked=${blocked} after ${took} ms ${err}`);
+    const [{ p }] = await db.query(`select selling_price::text as p from public.sku_registry where sku_code = '${code(80)}'`);
+    check('G. ... and the edit itself committed', p === '55.00', p);
+    // control: a FOR UPDATE edit WOULD have blocked it (so the check above can fail)
+    const [w2] = await db.connect(1);
+    const hold = w2.query(`select 1 from public.sku_registry where sku_code = '${code(81)}' for update; select pg_sleep(1.2)`);
+    await sleep(350);
+    let blocked2 = false;
+    try { await fk.query(`set lock_timeout = '300ms'; select 1 from public.sku_registry where sku_code = '${code(81)}' for key share`); } catch { blocked2 = true; }
+    await hold;
+    check('G. control: a FOR UPDATE lock on the same kind of row DOES block the key-share (so the check above can fail)', blocked2, 'not blocked');
+  }
+
   // ------------------------------------------------------------------------------------------------------ F. negative control: the same scenario as B with the lock switched off
   {
     await db.query('create or replace function public.sku_changes_lock() returns void language plpgsql security definer set search_path = public as $$ begin return; end $$');
