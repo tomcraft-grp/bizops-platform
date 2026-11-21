@@ -15,6 +15,7 @@ import { useSettings, useQuote } from './hooks';
 import { K, useT } from './i18n';
 import { useShopHost, useShopNav } from './nav';
 import { ConfirmSheet, ErrorBox, errText, ProductImage, Stepper } from './ui';
+import { RewardsPreview } from './Rewards';
 import { Choice, MethodCards, useMethods } from '../wallet/ui';
 import { removeOrderSlip, slipFingerprint, uploadOrderSlip } from '../wallet/api';
 import { review } from '../finance/review';
@@ -83,6 +84,7 @@ export function CartCore() {
         )}
         <div className="sp-note">{t('cart.priceNote')}</div>
       </div>
+      <RewardsPreview lines={lines} />
       <button type="button" className="btn primary lg block" disabled={!quote || loading || !quote.ok || closed} onClick={() => setStep('checkout')}>{loading && !quote ? t('cart.checking') : t('cart.checkout')}</button>
     </div>
   );

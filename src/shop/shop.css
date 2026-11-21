@@ -258,3 +258,69 @@ div.wl-card .wl-no { user-select: all; }
 .wl-account-card small { display: block; color: var(--muted); font-size: 12px; } .wl-account-card b { font-size: 20px; }
 .wl-homecard { border-color: var(--border); background: var(--surface); color: var(--text); } .wl-homecard span { flex: 1; }
 @media (min-width: 640px) { .wl-methods { display: grid; grid-template-columns: 1fr 1fr; } }
+
+/* ---- rewards and event boards (Account → Rewards & event, cart preview) ---- */
+.sp-account.rw-open ~ * { display: none; }   /* the Rewards screen takes the place of the account page: hide what the host renders after it (member form, feedback) */
+.rw-screen h2:focus { outline: none; }
+.rw-summary { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: var(--radius); background: var(--brand-soft); color: var(--brand-text); border: 1px solid color-mix(in srgb, var(--brand) 25%, transparent); }
+.rw-summary svg { flex: none; }
+.rw-summary p { margin: 0; font-size: 14.5px; line-height: 1.45; }
+.rw-summary b { font-size: 17px; color: var(--text); }
+.rw-bills { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.rw-bills li { border-bottom: 1px solid var(--hairline); }
+.rw-bills li:last-child { border-bottom: 0; }
+.rw-bill { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 10px 12px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.rw-bill:focus-visible, .rw-tab:focus-visible, .rw-msg button:focus-visible { outline: 3px solid var(--brand); outline-offset: -3px; }
+.rw-bill-main { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 1px; font-size: 14px; overflow-wrap: anywhere; }
+.rw-bill-main small { color: var(--muted); font-size: 12px; }
+.rw-bill-ic { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; flex: none; background: var(--surface-3); color: var(--text-2); }
+.rw-bills li[data-kind='earned'] .rw-bill-ic { background: var(--good-soft); color: var(--good-text); }
+.rw-bills li[data-kind='waiting'] .rw-bill-ic { background: var(--warn-soft); color: var(--warn-text); }
+.rw-bills li[data-kind='taken_back'] .rw-bill-ic { background: var(--crit-soft); color: var(--crit-text); }
+.rw-event { margin: 0; font-size: 15px; } .rw-event small { color: var(--muted); font-size: 12.5px; font-weight: 500; }
+.rw-note { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius); background: var(--surface-3); color: var(--text); font-size: 13.5px; line-height: 1.45; }
+.rw-note svg { flex: none; margin-top: 1px; }
+.rw-note.warn { background: var(--warn-soft); color: var(--warn-text); }
+.rw-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.rw-tab { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 44px; padding: 6px 8px; border: 2px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.rw-tab .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rw-tab i { width: 10px; height: 10px; border-radius: 3px; flex: none; background: var(--rw-c, var(--muted)); }   /* the board's colour is a label chip only: the name says which board it is */
+.rw-tab[aria-pressed='true'] { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-text); }
+.rw-mode { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 0; font-size: 14px; font-weight: 650; }
+.rw-mode small { color: var(--muted); font-size: 12.5px; font-weight: 500; margin-left: auto; }
+/* the 10 x 10 board: a number is text first; taken / mine / shared also differ by pattern, border and mark, never by colour alone */
+.rw-grid { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 3px; }
+.rw-cell, .rw-key { position: relative; min-width: 0; display: grid; place-items: center; padding: 0; border: 1.5px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: 700 14px/1 var(--font); font-variant-numeric: tabular-nums; }
+.rw-cell { height: 40px; cursor: pointer; }
+.rw-cell:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; z-index: 2; }
+.rw-cell[data-s='taken'], .rw-key[data-s='taken'] { color: var(--text-2); text-decoration: line-through; background-color: var(--surface-3); background-image: repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--text) 18%, transparent) 4px 6px); cursor: not-allowed; }
+.rw-cell[data-s='shared'], .rw-key[data-s='shared'] { border-style: dashed; border-color: var(--brand); }
+.rw-c { position: absolute; top: 1px; right: 3px; font: 700 10px/1 var(--font); color: var(--brand-text); }
+.rw-cell[data-s='mine'], .rw-key[data-s='mine'] { background: var(--brand); border-color: var(--brand); color: var(--on-brand); cursor: default; }
+.rw-cell[data-s='mine'] .rw-c, .rw-key[data-s='mine'] .rw-c { color: var(--on-brand); }
+.rw-cell[data-s='mine']::after, .rw-key[data-s='mine']::after { content: '✓'; position: absolute; bottom: 1px; right: 3px; font-size: 10px; line-height: 1; }
+.rw-cell.sel { background: var(--warn-soft); border-color: var(--text); box-shadow: 0 0 0 2px var(--text); z-index: 1; }
+.rw-grid.ro .rw-cell[data-s='free'], .rw-grid.ro .rw-cell[data-s='shared'] { background: var(--surface-2); color: var(--text-2); cursor: default; }
+.rw-key { width: 30px; height: 28px; font-size: 12px; flex: none; }
+.rw-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; list-style: none; margin: 0; padding: 0; font-size: 12.5px; color: var(--text-2); }
+.rw-legend li { display: flex; align-items: center; gap: 6px; }
+.rw-mine { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 14px; }
+.rw-mine ul { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.rw-mine li { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; background: var(--brand-soft); color: var(--brand-text); font-weight: 650; font-size: 13px; }
+/* the confirm question and the answer share one spot that stays in view at the bottom while the board is on screen (no modal) */
+.rw-dock { position: sticky; bottom: 8px; z-index: 6; display: flex; flex-direction: column; gap: 8px; }
+.rw-dock:empty { display: none; }
+.rw-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px; border: 2px solid var(--brand); border-radius: var(--radius); background: var(--surface); box-shadow: 0 6px 20px rgba(0, 0, 0, .2); }
+.rw-confirm p { flex: 1 1 170px; margin: 0; font-size: 15px; font-weight: 700; }
+.rw-confirm-btns { display: flex; gap: 8px; flex: 0 0 auto; }
+.rw-confirm-btns .btn { min-height: 44px; min-width: 92px; justify-content: center; }
+.rw-confirm-btns .btn[aria-disabled='true'] { opacity: .6; cursor: default; }
+.rw-msg { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius); font-size: 14px; line-height: 1.4; box-shadow: 0 4px 14px rgba(0, 0, 0, .16); background: var(--brand-soft); color: var(--brand-text); }
+.rw-msg.good { background: var(--good-soft); color: var(--good-text); }
+.rw-msg.bad { background: var(--crit-soft); color: var(--crit-text); }
+.rw-msg span { flex: 1; min-width: 0; }
+.rw-msg button { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
+.rw-preview { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius); background: var(--brand-soft); color: var(--brand-text); font-size: 13.5px; line-height: 1.45; }
+.rw-preview svg { flex: none; margin-top: 2px; }
+.rw-preview p { margin: 0; } .rw-preview p + p { margin-top: 6px; }
+.rw-preview small { display: block; font-size: 12.5px; }
