@@ -9,6 +9,8 @@ import { Badge, Banner, Button, Card, ChannelChip, Check, DataTable, Field, Inpu
 import { dateFmt, dayKey, money, money0, addDays } from '../lib/util';
 import type { ChannelCode, PromoActionType, Promotion } from '../domain/types';
 import { t as tl } from '../lib/i18n';
+import { DEMO_SEED } from '../domain/demo';
+import PromotionsOnline from '../rewards/PromotionsOnline';
 
 const ACTIONS: { v: PromoActionType; label: string; hint: string }[] = [
   { v: 'percent', label: 'Percentage discount', hint: 'value = % off the eligible items' },
@@ -21,7 +23,19 @@ const ACTIONS: { v: PromoActionType; label: string; hint: string }[] = [
 ];
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+/** The page: "Online shop" (rules, promotion packs and a simulator that run on the server) and "POS on this device" (the local rule engine below, unchanged).
+ *  The demo build (VITE_DEMO_SEED=1: the e2e fixtures and the sales demo) has no online shop behind it, so it opens on the local engine; the live build opens on "Online shop". */
 export default function Promotions() {
+  const [view, setView] = useState<'online' | 'pos'>(DEMO_SEED ? 'pos' : 'online');
+  return (
+    <>
+      <Tabs value={view} onChange={setView} tabs={[{ v: 'online', label: 'Online shop' }, { v: 'pos', label: 'POS on this device' }]} />
+      {view === 'online' ? <PromotionsOnline /> : <LegacyPromotions />}
+    </>
+  );
+}
+
+function LegacyPromotions() {
   const db = useDB();
   const run = useRun();
   const canEdit = useHas('promotions:edit');

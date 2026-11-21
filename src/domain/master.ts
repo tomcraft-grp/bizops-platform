@@ -96,15 +96,26 @@ export function setProductActive(d: DB, ctx: Ctx, ids: ID | ID[], active: boolea
 /** Can this product be picked for a NEW transaction? Inactive ones cannot, except `keepId` (the value already selected on an existing document). */
 export const isUsable = (p: Pick<Product, 'id' | 'active'>, keepId?: ID | null) => p.active || (keepId != null && p.id === keepId);
 
-/** A row of the central SKU registry (Supabase public.sku_registry, origin = 'import'). `sku_code` is the NEW automatic code. */
+/**
+ * A row of the central SKU registry (Supabase public.sku_registry). `sku_code` is the NEW automatic code. `origin` is 'import' (the original workbook) or 'app'
+ * (issued by the app); a RegistryRow of src/rewards/api.ts (the sync feed) is accepted as it is, so `source_code` and `origin` are optional.
+ */
 export interface SkuMasterRow {
-  sku_code: string; legacy_sku_code?: string | null; sku_category?: string | null;
-  source_code: string | null; domain: string; brand: string | null; name_full: string; product_type: string | null;
+  sku_code: string; legacy_sku_code?: string | null; sku_category?: string | null; origin?: string | null;
+  source_code?: string | null; domain: string; brand: string | null; name_full: string; product_type: string | null;
   pack_qty: number | null; unit_en: string | null; unit_th: string | null; barcode: string | null; status: string;
   cost_price: number | null; retail_price: number | null; selling_price: number | null; friend_price: number | null;
   wholesale_price: number | null; ecommerce_price: number | null; needs_review: boolean; review_notes: string | null;
 }
 export interface SkuImportResult { created: number; updated: number; inactive: number; recoded: number; failed: { sku: string; error: string }[] }
+export interface SkuImportOptions {
+  /**
+   * Used by the automatic sync (domain/skuSync.ts). For a product that already exists, only the fields the registry owns are written (name, brand, price, cost,
+   * barcode, marketplace prices, active); category, unit, emoji and the description stay as this device has them. A value the registry does not have (no price, no
+   * cost, no barcode, no marketplace price) never wipes what the device already holds. Without it (the default) every field is rewritten, as before.
+   */
+  preserveLocal?: boolean;
+}
 
 /**
  * Give an existing product its standard code. The old code is kept in `legacySku` (never overwritten once set) and the change
@@ -130,28 +141,38 @@ function recodeProduct(d: DB, ctx: Ctx, p: Product, sku: string, legacy?: string
  * channel price. A SKU with no price, or marked inactive centrally, is imported as inactive (not sellable).
  * Friend and wholesale prices are kept in the description for the cashier.
  */
-export function importSkuMaster(d: DB, ctx: Ctx, rows: SkuMasterRow[]): SkuImportResult {
+export function importSkuMaster(d: DB, ctx: Ctx, rows: SkuMasterRow[], opts: SkuImportOptions = {}): SkuImportResult {
   guard(d, ctx, 'catalog:edit');
   const res: SkuImportResult = { created: 0, updated: 0, inactive: 0, recoded: 0, failed: [] };
   const bySku = (code?: string | null) => (code ? d.products.find((p) => p.sku.toLowerCase() === code.toLowerCase()) : undefined);
   for (const r of rows) {
     const cat = r.sku_category ?? skuCategoryOfCode(r.sku_code) ?? 'FG';
-    const kratom = /kratom/i.test(r.domain);
+    const kratom = /kratom/i.test(r.domain ?? '');
+    const app = r.origin === 'app'; // issued by the app: its name is exactly what was typed (the workbook's row number is only stripped from imported names)
     const kind: ProductKind = cat === 'RM' ? 'material' : cat === 'WIP' ? 'wip' : kratom ? 'finished' : 'resale';
-    const price = r.selling_price ?? r.retail_price ?? 0;
+    const existing = bySku(r.sku_code) ?? bySku(r.legacy_sku_code);
+    const keep = !!existing && !!opts.preserveLocal; // sync of a product this device already has: device-owned fields are left alone
+    const regPrice = r.selling_price ?? r.retail_price ?? 0;
+    const price = keep && !(regPrice > 0) ? existing!.price : regPrice;
     const active = r.status === 'active' && price > 0;
     const tiers = [r.friend_price != null && `ราคาเพื่อน ${r.friend_price}`, r.wholesale_price != null && `ราคาส่ง ${r.wholesale_price}`, r.retail_price != null && r.retail_price !== price && `ราคาป้าย ${r.retail_price}`].filter(Boolean);
-    const existing = bySku(r.sku_code) ?? bySku(r.legacy_sku_code);
+    const market = r.ecommerce_price != null ? { SHOPEE: r.ecommerce_price, LAZADA: r.ecommerce_price, TIKTOK: r.ecommerce_price } : {};
     try {
       if (existing && existing.sku.toLowerCase() !== r.sku_code.toLowerCase()) { recodeProduct(d, ctx, existing, r.sku_code, r.legacy_sku_code); res.recoded++; }
-      const id = saveProduct(d, ctx, {
-        id: existing?.id, sku: r.sku_code, legacySku: existing ? undefined : r.legacy_sku_code || undefined, name: r.name_full.replace(/^\s*\d+\s+/, '').trim() || r.sku_code,
-        kind: existing?.kind ?? kind, brand: r.brand?.trim() || existing?.brand, category: kratom ? 'Kratom drink' : (r.product_type ? `POD · ${r.product_type}` : 'POD'),
-        unit: kratom ? 'bottle' : 'pcs', price, stdCost: r.cost_price ?? 0, barcode: r.barcode ?? undefined, active,
-        channelPrices: r.ecommerce_price != null ? { SHOPEE: r.ecommerce_price, LAZADA: r.ecommerce_price, TIKTOK: r.ecommerce_price } : {},
-        emoji: kratom ? '🍃' : '💨',
+      const name = (app ? r.name_full.trim() : r.name_full.replace(/^\s*\d+\s+/, '').trim()) || r.sku_code;
+      const owned = {
+        name, brand: r.brand?.trim() || existing?.brand, price, active,
+        stdCost: keep && r.cost_price == null ? existing!.stdCost : r.cost_price ?? 0,
+        barcode: r.barcode ?? (keep ? existing!.barcode : undefined),
+        channelPrices: keep ? { ...existing!.channelPrices, ...market } : market,
+      };
+      const device = keep ? {} : {
+        category: kratom ? 'Kratom drink' : app ? r.product_type || 'General' : (r.product_type ? `POD · ${r.product_type}` : 'POD'),
+        unit: kratom ? 'bottle' : app ? r.unit_th || r.unit_en || 'pcs' : 'pcs',
+        emoji: kratom ? '🍃' : app ? undefined : '💨',
         description: [r.brand, tiers.join(' · '), r.needs_review ? `ต้องตรวจสอบ: ${r.review_notes ?? ''}` : null, r.source_code && r.source_code !== r.legacy_sku_code ? `รหัสต้นฉบับ ${r.source_code}` : null].filter(Boolean).join('\n') || undefined,
-      });
+      };
+      const id = saveProduct(d, ctx, { id: existing?.id, sku: r.sku_code, legacySku: existing ? undefined : r.legacy_sku_code || undefined, kind: existing?.kind ?? kind, ...owned, ...device });
       // saveProduct always creates products as active; a SKU without a price must not be sellable at ฿0.
       d.products.find((p) => p.id === id)!.active = active;
       if (existing) res.updated++; else res.created++;

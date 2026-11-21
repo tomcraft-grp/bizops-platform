@@ -7,7 +7,9 @@ import { rpc, ShopError, WRITE_TIMEOUT_MS } from '../shop/api';
 export type RewardsErrorCode =
   | 'REWARDS_OFF' | 'BOARDS_OFF' | 'NOT_FOUND' | 'BAD_RULE' | 'INACTIVE_SKU' | 'BAD_PACK' | 'EVENT_NOT_ACTIVE' | 'BOARD_LOCKED'
   | 'NUMBER_OUT_OF_RANGE' | 'NUMBER_TAKEN' | 'NO_ENTITLEMENT' | 'LIMIT_REACHED' | 'HOLD_EXPIRED' | 'REASON_REQUIRED' | 'CONFIRM_MISMATCH'
-  | 'RESET_CONFLICT' | 'INVALID_KEY' | 'KEY_REUSED' | 'FORBIDDEN' | 'NETWORK';
+  | 'RESET_CONFLICT' | 'INVALID_KEY' | 'KEY_REUSED' | 'FORBIDDEN' | 'NETWORK'
+  // SKU registry (sku_set_status / sku_set_details)
+  | 'BAD_STATUS' | 'BAD_FIELD' | 'BAD_VALUE' | 'BARCODE_TAKEN';
 /** True when `e` is a ShopError carrying one of the given server codes. */
 export const isRewardsError = (e: unknown, ...codes: RewardsErrorCode[]): e is ShopError => e instanceof ShopError && (codes as string[]).includes(e.code);
 
@@ -35,14 +37,18 @@ export type PackPatch = Partial<{ active: boolean; eligible_value: number | null
 
 export interface SkuHit { sku_code: string; name: string; status: 'active' | 'inactive'; price: number | null; category: string; brand: string | null; is_pack: boolean; origin: 'import' | 'app' }
 
-export interface PreviewLine { kind: RuleKind; name: string; eligible_amount: number; reward: number; next_reward_in: number | null }
+/** Staff lookup of a customer by name, phone or e-mail (for the rule allow-list and the customer rewards view). */
+export interface CustomerHit { id: string; name: string | null; phone: string | null; email: string | null }
+
+/** `next_reward_in` = baht more on this bill for the next step; `next_reward_total` = the picks/points the bill would then earn in total (null when capped). */
+export interface PreviewLine { kind: RuleKind; name: string; eligible_amount: number; reward: number; next_reward_in: number | null; next_reward_total: number | null }
 export interface CartPreview { enabled: boolean; lines: PreviewLine[] }
 export interface SimLine { rule_id: string; rule_name: string; kind: RuleKind; eligible_amount: number; reward: number; next_reward_in: number | null; note: string | null }
 
 // ------------------------------------------------------------------------------------------------ customer view
 export type BillState = 'counted' | 'waiting_payment' | 'taken_back';
 export interface PickBill { order_id: string; order_no: string; created_at: string; eligible_amount: number; rights: number; state: BillState }
-export interface PickSummary { rule_id: string; rule_name: string; event_id: string | null; earned: number; used: number; remaining: number; bills: PickBill[] }
+export interface PickSummary { rule_id: string; rule_name: string; event_id: string | null; spend_step: number; reward_amount: number; earned: number; used: number; remaining: number; bills: PickBill[] }
 export interface PointsEntry { at: string; points: number; kind: 'earn' | 'reverse' | 'adjust'; note: string | null; order_no: string | null }
 export interface MySelection { id: string; event_id: string; board_id: string; board_name: string; number: number; status: 'reserved' | 'confirmed'; expires_at: string | null }
 export interface MyRewards {
@@ -68,7 +74,8 @@ export interface AdminBoard { board: Board; numbers: { n: number; holders: Holde
 
 export type CellState = 'free' | 'taken' | 'mine' | 'shared';
 export interface BoardCell { n: number; s: CellState; c: number }
-export interface PublicBoard { id: string; slot: number; name: string; color: string; mode: BoardMode; state: BoardLock; rev: number; taken: number; numbers: BoardCell[] }
+/** `remaining` = the picks THIS customer can spend on THIS board (a right is valid on the board slots of its rule); the state's `rights` stay event-wide. */
+export interface PublicBoard { id: string; slot: number; name: string; color: string; mode: BoardMode; state: BoardLock; rev: number; taken: number; remaining: number; numbers: BoardCell[] }
 export interface Rights { earned: number; used: number; remaining: number }
 export interface BoardState {
   event: { id: string; name: string; status: EventStatus; number_min: number; number_max: number; hold_minutes: number; starts_at: string | null; ends_at: string | null } | null;
@@ -113,10 +120,12 @@ export const rewardsAdmin = {
     rpc<Pack>('rw_admin_create_pack', { p_key: key, p_name: name, p_price: price, p_items: items, p_patch: patch }, WRITE_TIMEOUT_MS),
   savePack: (packSku: string, patch: PackPatch) => rpc<Pack>('rw_admin_save_pack', { p_pack: packSku, p_patch: patch }, WRITE_TIMEOUT_MS),
   searchSkus: (q: string, onlyActive = true, limit = 20) => rpc<SkuHit[]>('rw_admin_sku_search', { p_q: q, p_only_active: onlyActive, p_limit: limit }),
+  searchCustomers: (q: string, limit = 10) => rpc<CustomerHit[]>('rw_admin_customer_search', { p_q: q, p_limit: limit }),
   simulate: (items: CartItem[], profileId?: string | null) => rpc<SimLine[]>('rw_admin_simulate', { p_items: items, p_profile: profileId ?? null }),
   customer: (profileId: string) => rpc<AdminCustomerRewards>('rw_admin_customer', { p_profile: profileId }),
   adjustPoints: (profileId: string, points: number, reason: string) => rpc<number>('rw_admin_adjust_points', { p_profile: profileId, p_points: points, p_reason: reason }, WRITE_TIMEOUT_MS),
-  resettle: (profileId?: string | null) => rpc<{ profiles: number; changed: number }>('rw_admin_resettle', { p_profile: profileId ?? null }, WRITE_TIMEOUT_MS),
+  /** Without a profile: at most 100 recent customers per call; `remaining` = how many more there are. */
+  resettle: (profileId?: string | null) => rpc<{ profiles: number; changed: number; remaining: number }>('rw_admin_resettle', { p_profile: profileId ?? null }, WRITE_TIMEOUT_MS),
   reviewQueue: () => rpc<ReviewItem[]>('rw_admin_review_queue'),
   resolveReview: (entitlementId: string, action: 'keep' | 'release', reason: string) =>
     rpc<ReviewItem[]>('rw_admin_resolve_review', { p_entitlement: entitlementId, p_action: action, p_reason: reason }, WRITE_TIMEOUT_MS),

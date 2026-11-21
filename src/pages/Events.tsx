@@ -9,8 +9,26 @@ import { cx, dateTimeFmt, money0 } from '../lib/util';
 import type { EventDoc, ID } from '../domain/types';
 import { OrderDrawer } from './OrderDetail';
 import { t as tl } from '../lib/i18n';
+import { DEMO_SEED } from '../domain/demo';
+import EventsOnline from '../rewards/EventsOnline';
 
+type Mode = 'online' | 'pos';
+/**
+ * Two engines side by side. "Online shop" is the server-side one (three shared boards in the database, one Super Admin set of controls). "POS on this device" is the original
+ * page below, unchanged: it keeps its own events in this browser. The demo business has no online shop (no server), so the demo build shows only the original page, exactly as before.
+ */
 export default function Events() {
+  const [mode, setMode] = useState<Mode>('online');
+  if (DEMO_SEED) return <LegacyEvents />;
+  return (
+    <>
+      <Tabs<Mode> value={mode} onChange={setMode} tabs={[{ v: 'online', label: 'Online shop' }, { v: 'pos', label: 'POS on this device' }]} />
+      {mode === 'online' ? <EventsOnline /> : <LegacyEvents />}
+    </>
+  );
+}
+
+function LegacyEvents() {
   const lang = useLang();
   const db = useDB();
   const run = useRun();

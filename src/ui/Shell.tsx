@@ -6,6 +6,7 @@ import {
   Palette, Landmark,
 } from 'lucide-react';
 import { act, setLang, setTheme, toggleCollapsed, setUI, useDB, useLang, useStore } from '../domain/store';
+import { syncSkus } from '../domain/skuSync';
 import { currentUser, hasPerm, userPerms } from '../domain/core';
 import { Avatar, Badge, Button, Empty, Popover, Modal, useUser } from './kit';
 import { useAlerts } from './data';
@@ -77,6 +78,9 @@ export function Shell() {
   const perms = userPerms(db, user);
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => { setUI({ sidebarOpen: false }); }, [loc.pathname]);
+  // Once per sign-in, bring in what changed in the central SKU registry. It never throws: a failure is only stored and shown by the Products banner.
+  const signedIn = !!profile?.id, canSyncSkus = hasPerm(perms, 'catalog:edit');
+  useEffect(() => { if (signedIn && canSyncSkus) void syncSkus(); }, [signedIn, canSyncSkus]);
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen(true); } };
     window.addEventListener('keydown', h);
