@@ -23,6 +23,9 @@ import { SkuCodesButton } from '../ui/SkuCodesButton';
 import { KINDS_OF_CATEGORY, SKU_CATEGORIES, SKU_CATEGORY_LABEL, isStandardSku, skuCategoryOf, type SkuCategory } from '../domain/sku';
 import { newClientRef, peekSku, reserveSku, voidSku } from '../lib/skuApi';
 
+/** The marketplace prices the central registry owns (its e-commerce price, see importSkuMaster): read-only on this device for products that have a registry code. */
+const REGISTRY_MARKET: string[] = ['SHOPEE', 'LAZADA', 'TIKTOK'];
+
 export default function Products() {
   const db = useDB();
   const lang = useLang();
@@ -277,7 +280,8 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
           <div className="full"><Check checked={cur.active} onChange={(v) => canEdit && set({ active: v })}><Tx>Active (available for sale)</Tx></Check></div>
           {['resale', 'finished', 'menu'].includes(cur.kind) && (
             <div className="full"><div className="lbl-s mb8"><Tx>Channel-specific prices (blank = default)</Tx></div>
-              <div className="grid g3" style={{ gap: 10 }}>{CHANNEL_LIST.filter((c) => c.code !== 'POS').map((c) => <Field key={c.code} label={c.short}><NumInput value={cur.channelPrices[c.code] ?? ''} disabled={!canEdit} onChange={(n) => set({ channelPrices: { ...cur.channelPrices, [c.code]: isNaN(n) ? undefined : n } })} /></Field>)}</div></div>
+              {isStandardSku(cur.sku) && <div className="muted mb8" style={{ fontSize: 12 }}><Tx>Marketplace prices (Shopee, Lazada, TikTok) are set in the central registry and cannot be changed here.</Tx></div>}
+              <div className="grid g3" style={{ gap: 10 }}>{CHANNEL_LIST.filter((c) => c.code !== 'POS').map((c) => <Field key={c.code} label={c.short}><NumInput value={cur.channelPrices[c.code] ?? ''} disabled={!canEdit || (isStandardSku(cur.sku) && REGISTRY_MARKET.includes(c.code))} onChange={(n) => set({ channelPrices: { ...cur.channelPrices, [c.code]: isNaN(n) ? undefined : n } })} /></Field>)}</div></div>
           )}
           <div className="full"><div className="lbl-s mb8"><Tx>Reorder levels per warehouse</Tx></div>
             {db.warehouses.map((w) => <div key={w.id} className="row mb8"><span style={{ width: 190 }}>{w.name}</span><NumInput style={{ width: 90 }} placeholder={tl(lang, 'min')} disabled={!canEdit} value={cur.levels[w.id]?.min ?? ''} onChange={(n) => set({ levels: { ...cur.levels, [w.id]: { min: n || 0, max: cur.levels[w.id]?.max ?? 0 } } })} /><NumInput style={{ width: 90 }} placeholder={tl(lang, 'max')} disabled={!canEdit} value={cur.levels[w.id]?.max ?? ''} onChange={(n) => set({ levels: { ...cur.levels, [w.id]: { min: cur.levels[w.id]?.min ?? 0, max: n || 0 } } })} /></div>)}</div>

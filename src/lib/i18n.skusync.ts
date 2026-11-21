@@ -24,6 +24,8 @@ export const TH_SKUSYNC: Record<string, string> = {
   'Not synced yet': 'ยังไม่ได้ซิงค์',
   'Pack': 'แพ็ก',
   'Promotion pack': 'แพ็กโปรโมชัน',
+  // drawer: registry-owned marketplace prices
+  'Marketplace prices (Shopee, Lazada, TikTok) are set in the central registry and cannot be changed here.': 'ราคาช่องทางมาร์เก็ตเพลส (Shopee, Lazada, TikTok) ตั้งที่ฐานข้อมูลกลางและแก้ที่นี่ไม่ได้',
   // Re-sync everything
   'Re-sync everything': 'ซิงค์ใหม่ทั้งหมด',
   'Re-sync everything?': 'ซิงค์ใหม่ทั้งหมด?',
