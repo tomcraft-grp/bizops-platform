@@ -5,6 +5,7 @@ import { useDB, useLang } from '../domain/store';
 import { saveProduct, setProductActive } from '../domain/master';
 import { newSkuDetails, pushSkuDetails, saveProductEdit, setSkuActive, syncAgeLabel, syncSkusIfStale, useSkuSync } from '../domain/skuSync';
 import { rewardsAdmin } from '../rewards/api';
+import { DEMO_SEED } from '../domain/demo';
 import { PRODUCT_KIND_LABEL, CHANNEL_LIST } from '../domain/meta';
 import { globalAvgCost, lotsFor } from '../domain/inventory';
 import { bomForProduct, rollup, versionAt } from '../domain/bom';
@@ -36,7 +37,7 @@ export default function Products() {
   const sync = useSkuSync();
   const packs = usePackCodes();
   // Opening the page brings in what changed in the central registry (one small call when nothing did), unless that already happened within the last 5 minutes.
-  useEffect(() => { if (canEdit) void syncSkusIfStale(); }, [canEdit]);
+  useEffect(() => { if (canEdit && !DEMO_SEED) void syncSkusIfStale(); }, [canEdit]);
   const openId = sp.get('p');
   const stock = useMemo(() => { const m: Record<ID, number> = {}; for (const k in db.balances) { const pid = k.split('|')[1]; m[pid] = (m[pid] || 0) + db.balances[k].qty; } return m; }, [db.balances]);
   // "Not synced yet": no registry code (the product exists only on this device), or its price and details are still waiting to be uploaded.
@@ -46,7 +47,7 @@ export default function Products() {
     <>
       <PageHead title="Products" desc="One catalog for resale goods, manufactured goods, menu items (recipes), raw materials and packaging — with channel prices, images and cost history."
         actions={<>{canEdit && <SkuCodesButton />}{canEdit && <PullSkuButton />}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>}</>} />
-      {canEdit && <SyncBanner sync={sync} />}
+      {canEdit && !DEMO_SEED && <SyncBanner sync={sync} />}
       <div className="grid g4 mb16">
         <Kpi label="Products" value={db.products.length} sub={<Tx vars={{ n: db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).length }}>{'{n} sellable'}</Tx>} />
         <Kpi label="Menu items (recipes)" value={db.products.filter((p) => p.kind === 'menu').length} sub="stock deducted by BOM" />
@@ -75,6 +76,7 @@ export default function Products() {
 function usePackCodes(): Set<string> {
   const [codes, setCodes] = useState<Set<string>>(() => new Set());
   useEffect(() => {
+    if (DEMO_SEED) return undefined;                  // the demo build has no online shop and must not call the real project
     let live = true;
     rewardsAdmin.packs().then((ps) => { if (live && Array.isArray(ps)) setCodes(new Set(ps.map((x) => x.pack_sku_code))); }).catch(() => undefined);
     return () => { live = false; };

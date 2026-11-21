@@ -26,7 +26,11 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 /** The page: "Online shop" (rules, promotion packs and a simulator that run on the server) and "POS on this device" (the local rule engine below, unchanged).
  *  The demo build (VITE_DEMO_SEED=1: the e2e fixtures and the sales demo) has no online shop behind it, so it opens on the local engine; the live build opens on "Online shop". */
 export default function Promotions() {
-  const [view, setView] = useState<'online' | 'pos'>(DEMO_SEED ? 'pos' : 'online');
+  // The demo build has no online shop (and must never reach the real project): it shows the page exactly as it always looked, with no tab bar (Events does the same).
+  // DEMO_SEED is fixed for a whole build, so this early return never changes the order of hooks between renders.
+  if (DEMO_SEED) return <LegacyPromotions />;
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const [view, setView] = useState<'online' | 'pos'>('online');
   return (
     <>
       <Tabs value={view} onChange={setView} tabs={[{ v: 'online', label: 'Online shop' }, { v: 'pos', label: 'POS on this device' }]} />

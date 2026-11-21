@@ -15,6 +15,7 @@ import { CHANNELS } from '../domain/meta';
 import { FeedbackButton } from './FeedbackWidget';
 import { t } from '../lib/i18n';
 import { useAuth } from '../auth/AuthProvider';
+import { DEMO_SEED } from '../domain/demo';
 import { BrandMark } from './Brand';
 import { BRAND } from '../brand';
 
@@ -80,7 +81,8 @@ export function Shell() {
   useEffect(() => { setUI({ sidebarOpen: false }); }, [loc.pathname]);
   // Once per sign-in, bring in what changed in the central SKU registry. It never throws: a failure is only stored and shown by the Products banner.
   const signedIn = !!profile?.id, canSyncSkus = hasPerm(perms, 'catalog:edit');
-  useEffect(() => { if (signedIn && canSyncSkus) void syncSkus(); }, [signedIn, canSyncSkus]);
+  // (Not in the demo build: its catalogue is invented and a real staff login must never pull the real registry into it.)
+  useEffect(() => { if (!DEMO_SEED && signedIn && canSyncSkus) void syncSkus(); }, [signedIn, canSyncSkus]);
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen(true); } };
     window.addEventListener('keydown', h);
