@@ -81,7 +81,7 @@ ADMIN staff can see owners and edit event details (not close an event or change 
 5. **Publish the app** (same procedure as the slip review: build, commit `dist/index.html`, push `main`, then `gh-pages`). Until a Super Admin switches rewards on, customers see nothing new; staff see the new "Online shop" tabs and the sync banner on Products (which starts working at once: the first sync is a full snapshot).
 6. **Set up** (staff): create the event, its three boards, the pick rule and any packs; use the simulator; check the Products page shows no sync error.
 7. **One real test order** paid end to end; confirm the rewards show on the customer's Rewards screen and a reversal takes them back.
-8. **Switch on** rewards first (points and picks accrue), the event boards later (a separate switch). Before that, the owner's legal review of purchase-linked prize events (see the Events page notice) must be done.
+8. **Switch on** rewards first (points and picks accrue), the event boards later (a separate switch). The owner approved the number-pick activity itself on 2026-11-21 (the owner's own decision: this guide does not claim any legal clearance by counsel, and the notice on the Events page stays).
 
 Rolling the app back does not need the database to move: the screens only call functions that remain. Rolling the database back uses the files below, in reverse order (SKU sync, boards, core).
 
