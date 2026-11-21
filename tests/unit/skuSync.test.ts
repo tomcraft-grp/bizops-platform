@@ -350,6 +350,18 @@ describe('Products page actions: the Active switch and the New-product details',
       srv.handlers.sku_set_status = (a) => { cur = { ...cur, status: a.p_status as 'active' | 'inactive' }; srv.put(cur); return { data: cur }; };
     };
 
+    it('restoring a local backup forgets the cursor, so the next sync is a full one (review round 1)', async () => {
+      await setup();                                                                  // a sync ran: the cursor is set
+      expect((await S.stored()).cursor).toBeGreaterThan(0);
+      srv.put(reg({ sku_code: 'FG-000002', name_full: '2 Mango', barcode: '222' }));  // changed in the registry after the backup was taken
+      await S.importBackup(JSON.stringify(S.useStore.getState().db));                 // the backup of the same device carries the same database id
+      expect((await S.stored()).cursor).toBeNull();
+      srv.rpcCalls = [];
+      await S.syncSkus();
+      expect(srv.calls('sku_changes_since')).toEqual([{ p_cursor: null }]);           // a FULL snapshot: nothing between the backup and the old cursor is missed
+      expect(S.product('FG-000002')).toBeTruthy();
+    });
+
     it('a queued upload never overwrites a newer value staff set later (review round 1)', async () => {
       const p = await setup();
       // the upload of a price of 100 failed at creation and is waiting in the queue

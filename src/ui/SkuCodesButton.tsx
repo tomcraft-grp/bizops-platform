@@ -7,6 +7,7 @@ import { act, toast, useDB, useLang, useStore } from '../domain/store';
 import { applySkuCodes } from '../domain/master';
 import { isStandardSku, skuCategoryOf, skuCategoryOfCode } from '../domain/sku';
 import { fetchLegacyMap, newClientRef, reserveSku } from '../lib/skuApi';
+import { newSkuDetails, pushSkuDetails } from '../domain/skuSync';
 import { t } from '../lib/i18n';
 import { Button, useConfirm } from './kit';
 
@@ -38,7 +39,12 @@ export function SkuCodesButton() {
           if (!code) code = (await reserveSku(skuCategoryOf(p.kind), p.name, newClientRef())).code;
           const sku = code;
           act((d, c) => applySkuCodes(d, c, [{ productId: p.id, sku }]));
-          if (fresh) issued++; else matched++;
+          if (fresh) {
+            issued++;
+            // a NEW code: the registry only has the name, so the price and details this device holds are sent now (a failure queues them for the next sync). A matched legacy code
+            // already has its real data in the registry, which is the authority: nothing is sent for it.
+            await pushSkuDetails(sku, newSkuDetails({ name: p.name, price: p.price, stdCost: p.stdCost, barcode: p.barcode ?? '', brand: p.brand ?? '', unit: p.unit }));
+          } else matched++;
         } catch (e) {
           failed.push(`${p.name}: ${(e as Error).message}`);
           if (/cannot reach the central database/i.test((e as Error).message)) break; // offline: stop instead of failing every product

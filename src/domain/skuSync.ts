@@ -73,6 +73,17 @@ export function skuSyncSnapshot() {
   const { state: st, lastOkAt, error, failed, waiting } = useView.getState();
   return { state: st, lastOkAt, error, failed, waiting };
 }
+/**
+ * A local backup was restored. The cursor belongs to the database that was replaced, and a backup of the SAME device carries the same database id, so the id check alone
+ * would trust the old cursor and miss every registry change between the backup and that cursor. Forget it: the next sync is a full one. Uploads still queued stay (they are
+ * about the registry, not about this device's data).
+ */
+export async function forgetSkuCursor(): Promise<void> {
+  const s = await state();
+  s.cursor = null; s.dbId = null; s.lastOkAt = null; s.retry = []; s.failed = []; s.lastError = null;
+  await save(s);
+  show(s, 'idle');
+}
 /** Read the stored state once (last success, last error) so a freshly opened page shows it. */
 export function hydrateSkuSync(): Promise<void> {
   if (useView.getState().hydrated) return Promise.resolve();
