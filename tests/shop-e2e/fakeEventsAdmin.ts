@@ -128,6 +128,7 @@ export class FakeEventsAdmin {
         return rows.slice(Number(a.p_offset ?? 0), Number(a.p_offset ?? 0) + Number(a.p_limit ?? 50));
       }
       case 'rw_board_rev': {
+        if (!this.boardsEnabled) this.err('BOARDS_OFF');                                // like the server: the customer-side revision call refuses while the boards are switched off
         const ev = this.events.find((e) => e.id === (a.p_event ?? EVENT_ID))!;
         return { event_status: ev.status, boards: this.boards.filter((b) => b.event === ev.id).map((b) => ({ id: b.id, rev: b.rev, state: b.state })) };
       }
@@ -166,7 +167,7 @@ export class FakeEventsAdmin {
         const r = this.resets.find((x) => x.id === a.p_reset && !x.undone_at); if (!r) this.err('NOT_FOUND');
         const b = this.board(r.board);
         const mine = this.sels.filter((s) => r.sels.includes(s.id));
-        if (this.active(b).some((t) => mine.some((s) => s.n === t.n))) this.err('RESET_CONFLICT');
+        if (this.active(b).some((t) => mine.some((s) => s.n === t.n))) this.err('RESET_CONFLICT: a number cleared by this reset has been taken again, so it cannot be restored');   // the server explains itself
         for (const s of mine) s.status = 'confirmed';
         r.undone_at = new Date().toISOString(); this.bump(b); this.audit(b, b.event, 'board.undo_reset', why); return this.adminBoard(b);
       }

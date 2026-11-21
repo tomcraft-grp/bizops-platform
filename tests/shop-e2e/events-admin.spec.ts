@@ -179,7 +179,7 @@ test.describe('the five operations are separate', () => {
     await page.getByRole('button', { name: 'Undo reset…' }).click();
     await page.getByLabel(REASON).fill('Oops');
     await page.getByRole('button', { name: 'Undo reset', exact: true }).click();
-    await expect(page.getByRole('alert')).toContainText('has been taken again, so it cannot be restored');
+    await expect(page.getByRole('alert')).toContainText('has been taken again, so it cannot be restored');      // the SERVER's own words (review round 1: not a fixed sentence)
     await expect(page.locator('.bo-cell.taken')).toHaveCount(1);                                  // the board is exactly what the server said
   });
 });
@@ -269,6 +269,13 @@ test.describe('staying current', () => {
     expect(fake.count('rw_board_rev')).toBe(n);                                                   // the page is hidden: no polling
     await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); document.dispatchEvent(new Event('visibilitychange')); });
     await expect.poll(() => fake.count('rw_board_rev'), { timeout: 8000 }).toBeGreaterThan(n);    // visible again: reads at once
+  });
+
+  test('boards switched off is not a connection problem: no warning, and the page does not keep asking every 5 seconds (review round 1)', async ({ page }) => {
+    const { fake, ev } = world(); ev.boardsEnabled = false; await open(page, fake);
+    await page.waitForTimeout(13_000);                                                             // well over two polling ticks (5 s each)
+    await expect(page.getByText('Live updates are paused because the connection is failing.')).toHaveCount(0);
+    expect(fake.count('rw_board_rev')).toBeLessThanOrEqual(2);                                     // asked once, was told "off", then backs off for a minute
   });
 
   test('a failing connection is said, not hidden', async ({ page }) => {

@@ -38,6 +38,8 @@ export default function EventsOnline({ active = true }: { active?: boolean }) {
   const [form, setForm] = useState<'new' | 'edit' | null>(null);
   const known = useRef<Record<string, number>>({});          // the newest revision we hold per board; a poll reloads a board only when the server's differs
   const statusRef = useRef<EventStatus | null>(null);
+  const boardsOffSince = useRef(0);                          // when the server last said BOARDS_OFF (0 = it has not): kept across the polling effect's re-runs
+  const pollBusy = useRef(false);                            // a revision request is on its way: shared by every run of the polling effect, so a re-run never starts a second one
 
   const ev = events?.find((e) => e.id === eventId) ?? null;
   const board = ev?.boards.find((b) => b.id === boardId) ?? null;
@@ -85,20 +87,27 @@ export default function EventsOnline({ active = true }: { active?: boolean }) {
   // ---------------------------------------------------------------------------------------- every 5 s: three integers, reload only what changed
   useEffect(() => {
     if (!eventId) return;
-    let stop = false, inFlight = false, fails = 0;
+    let stop = false, fails = 0;
     const tick = async () => {
-      if (!shouldPoll({ active, docHidden: document.hidden, eventId, inFlight })) return;
-      inFlight = true;
+      if (!shouldPoll({ active, docHidden: document.hidden, eventId, inFlight: pollBusy.current })) return;
+      // While the boards are switched off the server refuses this call (BOARDS_OFF) by design: staff may set everything up before the switch is turned on. That is not a connection
+      // problem, so there is no warning and no 5-second hammering: ask again once a minute (the switch may have been turned on in another tab).
+      if (boardsOffSince.current && Date.now() - boardsOffSince.current < 60_000) return;
+      pollBusy.current = true;
       try {
         const revs = await rewards.boardRevs(eventId);
         if (stop) return;
-        fails = 0; setLive(true);
+        fails = 0; boardsOffSince.current = 0; setLive(true);
         if (eventStatusChanged(statusRef.current, revs)) await loadEvents();
         const ids = changedBoardIds(known.current, revs);
         for (const id of ids) { const ab = await rewardsAdmin.board(id); if (stop) return; applyAdmin(ab); }
         if (ids.length && !stop) loadReview();
-      } catch { if (!stop && ++fails >= 2) setLive(false); }
-      finally { inFlight = false; }
+      } catch (e) {
+        if (stop) return;
+        if (isRewardsError(e, 'BOARDS_OFF', 'REWARDS_OFF')) { boardsOffSince.current = Date.now(); fails = 0; setLive(true); }
+        else if (++fails >= 2) setLive(false);
+      }
+      finally { pollBusy.current = false; }
     };
     void tick();                                               // read once now (a different event may have been opened: what we hold for it can be old), then every 5 s
     const h = setInterval(() => void tick(), POLL_MS);
