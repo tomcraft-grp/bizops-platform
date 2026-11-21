@@ -216,6 +216,20 @@ export async function syncSkusIfStale(maxAgeMs: number = STALE_AFTER_MS, nowMs: 
   return fresh ? null : syncSkus();
 }
 
+/** How often a visible, long-open tab asks whether the registry changed. One tiny request that returns no rows when nothing changed. */
+export const WATCH_EVERY_MS = 10 * 60_000;
+/**
+ * Keeps a tab that stays open all day (a POS screen) current: when it becomes visible again, and every 10 minutes while it is visible, run the staleness check, so the
+ * price and status the shop shows and the ones POS uses cannot drift apart for hours. Never while the tab is hidden. Returns the cleanup.
+ */
+export function startSkuSyncWatch(everyMs: number = WATCH_EVERY_MS): () => void {
+  if (typeof document === 'undefined') return () => undefined;
+  const tick = () => { if (document.visibilityState === 'visible') void syncSkusIfStale(); };
+  const timer = setInterval(tick, everyMs);
+  document.addEventListener('visibilitychange', tick);
+  return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+}
+
 // ------------------------------------------------------------------------------------------------ writes to the registry (the only two the device makes)
 export type SkuActiveResult = { ok: true; localActive: boolean | null } | { ok: false; error: string };
 /**

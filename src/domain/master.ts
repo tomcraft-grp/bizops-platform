@@ -172,6 +172,17 @@ export function importSkuMaster(d: DB, ctx: Ctx, rows: SkuMasterRow[], opts: Sku
         emoji: kratom ? '🍃' : app ? undefined : '💨',
         description: [r.brand, tiers.join(' · '), r.needs_review ? `ต้องตรวจสอบ: ${r.review_notes ?? ''}` : null, r.source_code && r.source_code !== r.legacy_sku_code ? `รหัสต้นฉบับ ${r.source_code}` : null].filter(Boolean).join('\n') || undefined,
       };
+      // The registry allows one holder per barcode. If it says this SKU has the barcode, a product that still holds it locally AND has a registry code is stale (the barcode moved,
+      // and that product's own registry row may not carry the change yet or was cleared to null, which never wipes a device value): free it, or this row would fail with
+      // "barcode already used" at every sync. A product WITHOUT a registry code is the device's own data: it is never touched (the clash is reported).
+      if (owned.barcode) {
+        for (const o of d.products) {
+          if (o.id !== existing?.id && o.barcode === owned.barcode && isStandardSku(o.sku)) {
+            audit(d, ctx, 'product.barcode', 'product', o.id, `${o.name}: barcode ${o.barcode} moved to ${r.sku_code} in the central registry`, 'info');
+            o.barcode = undefined;
+          }
+        }
+      }
       const id = saveProduct(d, ctx, { id: existing?.id, sku: r.sku_code, legacySku: existing ? undefined : r.legacy_sku_code || undefined, kind: existing?.kind ?? kind, ...owned, ...device });
       // saveProduct always creates products as active; a SKU without a price must not be sellable at ฿0.
       d.products.find((p) => p.id === id)!.active = active;

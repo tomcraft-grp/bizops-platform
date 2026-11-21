@@ -165,19 +165,20 @@ describe('SKU sync: what is applied to the local catalogue', () => {
   });
 
   it('a row that cannot be applied is reported, the cursor still moves, and the row is tried again on the next sync', async () => {
-    srv.put(reg({ sku_code: 'FG-000001', barcode: '111' }));
-    srv.put(reg({ sku_code: 'FG-000002', name_full: '2 Second', barcode: '111' })); // the same barcode: the catalogue refuses it
+    // a product this device made itself (no registry code) holds the barcode: it is the device's own data, so the registry row is refused, not the other way round
+    S.act((d) => { d.products.find((p) => !/^FG-/.test(p.sku))!.barcode = '111'; });
+    srv.put(reg({ sku_code: 'FG-000002', name_full: '2 Second', barcode: '111' }));
     const r = await S.syncSkus();
-    expect(r).toMatchObject({ ok: true, created: 1 });
+    expect(r).toMatchObject({ ok: true, created: 0 });
     expect(r.failed).toEqual([{ sku: 'FG-000002', error: expect.stringMatching(/barcode/i) }]);
     expect(S.product('FG-000002')).toBeUndefined();
     expect(S.skuSyncSnapshot().failed).toHaveLength(1);
-    expect(await S.stored()).toMatchObject({ cursor: 2 });
+    expect(await S.stored()).toMatchObject({ cursor: 1 });
 
-    srv.put(reg({ sku_code: 'FG-000001', barcode: '222' })); // fixed centrally
+    srv.put(reg({ sku_code: 'FG-000002', name_full: '2 Second', barcode: '333' })); // fixed centrally
     const r2 = await S.syncSkus();
     expect(r2).toMatchObject({ ok: true, failed: [] });
-    expect(S.product('FG-000002')).toMatchObject({ barcode: '111' });
+    expect(S.product('FG-000002')).toMatchObject({ barcode: '333' });
     expect(S.skuSyncSnapshot().failed).toEqual([]);
   });
 });
@@ -349,6 +350,60 @@ describe('Products page actions: the Active switch and the New-product details',
       srv.handlers.sku_set_details = (a) => { cur = { ...cur, ...(a.p_patch as Partial<RegistryRow>) }; srv.put(cur); return { data: cur }; };
       srv.handlers.sku_set_status = (a) => { cur = { ...cur, status: a.p_status as 'active' | 'inactive' }; srv.put(cur); return { data: cur }; };
     };
+
+    it('a barcode that moves from one registry SKU to another does not wedge the sync: the stale holder loses it (review round 1)', async () => {
+      srv.put(reg({ sku_code: 'FG-000001', barcode: '111' })); await S.syncSkus();
+      srv.put(reg({ sku_code: 'FG-000002', name_full: '2 Mango', barcode: null })); await S.syncSkus();
+      expect(S.product('FG-000001')!.barcode).toBe('111');
+      // the registry (which allows one holder per barcode) moves it: A no longer has it, B does
+      srv.put(reg({ sku_code: 'FG-000001', barcode: null })); srv.put(reg({ sku_code: 'FG-000002', name_full: '2 Mango', barcode: '111' }));
+      const r = await S.syncSkus();
+      expect(r.failed).toEqual([]);
+      expect(S.product('FG-000002')!.barcode).toBe('111');
+      expect(S.product('FG-000001')!.barcode).toBeUndefined();
+      // and the next sync is quiet: nothing is retried forever
+      srv.rpcCalls = [];
+      expect((await S.syncSkus()).failed).toEqual([]);
+    });
+
+    it('a LOCAL-ONLY product (no registry code) that holds the barcode is never stolen from: the clash is reported (review round 1)', async () => {
+      await S.syncSkus();
+      S.act((d) => { const local = d.products.find((p) => !/^FG-/.test(p.sku))!; local.barcode = '777'; });
+      const local = S.useStore.getState().db.products.find((p) => !/^FG-/.test(p.sku))!;
+      srv.put(reg({ sku_code: 'FG-000003', name_full: '3 Peach', barcode: '777' }));
+      const r = await S.syncSkus();
+      expect(r.failed).toHaveLength(1);
+      expect(r.failed[0].error).toMatch(/barcode is already used/i);
+      expect(S.useStore.getState().db.products.find((p) => p.id === local.id)!.barcode).toBe('777');
+    });
+
+    it('a tab left open keeps itself current: it syncs when it becomes visible and every 10 minutes while visible, never while hidden, and cleans up (review round 1)', async () => {
+      await setup();                                                                  // synced just now (real time)
+      vi.useFakeTimers();
+      try {
+        const handlers: Record<string, () => void> = {};
+        const doc = { visibilityState: 'visible', addEventListener: (n: string, f: () => void) => { handlers[n] = f; }, removeEventListener: (n: string) => { delete handlers[n]; } };
+        vi.stubGlobal('document', doc);
+        srv.rpcCalls = [];
+        const stop = S.startSkuSyncWatch();
+        expect(Object.keys(handlers)).toEqual(['visibilitychange']);
+        await vi.advanceTimersByTimeAsync(9 * 60_000);                                // under 10 minutes: nothing
+        expect(srv.calls('sku_changes_since')).toHaveLength(0);
+        await vi.advanceTimersByTimeAsync(2 * 60_000);                                // 11 minutes since the last success: stale, so one cheap request, with the cursor
+        expect(srv.calls('sku_changes_since')).toHaveLength(1);
+        expect(srv.calls('sku_changes_since')[0]).toEqual({ p_cursor: expect.any(Number) });
+        doc.visibilityState = 'hidden';
+        await vi.advanceTimersByTimeAsync(30 * 60_000);                               // hidden: no request at all
+        expect(srv.calls('sku_changes_since')).toHaveLength(1);
+        doc.visibilityState = 'visible'; handlers.visibilitychange();                 // the tab comes back after 30 minutes: stale, so it syncs at once
+        await vi.advanceTimersByTimeAsync(10);
+        expect(srv.calls('sku_changes_since')).toHaveLength(2);
+        stop();
+        expect(Object.keys(handlers)).toEqual([]);
+        await vi.advanceTimersByTimeAsync(60 * 60_000);                               // cleaned up: nothing more
+        expect(srv.calls('sku_changes_since')).toHaveLength(2);
+      } finally { vi.useRealTimers(); vi.unstubAllGlobals(); }
+    });
 
     it('restoring a local backup forgets the cursor, so the next sync is a full one (review round 1)', async () => {
       await setup();                                                                  // a sync ran: the cursor is set
