@@ -105,7 +105,26 @@ Run on a local PostgreSQL 17 (`scripts/local-pg/`, invented data, not Supabase) 
 
 Mutation checks show the new tests can fail: removing the activation stamp, the eligibility snapshot or the "nothing outstanding" condition each makes the matching tests fail.
 
-**Not verified**: the six `scripts/run-*.sh` production runners (syntax-checked only: production is off limits to the build, and `~/.supabase-token` was invalid); anything on the real Supabase project, real data or real roles (PostgREST); a real phone or Safari (Chrome at 390 px only); the Thai wording has had no native-speaker review.
+### Dry run against the LIVE project (2026-11-22; every run one transaction that always ends in a forced rollback; nothing was applied)
+
+| Suite | Result on the real database |
+|---|---|
+| SKU sync | 119 of 119 passed |
+| Event boards | 341 of 341 passed |
+| Rewards core | 342 of 369 passed: **the 27 that fail are fixture-dependent, not logic errors** (see below) |
+| Rollback proofs (core, boards, sync incl. its control and guard modes) | 10 of 10, 10 of 10, proven |
+
+The live project has no ADMIN account (the suites need one), so `supabase/tests/prod_dry_run_prelude.sql` is sent first, in the same rolled-back transaction: a real Super Admin turns the fifth oldest member into an ADMIN, exactly as the app does. Run a suite like this:
+`scripts/run-sql-tests.sh REWARDS_CORE_TESTS supabase/tests/prod_dry_run_prelude.sql supabase/migrations/20261121100000_rewards_core.sql supabase/tests/rewards_core.sql`
+(the boards run puts the core migration before its own while the core is not applied; the sync and rollback runs work with the scripts in `scripts/`, which also handle that.)
+
+The 27 core checks that fail on the real data assume invented facts: FG-000030 is inactive (it is active), the bottle FG-000124 costs 35 (it costs 80), members called "Member A…" with invented phones and e-mails, FG-000041 / FG-000105 are not Puff (they are), and 3 or more products match "Pod" (one does). This was **proven, not assumed**: after copying exactly those facts into the local test data, the same suite fails the same 26 checks there (the 27th is the "Pod" count, which a direct count of the real catalogue explains). Expect `342 of 369` until the suite's fixtures are made independent of the data; any other number is news.
+
+A first run of the boards suite stopped on the real data (a subquery returned two rows) and led to a real finding about the *test*: its rules had no start date, so the real members' real paid bills earned extra rights. A rule made through the admin screen starts when it is created and never counts older bills; the suite now creates its rules the same way.
+
+After the runs a read-only check showed production unchanged: the same counts of orders, invoices, receipts, allocations, SKUs and accounts, no new function, table or trigger, latest migration `20261120100000`.
+
+**Not verified**: the app's screens against the real project (they were tested against a fake); a real phone or Safari (Chrome at 390 px only); the Thai wording has had no native-speaker review.
 
 ## Known limitations
 

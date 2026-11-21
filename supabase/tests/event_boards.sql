@@ -59,7 +59,9 @@ end $$;
 create or replace function pg_temp.mk_rule(p_key text, p_event text, p_slots int[]) returns void language plpgsql as $$
 declare r uuid;
 begin
-  insert into public.rw_rules (kind, name, spend_step, reward_amount, event_id, board_slots) values ('board_pick', 'pick rule ' || p_key, 300, 1, pg_temp.c(p_event)::uuid, p_slots) returning id into r;
+  -- starts_at = now(): a rule made through the admin screen starts when it is created (rw_admin_save_rule stamps it) and is never retroactive. On the LIVE project the real members have
+  -- real paid bills, which a rule without a start would count and turn into extra rights (the suites assume exactly the rights they insert themselves).
+  insert into public.rw_rules (kind, name, spend_step, reward_amount, event_id, board_slots, starts_at) values ('board_pick', 'pick rule ' || p_key, 300, 1, pg_temp.c(p_event)::uuid, p_slots, now()) returning id into r;
   perform pg_temp.put(p_key, r::text);
 end $$;
 -- p_n rights for a member on an event (oldest first by creation); p_rule null = the event's own rule
