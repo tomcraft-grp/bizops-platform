@@ -7,6 +7,8 @@ Code: `src/rewards/*` (back office), `src/shop/Rewards.tsx` (customer), `src/dom
 
 **Status: ships DARK.** Until a Super Admin switches it on (Promotions → Online shop → master switch) nothing changes for customers, orders, invoices or payments.
 
+**Where it stands (2026-11-22, about 00:10 Bangkok):** the three migrations are **applied to the live project** (one transaction, 6.5 s, outside opening hours, after a rolled-back rehearsal of the exact batch). Both switches are off and no rule, point, right or log row exists. The app with the new screens is **not yet published** and the branch is not merged: the deployed app keeps working exactly as before because nothing it calls changed. Checked by a read-only before/after fingerprint: orders, invoices, receipts, allocations, SKUs, accounts and the key shop and finance functions are identical; only the three migration records were added.
+
 ## What it does
 
 | Need | How |
