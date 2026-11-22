@@ -23,9 +23,9 @@ describe('the bank reference is optional (owner, 2026-11-22)', () => {
     expect(refOk('x'.repeat(81))).toBe(false);
   });
   it('a suspected duplicate (same amount, account and minute) is a sentence in both languages', () => {
-    const e = new Error('Confirm payment: DUPLICATE_SUSPECT: a payment of 840 to the same account at the same minute was already recorded; enter the bank reference to continue');
-    expect(reviewErrorText('th', e).split('\n')[0]).toBe('อาจเป็นสลิปซ้ำ: มีสลิปยอดเดียวกัน เข้าบัญชีเดียวกัน ในนาทีเดียวกันแล้ว ใส่เลขอ้างอิงธนาคารเพื่อยืนยันต่อ');
-    expect(reviewErrorText('en', e).split('\n')[0]).toBe('Possible duplicate: a slip with the same amount, account and minute exists. Enter the bank reference to continue.');
+    const e = new Error('Confirm payment: DUPLICATE_SUSPECT: a payment of 840 to the same account within a minute of this one is already recorded; check the bank statement, and if these are two different transfers say so');
+    expect(reviewErrorText('th', e).split('\n')[0]).toBe('อาจเป็นสลิปซ้ำ: มีการชำระยอดเดียวกัน เข้าบัญชีเดียวกัน ห่างกันไม่เกิน 1 นาที บันทึกไว้แล้ว ตรวจรายการเดินบัญชีก่อน');
+    expect(reviewErrorText('en', e).split('\n')[0]).toBe('Possible duplicate: a payment of the same amount to the same account, within a minute, is already recorded. Check the bank statement.');
   });
 });
 

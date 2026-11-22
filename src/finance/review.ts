@@ -123,7 +123,7 @@ export interface ReviewItem {
   ai_amount: number | null; ai_transfer_at: string | null; ai_result: AiResult | null; ai_confidence: number | null; ai_status: AnalysisStatus | null;
   reasons: string[];
   confirmed_amount: number | null; confirmed_bank_ref: string | null; posted_at: string | null;
-  /** who confirmed it where: on the web, or a LINE quick approval (20261122130000_line_order_notifications.sql) */
+  /** who confirmed it where: on the web, or a LINE quick approval (20261122140000_line_order_notifications.sql) */
   confirmed_via: 'web' | 'line_quick' | null;
   /** a transfer with no bank reference at all (neither confirmed nor posted with one): the end-of-day check against the statement should look at it */
   no_ref: boolean;
@@ -213,7 +213,11 @@ export interface ConfirmInput {
   evidenceId: string;
   /** the amount the BANK shows (not the slip picture) */
   amount: number; bankRef: string; transferAt: string; note?: string;
+  /** the person checked the statement: a suspected duplicate (DUPLICATE_SUSPECT) is a different transfer (recorded in the history) */
+  distinct?: boolean;
 }
+/** True for the database's "same amount, same account, within a minute" refusal, which a person may override after checking the statement. */
+export const isDuplicateSuspect = (e: unknown) => /DUPLICATE_SUSPECT/.test(e instanceof Error ? e.message : String(e));
 export interface RecordPaymentInput {
   invoiceId: string; method: 'transfer' | 'cash'; amount: number; receivedAt: string;
   /** a transfer needs the bank reference; cash has none */
@@ -247,13 +251,13 @@ export const review = {
   /** Record what the bank shows against a submitted slip. Moves no money: the payment is posted by a second step. */
   async confirm(p: ConfirmInput): Promise<{ status: 'confirmed'; evidence_id: string; amount: number }> {
     return must(await supabase.rpc('finance_confirm_evidence', {
-      p_evidence: p.evidenceId, p_amount: p.amount, p_bank_trans_ref: p.bankRef, p_transfer_at: p.transferAt, p_note: clean(p.note),
+      p_evidence: p.evidenceId, p_amount: p.amount, p_bank_trans_ref: p.bankRef, p_transfer_at: p.transferAt, p_note: clean(p.note), ...(p.distinct ? { p_distinct: true } : {}),
     }), 'Confirm payment');
   },
   /** Make a confirmed payment official (receipt, allocation, ledger row), once. */
   /** bankRef: optional, typed at Post from the bank statement for a payment confirmed without one */
-  async post(evidenceId: string, note?: string, bankRef?: string): Promise<PostResult> {
-    return must(await supabase.rpc('finance_post_evidence', { p_evidence: evidenceId, p_note: clean(note), ...(bankRef?.trim() ? { p_bank_ref: bankRef.trim() } : {}) }), 'Post payment');
+  async post(evidenceId: string, note?: string, bankRef?: string, distinct?: boolean): Promise<PostResult> {
+    return must(await supabase.rpc('finance_post_evidence', { p_evidence: evidenceId, p_note: clean(note), ...(bankRef?.trim() ? { p_bank_ref: bankRef.trim() } : {}), ...(distinct ? { p_distinct: true } : {}) }), 'Post payment');
   },
   async reject(evidenceId: string, reason: string): Promise<void> {
     must(await supabase.rpc('finance_reject_evidence', { p_evidence: evidenceId, p_reason: reason }), 'Reject payment');

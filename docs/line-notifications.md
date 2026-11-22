@@ -2,7 +2,7 @@
 
 Builds on [online-ordering.md](online-ordering.md) (orders and slips) and [slip-review.md](slip-review.md) (Confirm, then Post at end of day).
 Design: `docs/superpowers/specs/2026-11-22-line-order-notifications-design.md`; plan: `docs/superpowers/plans/2026-11-22-line-order-notifications.md`.
-Migration `supabase/migrations/20261122130000_line_order_notifications.sql`, rollback `supabase/rollbacks/20261122130000_line_order_notifications_down.sql`,
+Migration `supabase/migrations/20261122140000_line_order_notifications.sql`, rollback `supabase/rollbacks/20261122140000_line_order_notifications_down.sql`,
 Edge Functions `supabase/functions/line-webhook/` and `supabase/functions/line-dispatch/` (shared code in `supabase/functions/_shared/`).
 
 **Status (2026-11-22): built and tested on branch `feat/line-order-notifications`. NOT applied to the live database, NOT deployed, NOT published.**
@@ -18,7 +18,11 @@ Edge Functions `supabase/functions/line-webhook/` and `supabase/functions/line-d
 ## What is dark and what is not
 
 * **Dark until a SUPER_ADMIN switches it on:** everything LINE. With the switch off nothing is queued, no button works, nothing is sent. **Quick approve** has its own switch (off) and a maximum per order (฿3,000 by default).
-* **Not dark: the bank reference is optional** (owner's decision, 2026-11-22). As soon as the migration is live, *Payment review → Confirm* accepts an empty reference, and *Post* accepts one typed then (from the statement) or none. Without a reference, a payment with **the same amount, to the same account, in the same minute** as one already confirmed or posted is refused as a possible duplicate (`อาจเป็นสลิปซ้ำ`); entering the reference lets it through. The legacy one-step verify still requires a reference. As soon as the app is published, the dashboard shows the badges **อนุมัติด่วนจาก LINE** and **ไม่มีเลขอ้างอิง** and a filter chip for LINE quick approvals.
+* **Not dark: the bank reference is optional** (owner's decision, 2026-11-22). As soon as the migration is live, *Payment review → Confirm* accepts an empty reference, and *Post* accepts one typed then (from the statement) or none. To keep one bank transfer from paying for two things, a **duplicate rule by amount + receiving account + transfer time (within one minute either way)** runs on every path that records money (Confirm, Post, the one-step verify, wallet top-up verify, LINE quick approve):
+  * a payment **without** a reference is compared with every confirmed or posted payment and every verified wallet top-up;
+  * a payment **with** a reference is compared with the payments that have **no** reference (two payments that both carry references are told apart by reference, as before).
+  * A match is refused as `อาจเป็นสลิปซ้ำ`. On the web the person can check the bank statement and answer **เป็นการโอนคนละรายการ** (two different transfers): the payment goes through and that answer is recorded in the history (`evidence.dup_override`). LINE quick approve has no override: a suspect goes to the web. A wallet top-up that matches has no override either (reject it and handle it by hand).
+  * The legacy one-step verify still requires a reference. As soon as the app is published, the dashboard shows the badges **อนุมัติด่วนจาก LINE** and **ไม่มีเลขอ้างอิง** and a filter chip for LINE quick approvals.
 
 ## Setting up LINE (once)
 
@@ -33,7 +37,7 @@ Edge Functions `supabase/functions/line-webhook/` and `supabase/functions/line-d
 ## Go-live (in this order; each step after testing needs the owner's go)
 
 1. **Apply the migration** (after `bash scripts/run-line-sql-tests.sh` reports all passed, at a quiet time):
-   `bash scripts/apply-migrations.sh 20261122130000:line_order_notifications:supabase/migrations/20261122130000_line_order_notifications.sql`
+   `bash scripts/apply-migrations.sh 20261122140000:line_order_notifications:supabase/migrations/20261122140000_line_order_notifications.sql`
    It enables `pg_net` and `pg_cron`, creates the tables, the queue and a job `line-dispatch` that runs every minute. Nothing is sent while LINE is off.
 2. **Deploy the two functions** (signature / shared secret are their credentials, so JWT verification is off):
    `supabase functions deploy line-webhook --no-verify-jwt --project-ref hlvravynjalculvplrxc`
@@ -70,12 +74,13 @@ Edge Functions `supabase/functions/line-webhook/` and `supabase/functions/line-d
 
 1. Switch LINE off in Settings (stops everything at once).
 2. Undeploy the functions: `supabase functions delete line-webhook` and `supabase functions delete line-dispatch` (project `hlvravynjalculvplrxc`).
-3. Run `supabase/rollbacks/20261122130000_line_order_notifications_down.sql`, then delete version `20261122130000` from `supabase_migrations.schema_migrations`. It **refuses while a transfer is confirmed without a bank reference** (the restored Post needs one): Post those with a reference, or reject them, first. LINE settings, links and the delivery log are dropped; the audit trail of every action stays in the order and finance history.
+3. Run `supabase/rollbacks/20261122140000_line_order_notifications_down.sql`, then delete version `20261122140000` from `supabase_migrations.schema_migrations`. It **refuses while a transfer is confirmed without a bank reference** (the restored Post needs one): Post those with a reference, or reject them, first. LINE settings, links and the delivery log are dropped; the audit trail of every action stays in the order and finance history.
 4. Restore the previous app build if wanted (the old app works with the new database and with the rolled-back one).
 
 ## How it is tested
 
-* `bash scripts/run-line-sql-tests.sh`: 84 checks against the live project in one rolled-back transaction: settings and credentials, linking codes and rate limit, webhook dedupe, optional reference and the minute duplicate rule, quick confirm, card data, every `line_act` path (accept, second tap, web-cancelled order, quick approve and each guard, a replaced slip, reject with and without the finance role, reject after a posted payment), queue triggers, retries, dead letters, send again, customer message, grants.
+* `bash scripts/run-line-sql-tests.sh`: 100 checks against the live project in one rolled-back transaction: settings and credentials, linking codes and rate limit, webhook dedupe, optional reference and the duplicate rule in both directions (Confirm, Post, one-step verify, wallet top-ups, ±1 minute, the recorded override), quick confirm, card data, every `line_act` path (accept, second tap, web-cancelled order, a slip already handled on the web, quick approve and each guard, a replaced slip, reject with and without the finance role, reject after a posted payment, the `via: line` history row), a broken LINE setting not blocking checkout, queue triggers, retries, dead letters, send again, customer message, grants.
+* The browser tests start their own dev server on port 4179 and reuse one that is already running there; when another checkout's server holds that port, they test that checkout's code. Stop other dev servers first (or run with a config on another port).
 * `bash scripts/run-line-down-proof.sh` (+ `guard`, `control`): the rollback restores the public schema exactly, unschedules the job, deletes the Vault secrets, and refuses while a confirmed transfer has no reference.
 * Unit tests (`npm test`): signature, postback data, Flex cards, retry classification, redaction, the webhook and dispatcher handlers with fakes, the Settings helpers, the optional reference in the slip screens.
 * Browser tests (`npx playwright test -c playwright.shop.config.ts`): the Settings card, deep links to an order and a slip, Confirm without a reference, the duplicate message, the badge and filter, Post with an optional reference.

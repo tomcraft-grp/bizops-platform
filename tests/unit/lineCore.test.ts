@@ -141,6 +141,9 @@ describe('follow-ups and replies', () => {
     expect(resultText({ result: 'already_done', order_no: 'ORD-1', status: 'confirmed', by: 'คุณ A', at: '2026-11-22T07:05:00Z' })).toBe('ออเดอร์ ORD-1 ถูกรับแล้วโดย คุณ A เมื่อ 14:05');
     expect(resultText({ result: 'already_done', order_no: 'ORD-1', status: 'cancelled', by: 'คุณ B', at: '2026-11-22T07:05:00Z' })).toBe('ออเดอร์ ORD-1 ถูกยกเลิกแล้วโดย คุณ B เมื่อ 14:05');
     expect(resultText({ result: 'not_linked' })).toBe('บัญชี LINE นี้ยังไม่ได้เชื่อมกับระบบ');
+    expect(resultText({ result: 'slip_done', order_no: 'ORD-1', status: 'confirmed', by: 'คุณ S', at: '2026-11-22T07:05:00Z' })).toBe('สลิปของออเดอร์ ORD-1 ถูกยืนยันแล้วโดย คุณ S เมื่อ 14:05');
+    expect(resultText({ result: 'slip_done', order_no: 'ORD-1', status: 'verified', by: 'คุณ S', at: '2026-11-22T07:05:00Z' })).toBe('สลิปของออเดอร์ ORD-1 ถูกบันทึกรับเงินแล้วโดย คุณ S เมื่อ 14:05');
+    expect(resultText({ result: 'slip_done', order_no: 'ORD-1', status: 'rejected', by: 'คุณ S', at: '2026-11-22T07:05:00Z' })).toBe('สลิปของออเดอร์ ORD-1 ถูกปฏิเสธแล้วโดย คุณ S เมื่อ 14:05');
     expect(resultText({ result: 'done', action: 'accept', order_no: 'ORD-1', by: 'คุณ A', at: '2026-11-22T07:05:00Z' })).toBe('✅ รับออเดอร์ ORD-1 แล้ว (คุณ A · 14:05)');
     expect(resultText({ result: 'not_allowed', why: 'not_verifier' })).toContain('ผู้ตรวจการเงิน');
     expect(resultText({ result: 'refused', code: 'OVER_CAP' })).toContain('เกินวงเงิน');

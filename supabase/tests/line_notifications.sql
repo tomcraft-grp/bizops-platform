@@ -124,6 +124,9 @@ select pg_temp.q('L1.10 an expired code is refused',
   format($q$ select public.line_redeem_code('Uadm00000000000000000000000000001', 'Adm', %L) ->> 'result' = 'bad_code' $q$, pg_temp.c('code_old')));
 reset role;
 
+select pg_temp.q('L1.11 the Vault helpers are not callable by the service role either (it would read any secret by name)',
+  $q$ select not has_function_privilege('service_role', 'public.line_vault_get(text)', 'execute') and not has_function_privilege('service_role', 'public.line_vault_put(text, text)', 'execute') $q$);
+
 -- ================================================================================================= L2 finance: optional reference, duplicate rule, quick confirm
 -- Real orders and slips through the shop's own functions (customer A), every order the same amount; transfer minutes decide what counts as a duplicate.
 insert into t_ctx select 'scb', id::text from public.finance_bank_accounts where code = 'SCB';
@@ -166,8 +169,14 @@ select pg_temp.err_like('L2.2 same amount, account and minute without a referenc
   format($q$ select public.finance_confirm_evidence(%L, %s, '', %L) $q$, pg_temp.c('e_22'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '35 seconds'), 'DUPLICATE_SUSPECT%');
 select pg_temp.err_state('L2.2 the duplicate refusal is SQLSTATE 23505',
   format($q$ select public.finance_confirm_evidence(%L, %s, null, %L) $q$, pg_temp.c('e_22'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '35 seconds'), '23505');
-select pg_temp.q('L2.3 with a fresh bank reference the same slip is confirmed',
-  format($q$ select public.finance_confirm_evidence(%L, %s, 'LINETEST000022', %L) ->> 'status' = 'confirmed' $q$, pg_temp.c('e_22'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '35 seconds'));
+select pg_temp.err_like('L2.3 a reference does NOT get past a twin that has no reference (one transfer could settle two orders)',
+  format($q$ select public.finance_confirm_evidence(%L, %s, 'LINETEST000022', %L) $q$, pg_temp.c('e_22'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '35 seconds'), 'DUPLICATE_SUSPECT%');
+select pg_temp.q('L2.3 "these are two different transfers" (p_distinct) confirms it',
+  format($q$ select public.finance_confirm_evidence(%L, %s, 'LINETEST000022', %L, null, true) ->> 'status' = 'confirmed' $q$, pg_temp.c('e_22'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '35 seconds'));
+reset role;
+select pg_temp.q('L2.3 the override is in the audit trail', format($q$ select exists (select 1 from public.finance_events where entity_id = %L::uuid and action = 'evidence.dup_override') $q$, pg_temp.c('e_22')));
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
 select pg_temp.err_like('L2.4 a reference already used is still refused as before',
   format($q$ select public.finance_confirm_evidence(%L, %s, 'linetest-000022', %L) $q$, pg_temp.c('e_23'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '3 minutes'), 'Bank transaction % was already recorded%');
 select public.finance_confirm_evidence(pg_temp.c('e_23')::uuid, 2 * pg_temp.c('P1')::numeric, '', pg_temp.c('M1')::timestamptz + interval '3 minutes');
@@ -210,6 +219,51 @@ select pg_temp.q('L2.9 the review list filters LINE quick approvals and carries 
        where x ->> 'evidence_id' = %L and x ->> 'confirmed_via' = 'line_quick' and (x ->> 'no_ref')::boolean)
        and not exists (select 1 from jsonb_array_elements(public.finance_review_list('{"via":"line_quick"}', 200) -> 'items') x where x ->> 'evidence_id' = %L) $q$,
      pg_temp.c('e_25'), pg_temp.c('e_22')));
+reset role;
+
+-- the duplicate rule in BOTH directions: a payment saved WITHOUT a reference is found by later paths that HAVE one (review finding C1), ±1 minute, wallet deposits
+set local role authenticated;
+select pg_temp.order_slip('26', pg_temp.c('M1')::timestamptz + interval '3 minutes 20 seconds');
+select pg_temp.order_slip('27', pg_temp.c('M1')::timestamptz + interval '3 minutes 40 seconds');
+select pg_temp.order_slip('28', pg_temp.c('M1')::timestamptz + interval '4 minutes 10 seconds');
+select pg_temp.order_slip('29', pg_temp.c('M1')::timestamptz + interval '30 minutes 10 seconds');
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select pg_temp.err_like('L2.10 Confirm WITH a reference is refused when the same transfer was posted without one',
+  format($q$ select public.finance_confirm_evidence(%L, %s, 'LINETEST000026', %L) $q$, pg_temp.c('e_26'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '3 minutes 20 seconds'), 'DUPLICATE_SUSPECT%');
+select pg_temp.q('L2.10 ...and goes through when the person says they are two transfers',
+  format($q$ select public.finance_confirm_evidence(%L, %s, 'LINETEST000026', %L, null, true) ->> 'status' = 'confirmed' $q$, pg_temp.c('e_26'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '3 minutes 20 seconds'));
+select pg_temp.err_like('L2.10 Post of that slip without the override is refused too (the core checks)', format($q$ select public.finance_post_evidence(%L) $q$, pg_temp.c('e_26')), 'DUPLICATE_SUSPECT%');
+select pg_temp.q('L2.10 Post with the override works', format($q$ select (public.finance_post_evidence(%L, null, null, true) ->> 'receipt_no') is not null $q$, pg_temp.c('e_26')));
+select pg_temp.err_like('L2.11 the one-step verify with a reference is refused against a posted payment without one',
+  format($q$ select public.finance_verify_evidence(%L, %s, 'LINETEST000027', %L) $q$, pg_temp.c('e_27'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '3 minutes 40 seconds'), 'DUPLICATE_SUSPECT%');
+select pg_temp.err_like('L2.12 one minute apart still counts (a customer-given time can be a minute off)',
+  format($q$ select public.finance_confirm_evidence(%L, %s, '', %L) $q$, pg_temp.c('e_28'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '4 minutes 10 seconds'), 'DUPLICATE_SUSPECT%');
+-- a wallet top-up of the same amount to the same account: verified WITH a reference -> an order slip without one is refused; and the other way round
+select pg_temp.as_user(pg_temp.c('B')::uuid);
+insert into t_ctx select 'dep1', (public.finance_deposit_create(pg_temp.c('scb')::uuid, 2 * pg_temp.c('P1')::numeric, 'line-dep-key-0001')) ->> 'id';
+select public.finance_deposit_submit_slip(pg_temp.c('dep1')::uuid, pg_temp.c('B') || '/line-dep1.png', md5('line-dep1') || md5('line-dep1b'), 'image/png', pg_temp.c('M1')::timestamptz + interval '30 minutes');
+insert into t_ctx select 'dep2', (public.finance_deposit_create(pg_temp.c('scb')::uuid, 2 * pg_temp.c('P1')::numeric, 'line-dep-key-0002')) ->> 'id';
+select public.finance_deposit_submit_slip(pg_temp.c('dep2')::uuid, pg_temp.c('B') || '/line-dep2.png', md5('line-dep2') || md5('line-dep2b'), 'image/png', pg_temp.c('M1')::timestamptz + interval '3 minutes 50 seconds');
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select public.finance_deposit_verify(pg_temp.c('dep1')::uuid, 2 * pg_temp.c('P1')::numeric, 'LINETEST-DEP-1', pg_temp.c('M1')::timestamptz + interval '30 minutes');
+select pg_temp.err_like('L2.13 an order slip without a reference is refused next to a verified wallet top-up of the same transfer',
+  format($q$ select public.finance_confirm_evidence(%L, %s, '', %L) $q$, pg_temp.c('e_29'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '30 minutes 10 seconds'), 'DUPLICATE_SUSPECT%');
+select pg_temp.err_like('L2.13 a wallet top-up WITH a reference is refused next to an order payment posted without one',
+  format($q$ select public.finance_deposit_verify(%L, %s, 'LINETEST-DEP-2', %L) $q$, pg_temp.c('dep2'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '3 minutes 50 seconds'), 'DUPLICATE_SUSPECT%');
+reset role;
+
+-- cash is never a "duplicate": central receivables splits ONE cash payment over several invoices (same amount, same time, no reference, no bank account)
+set local role authenticated;
+select pg_temp.order_slip('46', null, 2, 'B');
+select pg_temp.order_slip('47', null, 2, 'B');
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+insert into t_ctx select 'cash46', public.finance_record_payment(p_invoice => pg_temp.c('i_46')::uuid, p_method => 'cash', p_amount => 100, p_received_at => pg_temp.c('M1')::timestamptz + interval '35 minutes',
+  p_bank_trans_ref => null, p_bank_account => null, p_note => 'Cash at the counter', p_file_path => null, p_sha256 => null, p_file_type => null, p_idempotency_key => 'line-cash-split-46') ->> 'evidence_id';
+insert into t_ctx select 'cash47', public.finance_record_payment(p_invoice => pg_temp.c('i_47')::uuid, p_method => 'cash', p_amount => 100, p_received_at => pg_temp.c('M1')::timestamptz + interval '35 minutes',
+  p_bank_trans_ref => null, p_bank_account => null, p_note => 'Cash at the counter', p_file_path => null, p_sha256 => null, p_file_type => null, p_idempotency_key => 'line-cash-split-47') ->> 'evidence_id';
+select pg_temp.q('L2.14 two equal cash parts at the same time both post (cash is not checked for duplicates)',
+  format($q$ select (public.finance_post_evidence(%L, 'part 1') ->> 'receipt_no') is not null and (public.finance_post_evidence(%L, 'part 2') ->> 'receipt_no') is not null $q$,
+    pg_temp.c('cash46'), pg_temp.c('cash47')));
 reset role;
 
 -- ================================================================================================= L3 card data, line_act, queue
@@ -290,9 +344,11 @@ select pg_temp.q('L3.4 ...and the order did not change', $q$ select status = 'ne
 select pg_temp.q('L3.5 a linked ADMIN accepts the order', $q$ select r ->> 'result' = 'done' and r ->> 'action' = 'accept' and r ->> 'order_no' is not null
   from (select pg_temp.act(pg_temp.c('UADM'), 'accept', '31') r) x $q$);
 select pg_temp.q('L3.5 the order is confirmed and the event names the ADMIN', $q$ select o.status = 'confirmed' and e.actor = pg_temp.c('ADM')::uuid and e.detail ->> 'from' = 'new'
-  from public.shop_orders o join lateral (select * from public.shop_events where entity = 'order' and entity_id = o.id::text order by id desc limit 1) e on true
+  from public.shop_orders o join lateral (select * from public.shop_events where entity = 'order' and entity_id = o.id::text and action = 'order.status' order by id desc limit 1) e on true
   where o.id = pg_temp.c('o_31')::uuid $q$);
 select pg_temp.q('L3.5 an action from LINE does not queue a follow-up (the reply announces it)', $q$ select pg_temp.ob('31', 'order_status') = 0 $q$);
+select pg_temp.q('L3.5 the order history says the action came from LINE', $q$ select exists (select 1 from public.shop_events where entity = 'order' and entity_id = pg_temp.c('o_31')
+  and action = 'order.line' and detail ->> 'via' = 'line' and detail ->> 'action' = 'accept' and actor = pg_temp.c('ADM')::uuid) $q$);
 select pg_temp.q('L3.6 a second tap on the same card says who accepted it', $q$ select r ->> 'result' = 'already_done' and r ->> 'status' = 'confirmed' and r ->> 'by' is not null
   and r ->> 'by' = (select coalesce(nullif(btrim(display_name), ''), email) from public.profiles where id = pg_temp.c('ADM')::uuid)
   from (select pg_temp.act(pg_temp.c('US'), 'accept', '31') r) x $q$);
@@ -393,6 +449,35 @@ select public.shop_admin_set_status(pg_temp.c('o_30')::uuid, 'confirmed');
 reset role;
 select pg_temp.q('L3.16 the customer is told on LINE when switched on', $q$ select exists (select 1 from public.line_outbox where order_id = pg_temp.c('o_30')::uuid and event = 'customer_notify'
   and target_type = 'user' and target_id = (select line_user_id from public.profiles where id = pg_temp.c('B')::uuid)) $q$);
+
+-- review findings: LINE can never break checkout (I1); a slip already handled on the web is named (I2); "accepted by" is who accepted (M7); a replaced slip is not
+-- announced as rejected (M12)
+update public.line_settings set events = events || '{"order_new": "maybe"}'::jsonb where id;          -- a broken setting: casting it fails inside the trigger
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('D')::uuid);
+select pg_temp.q('L3.18 a broken LINE setting does not stop an order from being placed',
+  format($q$ select (public.shop_place_order('line-key-44', '[{"sku_code":"%s","qty":1}]'::jsonb, 'pickup', 'Somchai', '081-234-5678', null, null, null, 'bank:SCB') -> 'order' ->> 'id') is not null $q$, pg_temp.c('SKU')));
+reset role;
+update public.line_settings set events = events || '{"order_new": true}'::jsonb where id;
+select pg_temp.order_slip('42', pg_temp.c('M1')::timestamptz + interval '25 minutes', 2, 'D');
+select pg_temp.order_slip('43', pg_temp.c('M1')::timestamptz + interval '27 minutes', 2, 'D');
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select public.finance_confirm_evidence(pg_temp.c('e_42')::uuid, 2 * pg_temp.c('P1')::numeric, 'LINETEST000042', pg_temp.c('M1')::timestamptz + interval '25 minutes');
+select public.shop_admin_set_status(pg_temp.c('o_31')::uuid, 'preparing', null, 'test: moving on without payment');
+select public.finance_request_more_evidence(pg_temp.c('e_43')::uuid, 'Please send the full slip');
+select pg_temp.as_user(pg_temp.c('D')::uuid);
+select public.finance_submit_evidence(pg_temp.c('i_43')::uuid, pg_temp.c('D') || '/line-43b.png', md5('line-43b') || md5('line-43bb'), 'image/png', 2 * pg_temp.c('P1')::numeric,
+  pg_temp.c('M1')::timestamptz + interval '27 minutes', 'SCB', null, pg_temp.c('scb')::uuid);
+reset role;
+select pg_temp.q('L3.19 quick approve of a slip already confirmed on the web says who confirmed it', $q$ select r ->> 'result' = 'slip_done' and r ->> 'status' = 'confirmed'
+  and r ->> 'by' = (select coalesce(nullif(btrim(display_name), ''), email) from public.profiles where id = pg_temp.c('S')::uuid) and r ->> 'at' is not null
+  from (select pg_temp.act(pg_temp.c('US'), 'quick_confirm', '42') r) x $q$);
+select pg_temp.q('L3.20 "already accepted by" names who accepted, not who moved it on later', $q$ select r ->> 'result' = 'already_done' and r ->> 'status' = 'preparing'
+  and r ->> 'by' = (select coalesce(nullif(btrim(display_name), ''), email) from public.profiles where id = pg_temp.c('ADM')::uuid)
+  from (select pg_temp.act(pg_temp.c('US'), 'accept', '31') r) x $q$);
+select pg_temp.q('L3.21 asking for more evidence is announced once; the replaced slip is not announced as rejected', $q$ select pg_temp.ob('43', 'payment_issue') = 1
+  and (select payload ->> 'kind' from public.line_outbox where order_id = pg_temp.c('o_43')::uuid and event = 'payment_issue') = 'more_evidence' $q$);
 
 select pg_temp.q('L3.17 the dispatch job is scheduled every minute', $q$ select exists (select 1 from cron.job where jobname = 'line-dispatch' and schedule = '* * * * *') $q$);
 select pg_temp.q('L3.17 the LINE internals are not callable by clients',

@@ -1,4 +1,4 @@
--- Second half of the proof that supabase/rollbacks/20261122130000_line_order_notifications_down.sql undoes the LINE migration. The first half is the generic
+-- Second half of the proof that supabase/rollbacks/20261122140000_line_order_notifications_down.sql undoes the LINE migration. The first half is the generic
 -- fingerprint of the public schema, supabase/tests/slip_review_down_pre.sql. Run through scripts/run-line-down-proof.sh inside ONE transaction that always rolls back.
 -- The schema after "migration + rollback" must equal the schema before, object by object; the LINE cron job and Vault secrets must be gone too.
 create temp table d_funcs_now as

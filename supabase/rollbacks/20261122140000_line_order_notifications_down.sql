@@ -1,6 +1,6 @@
--- Rolls back 20261122130000_line_order_notifications.sql (proof: scripts/run-line-down-proof.sh).
+-- Rolls back 20261122140000_line_order_notifications.sql (proof: scripts/run-line-down-proof.sh).
 -- Undeploy the Edge Functions line-webhook and line-dispatch FIRST (otherwise they call functions that no longer exist), then run this file, then delete version
--- 20261122130000 from supabase_migrations.schema_migrations. The extensions pg_net and pg_cron are left installed (harmless, and other features may use them).
+-- 20261122140000 from supabase_migrations.schema_migrations. The extensions pg_net and pg_cron are left installed (harmless, and other features may use them).
 -- What is lost: the LINE settings, staff links, delivery log and webhook log (the audit trail of every action stays in shop_events / finance_events).
 -- REFUSES while a transfer is confirmed without a bank reference: the restored Post requires one, so such a payment could not be posted any more. Post (with a
 -- reference) or reject those payments first.
@@ -28,6 +28,7 @@ drop function if exists public.line_complete_outbox(uuid, boolean, boolean, text
 drop function if exists public.line_card_data(uuid);
 drop function if exists public.line_quick_check(uuid);
 drop function if exists public.line_last_action(uuid);
+drop function if exists public.line_slip_done(uuid);
 drop function if exists public.line_person(uuid);
 drop function if exists public.line_enqueue(text, uuid, uuid, jsonb);
 drop function if exists public.line_trg_order_new();
@@ -37,7 +38,9 @@ drop function if exists public.line_trg_analysis();
 
 -- B: the four finance functions exactly as 20261120100000_slip_review.sql defines them, the 2-argument Post with its grant, and no confirmed_via
 drop function if exists public.finance_quick_confirm_evidence(uuid);
+drop function if exists public.finance_post_evidence(uuid, text, text, boolean);
 drop function if exists public.finance_post_evidence(uuid, text, text);
+drop function if exists public.finance_confirm_evidence(uuid, numeric, text, timestamptz, text, boolean);
 create or replace function public.finance_verify_core(p_evidence uuid, p_amount numeric, p_bank_trans_ref text, p_transfer_at timestamptz,
   p_note text, p_via text, p_from_status text default 'submitted', p_method text default 'transfer')
 returns jsonb language plpgsql security definer set search_path = public as $$
@@ -234,12 +237,42 @@ begin
   return v_res;
 end $$;
 
-revoke execute on function public.finance_post_evidence(uuid, text) from public, anon;
-grant execute on function public.finance_post_evidence(uuid, text) to authenticated;
+revoke execute on function public.finance_post_evidence(uuid, text), public.finance_confirm_evidence(uuid, numeric, text, timestamptz, text) from public, anon;
+grant execute on function public.finance_post_evidence(uuid, text), public.finance_confirm_evidence(uuid, numeric, text, timestamptz, text) to authenticated;
+drop function if exists public.finance_dup_check(numeric, uuid, timestamptz, uuid, boolean);
+drop function if exists public.finance_quick_dup(numeric, uuid, timestamptz, uuid, boolean);
 drop function if exists public.finance_quick_dup(numeric, uuid, timestamptz, uuid);
 drop index if exists public.finance_evidence_quickdup_idx;
 alter table public.finance_payment_evidence drop constraint if exists finance_payment_evidence_confirmed_via_chk;
 alter table public.finance_payment_evidence drop column if exists confirmed_via;
+
+-- the wallet top-up verify exactly as 20261115200000_wallet_payments.sql defines it
+create or replace function public.finance_deposit_verify(p_deposit uuid, p_amount numeric, p_bank_trans_ref text, p_transfer_at timestamptz, p_note text default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_d public.finance_wallet_deposits; v_t public.finance_wallet_transactions; v_bank public.finance_bank_accounts; v_cust public.finance_customers;
+begin
+  perform public.finance_require('verify', 'verify deposits');
+  if p_amount is null or p_amount <= 0 or p_amount <> round(p_amount, 2) then raise exception 'Enter the amount shown by the bank'; end if;
+  if coalesce(trim(p_bank_trans_ref), '') = '' then raise exception 'The bank transaction reference is required'; end if;
+  if p_transfer_at is null then raise exception 'The transfer date and time are required'; end if;
+  select * into v_d from public.finance_wallet_deposits where id = p_deposit for update;
+  if not found then raise exception 'Deposit not found'; end if;
+  if v_d.status not in ('submitted', 'under_review') then raise exception 'DEPOSIT_NOT_REVIEWABLE: this deposit is %', v_d.status; end if;
+  if exists (select 1 from public.finance_receipts where bank_trans_ref = trim(p_bank_trans_ref)) or exists (select 1 from public.finance_wallet_deposits where bank_trans_ref = trim(p_bank_trans_ref) and status = 'verified') then
+    raise exception 'Bank transaction % was already recorded (reused slip?)', trim(p_bank_trans_ref) using errcode = '23505'; end if;
+  if p_transfer_at < v_d.created_at - interval '1 day' then raise exception 'The transfer is older than the deposit request'; end if;
+  select * into v_bank from public.finance_bank_accounts where id = v_d.bank_account_id;
+  select * into v_cust from public.finance_customers where id = v_d.customer_id;
+  v_t := public.finance_wallet_apply(v_d.customer_id, 'DEPOSIT', 'credit', p_amount, 'DEP:' || v_d.id::text, 'deposit', v_d.id, v_d.deposit_no, 'bank_transfer', v_d.bank_account_id, 'verified',
+                                     v_cust.profile_id, auth.uid(), 'Verified bank transfer ' || trim(p_bank_trans_ref), null);
+  update public.finance_wallet_deposits set status = 'verified', verified_amount = p_amount, bank_trans_ref = trim(p_bank_trans_ref), transfer_at = p_transfer_at,
+    review_note = nullif(btrim(p_note), ''), reviewed_by = auth.uid(), reviewed_at = now(), wallet_txn_id = v_t.id where id = p_deposit returning * into v_d;
+  perform public.finance_gl_enqueue('WALLET_DEPOSIT', 'wallet_txn', v_t.id, v_t.txn_no, v_d.customer_id, p_amount,
+    jsonb_build_array(jsonb_build_object('side', 'dr', 'role', 'bank', 'amount', p_amount, 'bank_account_id', v_d.bank_account_id),
+                      jsonb_build_object('side', 'cr', 'role', 'customer_credit', 'amount', p_amount, 'wallet', true)));
+  perform public.finance_log('deposit', v_d.id, 'deposit.verify', jsonb_build_object('no', v_d.deposit_no, 'claimed', v_d.amount, 'verified', p_amount, 'trans_ref', trim(p_bank_trans_ref), 'txn', v_t.txn_no));
+  return jsonb_build_object('deposit', to_jsonb(v_d), 'txn_no', v_t.txn_no, 'balance', v_t.balance_after);
+end $$;
 
 -- A (tables first: the outbox trigger depends on its function)
 drop table if exists public.line_outbox;

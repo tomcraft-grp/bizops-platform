@@ -119,6 +119,16 @@ describe('line-webhook', () => {
     await handleWebhook(req([text('000000', { type: 'user', userId: 'U1' })]), b.deps);
     expect(replyText(b.calls)).toContain('ลองใหม่ใน 1 ชั่วโมง');
   });
+  it('a 6-digit number typed in the bound admin group (an amount, a phone) is not a code: no reply, no attempt counted', async () => {
+    const { deps, calls } = fakes();
+    await handleWebhook(req([text('150000', { type: 'group', groupId: GROUP, userId: 'U1' })]), deps);
+    expect(calls.redeem).toHaveLength(0); expect(calls.reply).toHaveLength(0);
+  });
+  it('a wrong code in a group gets no reply (the bot stays quiet in group chats)', async () => {
+    const { deps, calls } = fakes({ boundGroup: async () => null, redeem: async () => ({ result: 'bad_code' }) });
+    await handleWebhook(req([text('000000', { type: 'group', groupId: 'Cnew', userId: 'U1' })]), deps);
+    expect(calls.reply).toHaveLength(0); expect(calls.push).toHaveLength(0);
+  });
   it('ordinary chat text is ignored', async () => {
     const { deps, calls } = fakes();
     await handleWebhook(req([text('สวัสดีครับ', { type: 'group', groupId: GROUP, userId: 'U1' }), text('12345', { type: 'user', userId: 'U1' })]), deps);

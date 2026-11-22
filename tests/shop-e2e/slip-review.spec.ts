@@ -764,7 +764,7 @@ test.describe('the fake follows the contract', () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------- LINE (20261122130000): optional reference, deep link, quick approvals
+// ---------------------------------------------------------------------------------------------- LINE (20261122140000): optional reference, deep link, quick approvals
 test.describe('optional bank reference and LINE quick approvals', () => {
   test('a link from LINE opens that slip directly', async ({ page }) => {
     const fake = new FakeShop(); fake.profile.role = 'SUPER_ADMIN'; fake.profile.display_name = 'Staff'; fake.w.role = 'manager'; fake.rv.seed();
@@ -786,16 +786,31 @@ test.describe('optional bank reference and LINE quick approvals', () => {
     expect(fake.calls.find((c) => c.fn === 'finance_confirm_evidence')!.args.p_bank_trans_ref).toBe('');
     expect(fake.rv.evidence.find((e) => e.id === 'ev-1')!.status).toBe('confirmed');
   });
-  test('a suspected duplicate is explained in Thai', async ({ page }) => {
-    const fake = new FakeShop(); fake.rv.forceConfirmError = 'DUPLICATE_SUSPECT: a payment of 350 to the same account at the same minute was already recorded; enter the bank reference to continue';
+  test('a suspected duplicate asks the person; "two different transfers" sends it again with the override', async ({ page }) => {
+    const fake = new FakeShop(); fake.rv.forceConfirmError = 'DUPLICATE_SUSPECT: a payment of 350 to the same account within a minute of this one is already recorded; check the bank statement, and if these are two different transfers say so';
     await openReview(page, fake, 'verifier');
     await open(page, 'INV-000101');
     await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
     await dlg(page).getByLabel('Amount received (฿)').fill('350');
     await dlg(page).getByLabel('Transfer date and time').fill('2026-11-19T10:20');
     await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
-    await expect(page.locator('.toast').last()).toContainText('อาจเป็นสลิปซ้ำ: มีสลิปยอดเดียวกัน');
-    await expect(page.locator('.toast').last()).toContainText('Possible duplicate: a slip with the same amount, account and minute exists.');
+    await expect(dlg(page)).toContainText('Possible duplicate: a payment of the same amount to the same account, within a minute, is already recorded.');
+    await dlg(page).getByRole('button', { name: 'They are two different transfers' }).click();
+    await expect.poll(() => fake.count('finance_confirm_evidence')).toBe(2);
+    expect(fake.calls.filter((c) => c.fn === 'finance_confirm_evidence')[1].args.p_distinct).toBe(true);
+    expect(fake.rv.evidence.find((e) => e.id === 'ev-1')!.status).toBe('confirmed');
+  });
+  test('a suspected duplicate can be left alone (nothing is sent again)', async ({ page }) => {
+    const fake = new FakeShop(); fake.rv.forceConfirmError = 'DUPLICATE_SUSPECT: a payment of 350 to the same account within a minute of this one is already recorded; check the bank statement, and if these are two different transfers say so';
+    await openReview(page, fake, 'verifier');
+    await open(page, 'INV-000101');
+    await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
+    await dlg(page).getByLabel('Amount received (฿)').fill('350');
+    await dlg(page).getByLabel('Transfer date and time').fill('2026-11-19T10:20');
+    await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
+    await dlg(page).getByRole('button', { name: 'Cancel' }).click();
+    expect(fake.count('finance_confirm_evidence')).toBe(1);
+    expect(fake.rv.evidence.find((e) => e.id === 'ev-1')!.status).toBe('submitted');
   });
   test('a LINE quick approval carries a badge and a filter', async ({ page }) => {
     const fake = new FakeShop(); fake.rv.seed();

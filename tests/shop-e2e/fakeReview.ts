@@ -21,7 +21,7 @@ export interface REvidence {
   source: 'customer_slip' | 'staff_entry'; method: 'transfer' | 'cash'; recorded_by: string | null;
   confirmed_by: string | null; confirmed_at: string | null; confirmed_amount: number | null; confirmed_bank_ref: string | null; confirmed_transfer_at: string | null; confirm_note: string | null;
   posted_by: string | null; posted_at: string | null; request_message: string | null; requested_by: string | null; requested_at: string | null;
-  /** 20261122130000: where it was confirmed (absent on rows seeded before it) */
+  /** 20261122140000: where it was confirmed (absent on rows seeded before it) */
   confirmed_via?: 'web' | 'line_quick' | null;
 }
 interface RInvoice { id: string; invoice_no: string; amount: number; customer_id: string; issue_date: string; created_at: string; order_no: string | null; status: 'open' | 'cancelled' }
@@ -293,8 +293,8 @@ export class FakeReview {
     this.need('verify', 'confirm payments');
     const amount = Number(a.p_amount); const ref = String(a.p_bank_trans_ref ?? '').trim(); const note = String(a.p_note ?? '').trim() || null;
     if (a.p_amount == null || !(amount > 0) || r2(amount) !== amount) this.err('Enter the amount shown by the bank');
-    if (this.forceConfirmError) this.err(this.forceConfirmError);
-    // 20261122130000: the reference is optional; when typed it is checked as before
+    if (this.forceConfirmError && a.p_distinct !== true) this.err(this.forceConfirmError);     // "two different transfers" (p_distinct) gets past it, as in the SQL
+    // 20261122140000: the reference is optional; when typed it is checked as before
     if (ref && (norm(ref).length < 4 || ref.length > 80)) this.err('The bank transaction reference must have 4 to 80 letters or digits');
     if (!a.p_transfer_at) this.err('The transfer date and time are required');
     if (new Date(String(a.p_transfer_at)).getTime() > Date.parse(this.clockIso) + 10 * 60e3) this.err('The payment time is in the future');         // the same limit and words as Record payment
@@ -314,7 +314,7 @@ export class FakeReview {
     if (e.status === 'verified') { const rc = this.receipts.find((r) => r.evidence_id === e.id); if (rc) return { replay: true, result: 'already_posted', receipt_no: rc.receipt_no, credited_to_wallet: 0, state: this.state(i) }; }
     if (e.status !== 'confirmed') this.err(`NOT_CONFIRMED: this slip is ${e.status} (it must be confirmed before it is posted)`);
     if (i.status !== 'open') this.err(`The invoice is ${i.status}`);
-    const add = String(a.p_bank_ref ?? '').trim();                                 // 20261122130000: a reference typed at Post fills in a missing one
+    const add = String(a.p_bank_ref ?? '').trim();                                 // 20261122140000: a reference typed at Post fills in a missing one
     if (e.method === 'transfer' && !e.confirmed_bank_ref && add) e.confirmed_bank_ref = add;
     const amount = e.confirmed_amount ?? 0; const outstanding = r2(i.amount - this.paid(i));
     if (e.method === 'cash' && amount > outstanding) this.err(`CASH_OVERPAY: cash of ${amount} is more than the ${outstanding} this invoice still owes; cash never makes a wallet credit`);

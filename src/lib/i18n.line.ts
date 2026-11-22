@@ -70,7 +70,10 @@ export const TH_LINE: Record<string, string> = {
   'Payment problem': 'ปัญหาการชำระเงิน',
   'New slip': 'สลิปใหม่',
   // slip review (src/finance/SlipReview.tsx, reviewUi.ts): the optional bank reference and the LINE quick approvals
-  'Possible duplicate: a slip with the same amount, account and minute exists. Enter the bank reference to continue.': 'อาจเป็นสลิปซ้ำ: มีสลิปยอดเดียวกัน เข้าบัญชีเดียวกัน ในนาทีเดียวกันแล้ว ใส่เลขอ้างอิงธนาคารเพื่อยืนยันต่อ',
+  'Possible duplicate: a payment of the same amount to the same account, within a minute, is already recorded. Check the bank statement.': 'อาจเป็นสลิปซ้ำ: มีการชำระยอดเดียวกัน เข้าบัญชีเดียวกัน ห่างกันไม่เกิน 1 นาที บันทึกไว้แล้ว ตรวจรายการเดินบัญชีก่อน',
+  'Possible duplicate': 'อาจเป็นสลิปซ้ำ',
+  'They are two different transfers': 'เป็นการโอนคนละรายการ',
+  'Only if the bank statement shows two separate transfers. Your answer is recorded.': 'กดเฉพาะเมื่อรายการเดินบัญชีแสดงการโอนสองรายการแยกกัน ระบบจะบันทึกว่าคุณเป็นผู้ยืนยัน',
   'Optional': 'ไม่บังคับ',
   'Enter the amount and the transfer date and time from your bank record': 'ใส่ยอดเงินและวันเวลาโอนตามรายการของธนาคาร',
   'LINE quick approve': 'อนุมัติด่วนจาก LINE',

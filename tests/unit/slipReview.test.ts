@@ -182,8 +182,8 @@ describe('reason texts agree with the classifier in the migration', () => {
 
 describe('the TypeScript shapes agree with the SQL', () => {
   it('a review list item has exactly the keys finance_review_list builds', () => {
-    // the newest definition: 20261122130000_line_order_notifications.sql added confirmed_via and no_ref
-    const LINE_SQL = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/20261122130000_line_order_notifications.sql'), 'utf8');
+    // the newest definition: 20261122140000_line_order_notifications.sql added confirmed_via and no_ref
+    const LINE_SQL = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/20261122140000_line_order_notifications.sql'), 'utf8');
     const start = LINE_SQL.indexOf('create or replace function public.finance_review_list(');
     const body = LINE_SQL.slice(start, LINE_SQL.indexOf('end $$;', start)).replace(/--[^\n]*/g, '');
     const sql = objectKeys(body, "jsonb_agg(jsonb_build_object(");

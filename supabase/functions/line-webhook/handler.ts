@@ -63,9 +63,10 @@ async function handleEvent(ev: LineEvent, group: string | null, deps: WebhookDep
     if (src.type === 'user' && src.userId) {
       const r = await deps.redeem(src.userId, await deps.profileName(src.userId), code, null);
       await answer([textMsg(r.result === 'linked' ? `เชื่อมบัญชีเรียบร้อย: ${r.name ?? ''} จะกดรับออเดอร์จากการ์ดในกลุ่มได้แล้ว` : codeError(r.result))]);
-    } else if (src.type === 'group' && src.groupId && src.userId) {
+    } else if (src.type === 'group' && src.groupId && src.userId && src.groupId !== group) {
+      // in the bound admin group a 6-digit number is an amount or a phone, never a code; elsewhere only a successful binding is answered (quiet in group chats)
       const r = await deps.redeem(src.userId, await deps.groupName(src.groupId), code, src.groupId);
-      await answer([textMsg(r.result === 'group_bound' ? 'ผูกกลุ่มนี้เรียบร้อย ออเดอร์ใหม่จะแจ้งในกลุ่มนี้' : codeError(r.result))]);
+      if (r.result === 'group_bound') await answer([textMsg('ผูกกลุ่มนี้เรียบร้อย ออเดอร์ใหม่จะแจ้งในกลุ่มนี้')]);
     }
     return;
   }

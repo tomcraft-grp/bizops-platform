@@ -15,6 +15,7 @@ export type ActResult =
   | { result: 'not_linked' }
   | { result: 'not_allowed'; why?: 'not_staff' | 'not_verifier' | null; message?: string }
   | { result: 'already_done'; order_no: string; status: string; by: string | null; at: string | null }
+  | { result: 'slip_done'; order_no: string; status: 'confirmed' | 'verified' | 'rejected'; by: string | null; at: string | null }
   | { result: 'refused'; code: string; message?: string }
   | { result: 'ask_quick'; order_no: string; amount: number; bank: string | null; transfer_at: string }
   | { result: 'ask_reason'; order_no: string; reasons: string[] }
@@ -175,6 +176,7 @@ export function resultText(r: ActResult): string {
     case 'not_linked': return 'บัญชี LINE นี้ยังไม่ได้เชื่อมกับระบบ';
     case 'not_allowed': return r.why === 'not_verifier' ? 'ทำรายการนี้ได้เฉพาะผู้ตรวจการเงินขึ้นไป' : 'บัญชีนี้ไม่มีสิทธิ์จัดการออเดอร์';
     case 'already_done': return `ออเดอร์ ${r.order_no} ถูก${done(r.status)}แล้วโดย ${r.by ?? '-'} เมื่อ ${hhmm(r.at)}`;
+    case 'slip_done': return `สลิปของออเดอร์ ${r.order_no} ถูก${r.status === 'verified' ? 'บันทึกรับเงิน' : r.status === 'rejected' ? 'ปฏิเสธ' : 'ยืนยัน'}แล้วโดย ${r.by ?? '-'} เมื่อ ${hhmm(r.at)}`;
     case 'refused': return REFUSED[r.code] ?? (['NO_SLIP', 'MANY_SLIPS', 'NOT_TRANSFER', 'NOT_NEW'].includes(r.code) ? NOT_ELIGIBLE : 'เกิดข้อผิดพลาด ลองใหม่หรือทำในเว็บ');
     case 'done':
       if (r.action === 'accept') return `✅ รับออเดอร์ ${r.order_no} แล้ว (${r.by} · ${hhmm(r.at)})`;

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Proves the rollback of the LINE OA migration inside ONE transaction that always rolls back (nothing persists):
-#   fingerprint of the whole public schema -> migration 20261122130000 -> [guard scenario] -> rollback -> comparison (+ cron job and Vault secrets gone).
+#   fingerprint of the whole public schema -> migration 20261122140000 -> [guard scenario] -> rollback -> comparison (+ cron job and Vault secrets gone).
 #   scripts/run-line-down-proof.sh            # clean: the rollback must restore the schema exactly (expects "LINE_DOWN_PROOF n of n passed")
 #   scripts/run-line-down-proof.sh guard      # the rollback must REFUSE while a transfer is confirmed without a bank reference (the old Post could not post it)
 #   scripts/run-line-down-proof.sh control    # sanity check of the comparison: WITHOUT the rollback it must report differences
@@ -10,8 +10,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; cd "$HERE/.."
 MODE="${1:-clean}"
 PRE=supabase/tests/slip_review_down_pre.sql
-MIG=supabase/migrations/20261122130000_line_order_notifications.sql
-DOWN=supabase/rollbacks/20261122130000_line_order_notifications_down.sql
+MIG=supabase/migrations/20261122140000_line_order_notifications.sql
+DOWN=supabase/rollbacks/20261122140000_line_order_notifications_down.sql
 POST=supabase/tests/line_down_post.sql
 # Only meaningful while the live database does not have the migration (otherwise the "before" snapshot already contains it).
 APPLIED=$(bash "$HERE/db-readonly.sh" "select exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'line_settings') as applied")

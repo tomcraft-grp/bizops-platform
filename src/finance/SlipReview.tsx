@@ -11,7 +11,7 @@ import { Badge, Banner, Button, Card, Check, Empty, Field, Input, Kpi, KV, Modal
 import { canFinance, finance, type FinanceRole } from './api';
 import RecordPayment, { type RecordTarget } from './RecordPayment';
 import {
-  AI_RESULT, REASON_CODES, REASON_TEXT, refOk, review, STAGE, type AiResult, type Bilingual, type PostResult, type ReviewDetail, type ReviewFilter, type ReviewItem, type ReviewPage, type ReviewSettings,
+  AI_RESULT, isDuplicateSuspect, REASON_CODES, REASON_TEXT, refOk, review, STAGE, type AiResult, type Bilingual, type PostResult, type ReviewDetail, type ReviewFilter, type ReviewItem, type ReviewPage, type ReviewSettings,
   type ReviewStage, type ReviewSummary, type SlipAnalysis,
 } from './review';
 import {
@@ -46,11 +46,22 @@ interface Target { id: string; invoiceNo: string; amount: number; outstanding?: 
 const overOwed = (lang: 'en' | 'th', amount: number, outstanding: number | undefined) =>
   outstanding != null && amount > outstanding + 0.004 ? tl(lang, 'More than the invoice still owes ({n} over): the extra is credited to the customer’s wallet when the payment is posted.', { n: money(amount - outstanding) }) : '';
 interface BulkRow { id: string; label: string; ok: boolean; text: string }
+/** "Same amount, same account, within a minute as a recorded payment": asks the person whether the bank statement shows two transfers (their yes is recorded). */
+function useAskDistinct() {
+  const ask = useConfirm();
+  const lang = useLang();
+  return async (e: unknown) => (await ask({
+    title: tl(lang, 'Possible duplicate'),
+    body: `${reviewErrorLine(lang, e)} ${tl(lang, 'Only if the bank statement shows two separate transfers. Your answer is recorded.')}`,
+    confirmLabel: tl(lang, 'They are two different transfers'),
+  })).ok;
+}
 
 // ================================================================================================ the dashboard
 export default function SlipReview({ role, onChanged, initialOpenId }: { role: FinanceRole; onChanged: () => void; /** a link from LINE: open this slip's detail */ initialOpenId?: string | null }) {
   const lang = useLang();
   const ask = useConfirm();
+  const askDistinct = useAskDistinct();
   const L = (b: Bilingual) => (lang === 'th' ? b.th : b.en);
   const canAct = canFinance(role, 'verify');
   const [settings, setSettings] = useState<ReviewSettings | null>(null);
@@ -130,7 +141,14 @@ export default function SlipReview({ role, onChanged, initialOpenId }: { role: F
     const a = await ask({ title: tl(lang, 'Post {a} to {n}?', { a: money(g.amount), n: g.invoiceNo }), body: [tl(lang, 'This makes the payment official: a receipt and a ledger entry are created. It cannot be undone, only reversed.'), over].filter(Boolean).join(' '), confirmLabel: tl(lang, 'Post Invoice'),
       ...(g.noRef ? { reason: tl(lang, 'Bank transaction reference (optional, from the bank statement)'), reasonOptional: true } : {}) });
     if (!a.ok) return false;
-    const r = await run(g.id, async () => { try { const x = await review.post(g.id, undefined, g.noRef ? a.reason : undefined); toastPosted(x); return true; } catch (e) { toast('error', reviewErrorText(lang, e)); return false; } });
+    const r = await run(g.id, async () => {
+      const send = (distinct: boolean) => review.post(g.id, undefined, g.noRef ? a.reason : undefined, distinct);
+      try { toastPosted(await send(false)); return true; } catch (e) {
+        if (!isDuplicateSuspect(e)) { toast('error', reviewErrorText(lang, e)); return false; }
+        if (!(await askDistinct(e))) return false;
+        try { toastPosted(await send(true)); return true; } catch (y) { toast('error', reviewErrorText(lang, y)); return false; }
+      }
+    });
     if (r) await refresh();
     return !!r;
   });
@@ -314,6 +332,7 @@ interface DetailProps {
 function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, onRefresh, onRecord }: DetailProps) {
   const lang = useLang();
   const ask = useConfirm();
+  const askDistinct = useAskDistinct();
   const L = (b: Bilingual) => (lang === 'th' ? b.th : b.en);
   const [d, setD] = useState<ReviewDetail | null>(null);
   const [url, setUrl] = useState<string | null>(null);
@@ -380,7 +399,12 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
       if (!r.ok) return;
     }
     const ok = await run('confirm', async () => {
-      try { await review.confirm({ evidenceId: e.id, amount: amt, bankRef: form.ref.trim(), transferAt: sentAt!, note: form.note }); } catch (x) { toast('error', reviewErrorText(lang, x)); return false; }
+      const send = (distinct: boolean) => review.confirm({ evidenceId: e.id, amount: amt, bankRef: form.ref.trim(), transferAt: sentAt!, note: form.note, distinct });
+      try { await send(false); } catch (x) {
+        if (!isDuplicateSuspect(x)) { toast('error', reviewErrorText(lang, x)); return false; }
+        if (!(await askDistinct(x))) return false;                                       // same amount, account and minute as a recorded payment: the person decides, after the statement
+        try { await send(true); } catch (y) { toast('error', reviewErrorText(lang, y)); return false; }
+      }
       if (!post) { toast('success', tl(lang, 'Payment confirmed. It is not posted yet: the invoice still owes the money until it is posted.')); return true; }
       try { await review.post(e.id); toast('success', tl(lang, 'Confirmed and posted')); } catch (x) { toast('error', `${tl(lang, 'Confirmed, but not posted:')} ${reviewErrorLine(lang, x)}`); }
       return true;

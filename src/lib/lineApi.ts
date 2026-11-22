@@ -1,4 +1,4 @@
-// Client side of the LINE OA order notifications (migration 20261122130000_line_order_notifications.sql, Edge Functions line-webhook / line-dispatch).
+// Client side of the LINE OA order notifications (migration 20261122140000_line_order_notifications.sql, Edge Functions line-webhook / line-dispatch).
 // The Settings card reads and changes everything through these thin wrappers over the database functions; the database decides who may do what
 // (staff read, SUPER_ADMIN changes) and never returns a credential.
 import { supabase } from './supabase';

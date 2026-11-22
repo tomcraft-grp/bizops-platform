@@ -1,5 +1,5 @@
 // The LINE notifications part of the fake backend (Settings → LINE notifications). It mirrors the CONTRACT of the line_admin_* functions of
-// supabase/migrations/20261122130000_line_order_notifications.sql (tested for real by supabase/tests/line_notifications.sql): staff read, a SUPER_ADMIN
+// supabase/migrations/20261122140000_line_order_notifications.sql (tested for real by supabase/tests/line_notifications.sql): staff read, a SUPER_ADMIN
 // changes, credentials are write-only, switching on needs credentials and a bound group. It proves the SCREEN, nothing about the database.
 import type { FakeShop } from './fakeBackend';
 import { NOT_HANDLED } from './fakeWallet';

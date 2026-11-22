@@ -14,7 +14,7 @@
 
 - Work on branch `feat/line-order-notifications` in a new worktree from `main` (superpowers:using-git-worktrees). The main checkout carries other in-progress work (categories, payment integrity, feedback closure): never touch it. Copy the spec and this plan into the worktree and commit them first.
 - One Supabase project = production. SQL is only sent through `scripts/run-sql-tests.sh` (one transaction that ends in a forced rollback). Do **not** apply the migration, deploy functions or publish the app in this plan: that is a separate step the owner triggers (Task 10 writes the checklist).
-- Migration `supabase/migrations/20261122130000_line_order_notifications.sql`; rollback `supabase/rollbacks/20261122130000_line_order_notifications_down.sql`; SQL tests `supabase/tests/line_notifications.sql`, marker `LINE_TESTS`.
+- Migration `supabase/migrations/20261122140000_line_order_notifications.sql`; rollback `supabase/rollbacks/20261122140000_line_order_notifications_down.sql`; SQL tests `supabase/tests/line_notifications.sql`, marker `LINE_TESTS`.
 - Finance functions that change are **copied from `supabase/migrations/20261120100000_slip_review.sql` and changed only where marked** with `-- LINE:` comments (the convention of `20261122120000_finance_payment_integrity.sql`).
 - Dark by default: `line_settings.enabled = false`, `quick_approve_enabled = false`. With LINE off, nothing is queued. The optional bank reference is **not** behind a switch (owner's decision), so the docs list it under "not dark".
 - Credentials (channel secret, access token, dispatch secret) live only in Vault under the names `line_channel_secret`, `line_channel_token`, `line_dispatch_secret`. They never reach the browser or logs, and the Edge Functions redact them from every error they store or return.
@@ -37,7 +37,7 @@
 ### Task 1: Migration part A: LINE tables, settings, credentials, linking, webhook dedupe
 
 **Files:**
-- Create: `supabase/migrations/20261122130000_line_order_notifications.sql` (section A)
+- Create: `supabase/migrations/20261122140000_line_order_notifications.sql` (section A)
 - Create: `supabase/tests/line_notifications.sql`, `scripts/run-line-sql-tests.sh`
 
 **Interfaces:**
@@ -57,7 +57,7 @@
   - `L1.8` STAFF `line_link_code('group')`, redeem with `p_group='Cgrp…'` → `group_bound`, `group_id` stored; `line_group_left('Cgrp…')` clears it.
   - `L1.9` `line_webhook_seen('ev1', …)` true then false.
   - `L1.10` an expired code (set `expires_at` in the past) → `bad_code`.
-- [ ] **Step 3: Write `scripts/run-line-sql-tests.sh`**: `exec "$(dirname "$0")/run-sql-tests.sh" LINE_TESTS supabase/tests/prod_dry_run_prelude.sql supabase/migrations/20261122130000_line_order_notifications.sql supabase/tests/line_notifications.sql`. Run it and confirm FAIL (the functions do not exist).
+- [ ] **Step 3: Write `scripts/run-line-sql-tests.sh`**: `exec "$(dirname "$0")/run-sql-tests.sh" LINE_TESTS supabase/tests/prod_dry_run_prelude.sql supabase/migrations/20261122140000_line_order_notifications.sql supabase/tests/line_notifications.sql`. Run it and confirm FAIL (the functions do not exist).
 - [ ] **Step 4: Implement section A** of the migration: `create extension if not exists pg_net; create extension if not exists pg_cron;` (Vault is already present), the tables, the RPCs and the grants above. Credentials go through `vault.create_secret` / `vault.update_secret`, and are read from `vault.decrypted_secrets`. Code hashing: `encode(extensions.digest(code, 'sha256'), 'hex')`.
 - [ ] **Step 5: Run `bash scripts/run-line-sql-tests.sh`.** Expected: `LINE_TESTS 10 of 10 passed`.
 - [ ] **Step 6: Commit** `feat(line): settings, credentials in Vault, staff and group linking, webhook dedupe (dark)`.
@@ -65,7 +65,7 @@
 ### Task 2: Migration part B: optional bank reference and LINE quick confirm (finance)
 
 **Files:**
-- Modify: `supabase/migrations/20261122130000_line_order_notifications.sql` (section B)
+- Modify: `supabase/migrations/20261122140000_line_order_notifications.sql` (section B)
 - Modify: `supabase/tests/line_notifications.sql`
 
 **Interfaces:**
@@ -88,7 +88,7 @@
 - [ ] **Step 2: Run** `bash scripts/run-line-sql-tests.sh`. Expected: the L2 tests FAIL, the L1 tests pass.
 - [ ] **Step 3: Implement section B**: copy the four functions from `20261120100000_slip_review.sql`, mark each change `-- LINE:`, and reissue the grants and revokes exactly as that file does (the 3-argument Post gets the same grant as the old one).
 - [ ] **Step 4: Run.** Expected: `LINE_TESTS 19 of 19 passed`. Then run the existing slip-review and ordering test files **on top of this migration**. Send only the new migration, never the old ones: re-sending `20261120100000_slip_review.sql` would put the old functions back.
-  - `bash scripts/run-sql-tests.sh SLIPREVIEW_TESTS supabase/tests/prod_dry_run_prelude.sql supabase/migrations/20261122130000_line_order_notifications.sql supabase/tests/slip_review.sql`
+  - `bash scripts/run-sql-tests.sh SLIPREVIEW_TESTS supabase/tests/prod_dry_run_prelude.sql supabase/migrations/20261122140000_line_order_notifications.sql supabase/tests/slip_review.sql`
   - The same with the ordering suite's marker and `supabase/tests/online_ordering.sql`.
   - The only failures allowed are tests asserting that the reference is *required* at Confirm or Post. Change those expectations in this task to the new rule, and list them in the commit message.
 - [ ] **Step 5: Commit** `feat(finance): bank reference optional at Confirm and Post; duplicate check by amount, account and minute; LINE quick confirm`.
@@ -96,7 +96,7 @@
 ### Task 3: Migration part C: card data, `line_act`, queue triggers, dispatcher RPCs, kick and schedule
 
 **Files:**
-- Modify: `supabase/migrations/20261122130000_line_order_notifications.sql` (section C)
+- Modify: `supabase/migrations/20261122140000_line_order_notifications.sql` (section C)
 - Modify: `supabase/tests/line_notifications.sql`
 
 **Interfaces:**
@@ -134,7 +134,7 @@
 ### Task 4: Rollback and its proof
 
 **Files:**
-- Create: `supabase/rollbacks/20261122130000_line_order_notifications_down.sql`, `scripts/run-line-down-proof.sh`, `supabase/tests/line_down_post.sql`
+- Create: `supabase/rollbacks/20261122140000_line_order_notifications_down.sql`, `scripts/run-line-down-proof.sh`, `supabase/tests/line_down_post.sql`
 
 **Interfaces:**
 - The rollback refuses (raise) while any evidence has `status = 'confirmed' and method = 'transfer' and confirmed_bank_ref is null` (the old Post could not post it). Otherwise it unschedules the cron job, drops the triggers, LINE functions, tables and Vault secrets, and the `confirmed_via` column, and restores the four finance functions verbatim from `20261120100000_slip_review.sql` (including the 2-argument Post and its grants). It leaves the extensions in place.

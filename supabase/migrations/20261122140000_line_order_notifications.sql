@@ -1,6 +1,6 @@
 -- LINE OA order notifications with in-LINE approval.
 -- Design: docs/superpowers/specs/2026-11-22-line-order-notifications-design.md   Plan: docs/superpowers/plans/2026-11-22-line-order-notifications.md
--- Rollback: supabase/rollbacks/20261122130000_line_order_notifications_down.sql
+-- Rollback: supabase/rollbacks/20261122140000_line_order_notifications_down.sql
 --
 -- Ships DARK for LINE: line_settings.enabled and quick_approve_enabled are false, so nothing is queued and no LINE action is possible until a SUPER_ADMIN
 -- configures it. NOT dark (owner's decision, 2026-11-22): the bank reference becomes optional at Confirm and Post (section B); it applies as soon as this
@@ -95,13 +95,14 @@ create or replace function public.line_vault_put(p_name text, p_value text)
 returns void language plpgsql security definer set search_path = public as $$
 declare v uuid;
 begin
+  if p_name not like 'line\_%' then raise exception 'Only LINE secrets'; end if;
   select id into v from vault.secrets where name = p_name;
   if v is null then perform vault.create_secret(p_value, p_name, 'LINE OA (bizops)');
   else perform vault.update_secret(v, p_value); end if;
 end $$;
 create or replace function public.line_vault_get(p_name text)
 returns text language sql stable security definer set search_path = public as $$
-  select decrypted_secret from vault.decrypted_secrets where name = p_name limit 1
+  select decrypted_secret from vault.decrypted_secrets where name = p_name and p_name like 'line\_%' limit 1
 $$;
 -- the dispatcher's shared secret (pg_net sends it, line-dispatch checks it): created once, never shown
 do $$ begin
@@ -288,6 +289,11 @@ revoke execute on function public.line_vault_put(text, text), public.line_vault_
   public.line_redeem_code(text, text, text, text), public.line_group_left(text), public.line_code_hash(text) from public, anon, authenticated;
 grant execute on function public.line_credentials_internal(), public.line_webhook_seen(text, text, text), public.line_redeem_code(text, text, text, text),
   public.line_group_left(text) to service_role;
+do $$ begin     -- the Vault helpers are internal even for the service role (it would otherwise read any LINE secret by name through the API)
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    revoke execute on function public.line_vault_put(text, text), public.line_vault_get(text), public.line_code_hash(text) from service_role;
+  end if;
+end $$;
 revoke execute on function public.line_admin_settings(), public.line_admin_save_settings(jsonb), public.line_admin_set_credentials(text, text),
   public.line_link_code(text), public.line_unlink(uuid), public.line_is_super(), public.line_require_super(text) from public, anon;
 grant execute on function public.line_admin_settings(), public.line_admin_save_settings(jsonb), public.line_admin_set_credentials(text, text),
@@ -304,19 +310,39 @@ alter table public.finance_payment_evidence add column if not exists confirmed_v
 create index if not exists finance_evidence_quickdup_idx on public.finance_payment_evidence (bank_account_id, date_trunc('minute', coalesce(transfer_at, confirmed_transfer_at) at time zone 'UTC'))
   where status in ('confirmed', 'verified');
 
--- B1 the duplicate rule without a reference: 'evidence' / 'receipt' when another payment matches, otherwise null
-create or replace function public.finance_quick_dup(p_amount numeric, p_bank_account uuid, p_transfer_at timestamptz, p_except uuid)
+-- B1 the duplicate rule by amount + receiving account + time: 'evidence' / 'receipt' / 'deposit' when another payment matches, otherwise null.
+--   The time matches within one minute either way (minute buckets), because one side may be a customer-given time that is a minute off.
+--   p_no_ref_only = the new payment HAS a bank reference: then only payments WITHOUT one can be the same transfer (two payments that both carry references are
+--   compared by reference, as before). Without this direction a transfer saved without a reference could be recorded again later with its reference.
+--   Rejected slips, reversed receipts and unverified deposits never count.
+create or replace function public.finance_quick_dup(p_amount numeric, p_bank_account uuid, p_transfer_at timestamptz, p_except uuid, p_no_ref_only boolean default false)
 returns text language sql stable security definer set search_path = public as $$
+  with w as (select date_trunc('minute', p_transfer_at at time zone 'UTC') as m)
   select coalesce(
-    (select 'evidence' from public.finance_payment_evidence x
+    (select 'evidence' from public.finance_payment_evidence x, w
       where x.id is distinct from p_except and x.status in ('confirmed', 'verified') and x.method = 'transfer'
         and x.bank_account_id is not distinct from p_bank_account
         and coalesce(x.verified_amount, x.confirmed_amount) = p_amount
-        and date_trunc('minute', coalesce(x.transfer_at, x.confirmed_transfer_at) at time zone 'UTC') = date_trunc('minute', p_transfer_at at time zone 'UTC') limit 1),
-    (select 'receipt' from public.finance_receipts r
-      where r.method = 'bank_transfer' and r.evidence_id is distinct from p_except and r.bank_account_id is not distinct from p_bank_account and r.amount = p_amount
-        and date_trunc('minute', r.received_at at time zone 'UTC') = date_trunc('minute', p_transfer_at at time zone 'UTC') limit 1))
+        and date_trunc('minute', coalesce(x.transfer_at, x.confirmed_transfer_at) at time zone 'UTC') between w.m - interval '1 minute' and w.m + interval '1 minute'
+        and (not p_no_ref_only or (x.confirmed_bank_ref is null and x.bank_trans_ref is null)) limit 1),
+    (select 'receipt' from public.finance_receipts r, w
+      where r.method = 'bank_transfer' and r.status = 'posted' and r.evidence_id is distinct from p_except and r.bank_account_id is not distinct from p_bank_account and r.amount = p_amount
+        and date_trunc('minute', r.received_at at time zone 'UTC') between w.m - interval '1 minute' and w.m + interval '1 minute'
+        and (not p_no_ref_only or r.bank_trans_ref is null) limit 1),
+    (select 'deposit' from public.finance_wallet_deposits d, w
+      where not p_no_ref_only and d.id is distinct from p_except and d.status = 'verified' and d.bank_account_id is not distinct from p_bank_account and d.verified_amount = p_amount
+        and date_trunc('minute', d.transfer_at at time zone 'UTC') between w.m - interval '1 minute' and w.m + interval '1 minute' limit 1))
 $$;
+-- a payment the person explicitly declared a different transfer (p_distinct): the core skips the rule for this transaction only
+create or replace function public.finance_dup_check(p_amount numeric, p_bank_account uuid, p_transfer_at timestamptz, p_except uuid, p_has_ref boolean)
+returns void language plpgsql stable security definer set search_path = public as $$
+begin
+  if current_setting('finance.dup_override', true) = 'on' then return; end if;
+  if public.finance_quick_dup(p_amount, p_bank_account, p_transfer_at, p_except, p_has_ref) is not null then
+    raise exception 'DUPLICATE_SUSPECT: a payment of % to the same account within a minute of this one is already recorded%; check the bank statement, and if these are two different transfers say so',
+      p_amount, case when p_has_ref then ' without a bank reference' else '' end using errcode = '23505';
+  end if;
+end $$;
 
 -- B2 the core: a null reference for a transfer is accepted only on the Confirm -> Post path (p_from_status = 'confirmed')
 create or replace function public.finance_verify_core(p_evidence uuid, p_amount numeric, p_bank_trans_ref text, p_transfer_at timestamptz,
@@ -342,6 +368,8 @@ begin
   if v_ref is not null and (exists (select 1 from public.finance_receipts where bank_trans_ref = v_ref) or exists (select 1 from public.finance_wallet_deposits where bank_trans_ref = v_ref and status = 'verified')) then
     raise exception 'Bank transaction % was already recorded (reused slip?)', v_ref using errcode = '23505'; end if;
   if p_transfer_at < i.issue_date::timestamptz - interval '1 day' then raise exception 'The transfer is older than the invoice'; end if;
+  -- LINE: the same transfer recorded twice, by amount + account + time (with a reference: against payments that have none), on EVERY path that records money
+  if not v_cash then perform public.finance_dup_check(p_amount, e.bank_account_id, p_transfer_at, e.id, v_ref is not null); end if;
 
   st := public.finance_invoice_state_raw(i.id);
   outstanding := (st ->> 'outstanding')::numeric;
@@ -387,8 +415,10 @@ begin
   return jsonb_build_object('result', result, 'receipt_no', rc.receipt_no, 'credited_to_wallet', v_excess, 'state', public.finance_invoice_state_raw(i.id));
 end $$;
 
--- B3 Confirm: the reference may be empty (LINE: changed lines marked)
-create or replace function public.finance_confirm_evidence(p_evidence uuid, p_amount numeric, p_bank_trans_ref text, p_transfer_at timestamptz, p_note text default null)
+-- B3 Confirm: the reference may be empty; p_distinct = the person checked the statement and says a suspected duplicate is a different transfer (LINE: changed lines marked)
+drop function if exists public.finance_confirm_evidence(uuid, numeric, text, timestamptz, text);
+create or replace function public.finance_confirm_evidence(p_evidence uuid, p_amount numeric, p_bank_trans_ref text, p_transfer_at timestamptz, p_note text default null,
+  p_distinct boolean default false)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare e public.finance_payment_evidence; i public.finance_invoices; v_ref text := nullif(trim(p_bank_trans_ref), ''); v_note text := nullif(trim(p_note), '');   -- LINE: '' is no reference
 begin
@@ -406,8 +436,12 @@ begin
   if i.status <> 'open' then raise exception 'The invoice is %', i.status; end if;
   if v_ref is not null and public.finance_ref_in_use(v_ref, e.id) is not null then                                           -- LINE: only with a reference
     raise exception 'Bank transaction % was already recorded (reused slip?)', v_ref using errcode = '23505'; end if;
-  if v_ref is null and public.finance_quick_dup(p_amount, e.bank_account_id, p_transfer_at, e.id) is not null then            -- LINE: the rule without a reference
-    raise exception 'DUPLICATE_SUSPECT: a payment of % to the same account at the same minute was already recorded; enter the bank reference to continue', p_amount using errcode = '23505'; end if;
+  if coalesce(p_distinct, false) then                                                                                          -- LINE: the duplicate rule, both directions
+    if public.finance_quick_dup(p_amount, e.bank_account_id, p_transfer_at, e.id, v_ref is not null) is not null then
+      perform public.finance_log('evidence', e.id, 'evidence.dup_override', jsonb_build_object('amount', p_amount, 'trans_ref', v_ref, 'at', p_transfer_at)); end if;
+  else
+    perform public.finance_dup_check(p_amount, e.bank_account_id, p_transfer_at, e.id, v_ref is not null);
+  end if;
   if p_transfer_at < i.issue_date::timestamptz - interval '1 day' then raise exception 'The transfer is older than the invoice'; end if;
   update public.finance_payment_evidence set status = 'confirmed', confirmed_by = auth.uid(), confirmed_at = now(), confirmed_amount = p_amount, confirmed_bank_ref = v_ref,
     confirmed_transfer_at = p_transfer_at, confirm_note = v_note, confirmed_via = 'web' where id = e.id;                    -- LINE: confirmed_via
@@ -415,9 +449,10 @@ begin
   return jsonb_build_object('status', 'confirmed', 'evidence_id', e.id, 'amount', p_amount);
 end $$;
 
--- B4 Post: an optional reference fills in a missing one; with none at all the duplicate rule runs again (hours may have passed since Confirm)
+-- B4 Post: an optional reference fills in a missing one; the duplicate rule runs again in the core (hours may have passed since Confirm); p_distinct as in Confirm
 drop function if exists public.finance_post_evidence(uuid, text);
-create or replace function public.finance_post_evidence(p_evidence uuid, p_note text default null, p_bank_ref text default null)
+drop function if exists public.finance_post_evidence(uuid, text, text);
+create or replace function public.finance_post_evidence(p_evidence uuid, p_note text default null, p_bank_ref text default null, p_distinct boolean default false)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare e public.finance_payment_evidence; i public.finance_invoices; rc public.finance_receipts; v jsonb; v_add text := nullif(trim(p_bank_ref), '');   -- LINE: p_bank_ref
 begin
@@ -447,10 +482,14 @@ begin
   -- another slip meanwhile, typed differently (the core only compares exactly). Look again, in the normalised form, before any money is recorded.
   if e.method = 'transfer' and e.confirmed_bank_ref is not null and public.finance_ref_in_use(e.confirmed_bank_ref, e.id) is not null then
     raise exception 'Bank transaction % was already recorded (reused slip?)', e.confirmed_bank_ref using errcode = '23505'; end if;
-  -- LINE: no reference at all: the duplicate rule, again
-  if e.method = 'transfer' and e.confirmed_bank_ref is null and public.finance_quick_dup(e.confirmed_amount, e.bank_account_id, e.confirmed_transfer_at, e.id) is not null then
-    raise exception 'DUPLICATE_SUSPECT: a payment of % to the same account at the same minute was already recorded; enter the bank reference to continue', e.confirmed_amount using errcode = '23505'; end if;
+  -- LINE: the duplicate rule runs in the core; a person who says it is a different transfer lets this Post through (and it is logged)
+  if coalesce(p_distinct, false) and e.method = 'transfer' then
+    perform set_config('finance.dup_override', 'on', true);
+    if public.finance_quick_dup(e.confirmed_amount, e.bank_account_id, e.confirmed_transfer_at, e.id, e.confirmed_bank_ref is not null) is not null then
+      perform public.finance_log('evidence', e.id, 'evidence.dup_override', jsonb_build_object('amount', e.confirmed_amount, 'trans_ref', e.confirmed_bank_ref, 'at', e.confirmed_transfer_at)); end if;
+  end if;
   v := public.finance_verify_core(e.id, e.confirmed_amount, case when e.method = 'cash' then null else e.confirmed_bank_ref end, e.confirmed_transfer_at, p_note, 'staff', 'confirmed', e.method);
+  perform set_config('finance.dup_override', '', true);                                                                          -- LINE: the override covers this Post only
   perform public.finance_log('evidence', e.id, 'evidence.post', jsonb_build_object('receipt_no', v ->> 'receipt_no', 'amount', e.confirmed_amount, 'note', nullif(trim(p_note), '')));
   return v || jsonb_build_object('replay', false);
 end $$;
@@ -468,8 +507,7 @@ begin
   if e.method <> 'transfer' or e.claimed_transfer_at is null then raise exception 'NOT_ELIGIBLE: a transfer with its transfer time is needed'; end if;
   select * into i from public.finance_invoices where id = e.invoice_id for update;
   if i.status <> 'open' then raise exception 'The invoice is %', i.status; end if;
-  if public.finance_quick_dup(e.claimed_amount, e.bank_account_id, e.claimed_transfer_at, e.id) is not null then
-    raise exception 'DUPLICATE_SUSPECT: a payment of % to the same account at the same minute was already recorded', e.claimed_amount using errcode = '23505'; end if;
+  perform public.finance_dup_check(e.claimed_amount, e.bank_account_id, e.claimed_transfer_at, e.id, false);     -- no override from LINE: a suspect goes to the web
   update public.finance_payment_evidence set status = 'confirmed', confirmed_by = auth.uid(), confirmed_at = now(), confirmed_amount = e.claimed_amount, confirmed_bank_ref = null,
     confirmed_transfer_at = e.claimed_transfer_at, confirm_note = 'LINE quick approve', confirmed_via = 'line_quick' where id = e.id;
   perform public.finance_log('evidence', e.id, 'evidence.confirm', jsonb_build_object('amount', e.claimed_amount, 'claimed', e.claimed_amount, 'trans_ref', null,
@@ -562,14 +600,45 @@ begin
   return v_res;
 end $$;
 
--- B7 grants: the 3-argument Post gets the grant the 2-argument one had; the duplicate rule and the quick confirm are internal
-revoke execute on function public.finance_post_evidence(uuid, text, text) from public, anon;
-grant execute on function public.finance_post_evidence(uuid, text, text) to authenticated;
-revoke execute on function public.finance_quick_dup(numeric, uuid, timestamptz, uuid), public.finance_quick_confirm_evidence(uuid) from public, anon, authenticated;
+-- B6b a wallet top-up recorded WITH a reference must not be the transfer an order payment was already recorded with WITHOUT one (copied from
+-- 20261115200000_wallet_payments.sql, changed only where marked)
+create or replace function public.finance_deposit_verify(p_deposit uuid, p_amount numeric, p_bank_trans_ref text, p_transfer_at timestamptz, p_note text default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_d public.finance_wallet_deposits; v_t public.finance_wallet_transactions; v_bank public.finance_bank_accounts; v_cust public.finance_customers;
+begin
+  perform public.finance_require('verify', 'verify deposits');
+  if p_amount is null or p_amount <= 0 or p_amount <> round(p_amount, 2) then raise exception 'Enter the amount shown by the bank'; end if;
+  if coalesce(trim(p_bank_trans_ref), '') = '' then raise exception 'The bank transaction reference is required'; end if;
+  if p_transfer_at is null then raise exception 'The transfer date and time are required'; end if;
+  select * into v_d from public.finance_wallet_deposits where id = p_deposit for update;
+  if not found then raise exception 'Deposit not found'; end if;
+  if v_d.status not in ('submitted', 'under_review') then raise exception 'DEPOSIT_NOT_REVIEWABLE: this deposit is %', v_d.status; end if;
+  if exists (select 1 from public.finance_receipts where bank_trans_ref = trim(p_bank_trans_ref)) or exists (select 1 from public.finance_wallet_deposits where bank_trans_ref = trim(p_bank_trans_ref) and status = 'verified') then
+    raise exception 'Bank transaction % was already recorded (reused slip?)', trim(p_bank_trans_ref) using errcode = '23505'; end if;
+  perform public.finance_dup_check(p_amount, v_d.bank_account_id, p_transfer_at, v_d.id, true);                   -- LINE: against order payments recorded without a reference
+  if p_transfer_at < v_d.created_at - interval '1 day' then raise exception 'The transfer is older than the deposit request'; end if;
+  select * into v_bank from public.finance_bank_accounts where id = v_d.bank_account_id;
+  select * into v_cust from public.finance_customers where id = v_d.customer_id;
+  v_t := public.finance_wallet_apply(v_d.customer_id, 'DEPOSIT', 'credit', p_amount, 'DEP:' || v_d.id::text, 'deposit', v_d.id, v_d.deposit_no, 'bank_transfer', v_d.bank_account_id, 'verified',
+                                     v_cust.profile_id, auth.uid(), 'Verified bank transfer ' || trim(p_bank_trans_ref), null);
+  update public.finance_wallet_deposits set status = 'verified', verified_amount = p_amount, bank_trans_ref = trim(p_bank_trans_ref), transfer_at = p_transfer_at,
+    review_note = nullif(btrim(p_note), ''), reviewed_by = auth.uid(), reviewed_at = now(), wallet_txn_id = v_t.id where id = p_deposit returning * into v_d;
+  perform public.finance_gl_enqueue('WALLET_DEPOSIT', 'wallet_txn', v_t.id, v_t.txn_no, v_d.customer_id, p_amount,
+    jsonb_build_array(jsonb_build_object('side', 'dr', 'role', 'bank', 'amount', p_amount, 'bank_account_id', v_d.bank_account_id),
+                      jsonb_build_object('side', 'cr', 'role', 'customer_credit', 'amount', p_amount, 'wallet', true)));
+  perform public.finance_log('deposit', v_d.id, 'deposit.verify', jsonb_build_object('no', v_d.deposit_no, 'claimed', v_d.amount, 'verified', p_amount, 'trans_ref', trim(p_bank_trans_ref), 'txn', v_t.txn_no));
+  return jsonb_build_object('deposit', to_jsonb(v_d), 'txn_no', v_t.txn_no, 'balance', v_t.balance_after);
+end $$;
+
+-- B7 grants: the new Confirm and Post signatures get the grants the old ones had; the duplicate rule and the quick confirm are internal
+revoke execute on function public.finance_confirm_evidence(uuid, numeric, text, timestamptz, text, boolean), public.finance_post_evidence(uuid, text, text, boolean) from public, anon;
+grant execute on function public.finance_confirm_evidence(uuid, numeric, text, timestamptz, text, boolean), public.finance_post_evidence(uuid, text, text, boolean) to authenticated;
+revoke execute on function public.finance_quick_dup(numeric, uuid, timestamptz, uuid, boolean), public.finance_dup_check(numeric, uuid, timestamptz, uuid, boolean),
+  public.finance_quick_confirm_evidence(uuid) from public, anon, authenticated;
 do $$ begin
   if exists (select 1 from pg_roles where rolname = 'service_role') then
-    revoke execute on function public.finance_verify_core(uuid, numeric, text, timestamptz, text, text, text, text), public.finance_quick_dup(numeric, uuid, timestamptz, uuid),
-      public.finance_quick_confirm_evidence(uuid) from service_role;
+    revoke execute on function public.finance_verify_core(uuid, numeric, text, timestamptz, text, text, text, text), public.finance_quick_dup(numeric, uuid, timestamptz, uuid, boolean),
+      public.finance_dup_check(numeric, uuid, timestamptz, uuid, boolean), public.finance_quick_confirm_evidence(uuid) from service_role;
   end if;
 end $$;
 
@@ -582,7 +651,20 @@ $$;
 create or replace function public.line_last_action(p_order uuid)
 returns jsonb language sql stable security definer set search_path = public as $$
   select jsonb_build_object('by', coalesce(public.line_person(e.actor), e.actor_email, 'ระบบ'), 'at', e.at)
-    from public.shop_events e where e.entity = 'order' and e.entity_id = p_order::text and e.action in ('order.status', 'order.cancel') order by e.id desc limit 1
+    from public.shop_events e where e.entity = 'order' and e.entity_id = p_order::text
+      and ((e.action = 'order.status' and e.detail ->> 'from' = 'new') or e.action = 'order.cancel')   -- who took it out of "new" (not who moved it on later)
+    order by e.id desc limit 1
+$$;
+-- the payment of an order already handled on the web (confirmed, posted or rejected) and by whom, for a quick-approve tap that comes too late
+create or replace function public.line_slip_done(p_order uuid)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('result', 'slip_done', 'order_no', o.order_no, 'status', e.status,
+           'by', coalesce(public.line_person(case e.status when 'verified' then coalesce(e.posted_by, e.reviewed_by) when 'confirmed' then e.confirmed_by else e.reviewed_by end), 'ระบบ'),
+           'at', case e.status when 'verified' then coalesce(e.posted_at, e.reviewed_at) when 'confirmed' then e.confirmed_at else e.reviewed_at end)
+    from public.shop_orders o join public.finance_payment_evidence e on e.invoice_id = o.invoice_id
+   where o.id = p_order and e.status in ('confirmed', 'verified', 'rejected')
+     and not exists (select 1 from public.finance_payment_evidence s where s.invoice_id = o.invoice_id and s.status = 'submitted')
+   order by coalesce(e.posted_at, e.confirmed_at, e.reviewed_at, e.created_at) desc limit 1
 $$;
 
 -- C2 the order-level guards of quick approve (the tapper's role is checked in line_act). why: QUICK_OFF | NOT_NEW | NO_SLIP | MANY_SLIPS | NOT_TRANSFER |
@@ -673,15 +755,19 @@ begin
   begin
     if p_action = 'accept' then
       perform public.shop_admin_set_status(o.id, 'confirmed');
+      perform public.shop_log('order', o.id::text, 'order.line', jsonb_build_object('via', 'line', 'action', 'accept'));
       return jsonb_build_object('result', 'done', 'action', 'accept', 'order_no', o.order_no, 'by', v_name, 'at', now());
     elsif p_action in ('quick_ask', 'quick_confirm') then
       if not public.finance_can('verify') then return jsonb_build_object('result', 'not_allowed', 'why', 'not_verifier'); end if;
+      q := public.line_slip_done(o.id);                                                  -- the payment was already handled on the web: say by whom
+      if q is not null then return q; end if;
       q := public.line_quick_check(o.id);
       if not (q ->> 'ok')::boolean then return jsonb_build_object('result', 'refused', 'code', q ->> 'why'); end if;
       if p_action = 'quick_ask' then
         return jsonb_build_object('result', 'ask_quick', 'order_no', o.order_no, 'amount', q -> 'amount', 'bank', q ->> 'bank', 'transfer_at', q ->> 'transfer_at'); end if;
       perform public.finance_quick_confirm_evidence((q ->> 'evidence_id')::uuid);
       perform public.shop_admin_set_status(o.id, 'confirmed');
+      perform public.shop_log('order', o.id::text, 'order.line', jsonb_build_object('via', 'line', 'action', 'quick_confirm', 'evidence', q ->> 'evidence_id', 'amount', q -> 'amount'));
       return jsonb_build_object('result', 'done', 'action', 'quick_confirm', 'order_no', o.order_no, 'by', v_name, 'at', now(), 'amount', q -> 'amount');
     else -- reject
       if p_reason is null or p_reason < 0 or p_reason >= coalesce(array_length(s.reject_reasons, 1), 0) then
@@ -694,10 +780,15 @@ begin
         perform public.finance_reject_evidence(ev, v_reason);
       end loop;
       perform public.shop_admin_set_status(o.id, 'cancelled', v_reason);
+      perform public.shop_log('order', o.id::text, 'order.line', jsonb_build_object('via', 'line', 'action', 'reject', 'reason', v_reason));
       return jsonb_build_object('result', 'done', 'action', 'reject', 'order_no', o.order_no, 'by', v_name, 'at', now(), 'reason', v_reason);
     end if;
   exception when others then                                                          -- everything this block did is undone (a sub-transaction)
     get stacked diagnostics m = message_text, st = returned_sqlstate;
+    if m like 'This slip is already %' then                                              -- confirmed on the web between the check and the tap
+      q := public.line_slip_done(o.id);
+      if q is not null then return q; end if;
+    end if;
     return jsonb_build_object('result', case when st = '42501' then 'not_allowed' else 'refused' end,
       'code', case when m like 'PAYMENT_RECORDED%' then 'PAYMENT_RECORDED' when m like 'DUPLICATE_SUSPECT%' then 'DUPLICATE_SUSPECT' when m like 'PAYMENT_REQUIRED%' then 'PAYMENT_REQUIRED'
                    when st = '42501' then 'NOT_ALLOWED' else 'ERROR' end,
@@ -724,9 +815,14 @@ begin
     on conflict do nothing;
 end $$;
 
+-- Every LINE trigger is guarded: whatever goes wrong in LINE (a broken setting, Vault, pg_net) is a warning in the log, never a failed order, slip or status change.
 create or replace function public.line_trg_order_new()
 returns trigger language plpgsql security definer set search_path = public as $$
-begin perform public.line_enqueue('order_new', new.id, null); return null; end $$;
+begin
+  begin perform public.line_enqueue('order_new', new.id, null);
+  exception when others then raise warning 'LINE notification skipped (order %): %', new.order_no, sqlerrm; end;
+  return null;
+end $$;
 drop trigger if exists line_order_new on public.shop_orders;
 create trigger line_order_new after insert on public.shop_orders for each row execute function public.line_trg_order_new();
 
@@ -734,10 +830,12 @@ create or replace function public.line_trg_order_status()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare v_payload jsonb;
 begin
-  v_payload := jsonb_build_object('order_no', new.order_no, 'status', new.status, 'by', coalesce(public.line_person(auth.uid()), 'ระบบ'), 'at', now(),
-    'reason', case when new.status = 'cancelled' then new.cancel_reason end);
-  if current_setting('line.via_line', true) is distinct from 'on' then perform public.line_enqueue('order_status', new.id, null, v_payload); end if;
-  perform public.line_enqueue('customer_notify', new.id, null, v_payload);
+  begin
+    v_payload := jsonb_build_object('order_no', new.order_no, 'status', new.status, 'by', coalesce(public.line_person(auth.uid()), 'ระบบ'), 'at', now(),
+      'reason', case when new.status = 'cancelled' then new.cancel_reason end);
+    if current_setting('line.via_line', true) is distinct from 'on' then perform public.line_enqueue('order_status', new.id, null, v_payload); end if;
+    perform public.line_enqueue('customer_notify', new.id, null, v_payload);
+  exception when others then raise warning 'LINE notification skipped (order %): %', new.order_no, sqlerrm; end;
   return null;
 end $$;
 drop trigger if exists line_order_status on public.shop_orders;
@@ -748,14 +846,17 @@ create or replace function public.line_trg_evidence()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare o public.shop_orders;
 begin
-  select * into o from public.shop_orders where invoice_id = new.invoice_id;
-  if not found then return null; end if;
-  if tg_op = 'INSERT' then
-    if new.source = 'customer_slip' and o.created_at <> now() then perform public.line_enqueue('slip_new', o.id, new.id); end if;   -- same transaction as the order: the card covers it
-  elsif new.status in ('rejected', 'more_evidence') and current_setting('line.via_line', true) is distinct from 'on' then
-    perform public.line_enqueue('payment_issue', o.id, new.id, jsonb_build_object('order_no', o.order_no, 'kind', new.status,
-      'reason', case when new.status = 'rejected' then new.reject_reason else new.request_message end));
-  end if;
+  begin
+    select * into o from public.shop_orders where invoice_id = new.invoice_id;
+    if not found then return null; end if;
+    if tg_op = 'INSERT' then
+      if new.source = 'customer_slip' and o.created_at <> now() then perform public.line_enqueue('slip_new', o.id, new.id); end if;   -- same transaction as the order: the card covers it
+    elsif new.status in ('rejected', 'more_evidence') and current_setting('line.via_line', true) is distinct from 'on'
+          and new.reject_reason is distinct from 'Replaced by a newer slip' then                                   -- a replaced slip is not a problem: the new slip is announced
+      perform public.line_enqueue('payment_issue', o.id, new.id, jsonb_build_object('order_no', o.order_no, 'kind', new.status,
+        'reason', case when new.status = 'rejected' then new.reject_reason else new.request_message end));
+    end if;
+  exception when others then raise warning 'LINE notification skipped (slip %): %', new.id, sqlerrm; end;
   return null;
 end $$;
 drop trigger if exists line_evidence_new on public.finance_payment_evidence;
@@ -768,10 +869,12 @@ create or replace function public.line_trg_analysis()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare o public.shop_orders;
 begin
-  select so.* into o from public.finance_payment_evidence e join public.shop_orders so on so.invoice_id = e.invoice_id where e.id = new.evidence_id;
-  if found then
-    perform public.line_enqueue('payment_issue', o.id, new.evidence_id, jsonb_build_object('order_no', o.order_no, 'kind', 'ai', 'reason', new.result));
-  end if;
+  begin
+    select so.* into o from public.finance_payment_evidence e join public.shop_orders so on so.invoice_id = e.invoice_id where e.id = new.evidence_id;
+    if found then
+      perform public.line_enqueue('payment_issue', o.id, new.evidence_id, jsonb_build_object('order_no', o.order_no, 'kind', 'ai', 'reason', new.result));
+    end if;
+  exception when others then raise warning 'LINE notification skipped (analysis %): %', new.id, sqlerrm; end;
   return null;
 end $$;
 drop trigger if exists line_analysis_issue on public.finance_slip_analysis;
@@ -822,7 +925,12 @@ begin
     headers := jsonb_build_object('Content-Type', 'application/json', 'x-line-dispatch-secret', public.line_vault_get('line_dispatch_secret')), timeout_milliseconds := 10000);
 end $$;
 create or replace function public.line_trg_outbox_kick()
-returns trigger language plpgsql security definer set search_path = public as $$ begin perform public.line_kick(); return null; end $$;
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  begin perform public.line_kick();
+  exception when others then raise warning 'LINE dispatcher not kicked: %', sqlerrm; end;        -- the minute job sends it anyway
+  return null;
+end $$;
 drop trigger if exists line_outbox_kick on public.line_outbox;
 create trigger line_outbox_kick after insert on public.line_outbox for each statement execute function public.line_trg_outbox_kick();
 do $$ begin
@@ -854,7 +962,7 @@ begin
 end $$;
 
 -- C8 grants
-revoke execute on function public.line_person(uuid), public.line_last_action(uuid), public.line_quick_check(uuid), public.line_card_data(uuid),
+revoke execute on function public.line_person(uuid), public.line_last_action(uuid), public.line_slip_done(uuid), public.line_quick_check(uuid), public.line_card_data(uuid),
   public.line_act(text, text, uuid, uuid, integer, text), public.line_enqueue(text, uuid, uuid, jsonb), public.line_claim_outbox(integer),
   public.line_complete_outbox(uuid, boolean, boolean, text, text), public.line_kick(), public.line_trg_order_new(), public.line_trg_order_status(),
   public.line_trg_evidence(), public.line_trg_analysis(), public.line_trg_outbox_kick() from public, anon, authenticated;
