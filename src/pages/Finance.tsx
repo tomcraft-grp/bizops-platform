@@ -3,6 +3,7 @@
 // the shop's own QR: the server checks it is a real Thai QR, and every customer QR is generated server-side from it
 // with the exact outstanding amount.
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, QrCode, Upload } from 'lucide-react';
 import { toast, useLang } from '../domain/store';
 import { t as tl } from '../lib/i18n';
@@ -22,6 +23,9 @@ export default function Finance() {
   const [role, setRole] = useState<FinanceRole | null | undefined>(undefined);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('slips');
+  // a link from LINE: #/payment-review?evidence=<id> opens that slip on "Slips to check"
+  const [params] = useSearchParams();
+  const linkedEvidence = params.get('evidence');
   const [counts, setCounts] = useState({ slips: 0, review: 0 });
   const refreshCounts = useCallback(async () => {
     try {
@@ -55,7 +59,7 @@ export default function Finance() {
         ]} />
         <div style={{ padding: 14 }}>
           {/* Not dark: this tab, and "Record payment" below, appear as soon as the app is deployed. The two settings only switch the AI reader and the manager-only Post of transfers (docs/slip-review.md, "What is dark and what is not"). */}
-          {tab === 'slips' && <SlipReview role={role} onChanged={refreshCounts} />}
+          {tab === 'slips' && <SlipReview role={role} onChanged={refreshCounts} initialOpenId={linkedEvidence} />}
           {tab === 'review' && <OverpaymentQueue role={role} onChanged={refreshCounts} />}
           {tab === 'invoices' && <Invoices role={role} onChanged={refreshCounts} />}
           {tab === 'account' && <AccountPanel role={role} />}

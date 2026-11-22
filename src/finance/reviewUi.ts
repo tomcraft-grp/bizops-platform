@@ -196,6 +196,7 @@ const CODES: Record<string, string> = {
   INVALID_AMOUNT: 'Enter the amount in baht and satang (at most 2 decimals).',
   FILE_NOT_ALLOWED: 'A cash payment has no slip file.',
   BANK_NOT_AVAILABLE: 'This bank account is not available. Choose another one.',
+  DUPLICATE_SUSPECT: 'Possible duplicate: a payment of the same amount to the same account, within a minute, is already recorded. Check the bank statement.',
 };
 const EXCEEDS = 'That is more than can still be added to this invoice ({n} left, counting payments confirmed but not yet posted).';
 const EXCEEDS_NO_N = 'That is more than can still be added to this invoice (counting payments confirmed but not yet posted).';

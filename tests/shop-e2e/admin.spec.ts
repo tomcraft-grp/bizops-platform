@@ -17,6 +17,15 @@ const seed = (fake: FakeShop, key: string, fulfilment = 'delivery', qty = 2) => 
   return r.order.order_no;
 };
 
+test('a link from LINE (#/shop-admin?order=<id>) opens that order', async ({ page }) => {
+  const fake = new FakeShop(); const no = seed(fake, 'admin-order-deeplink'); const id = fake.orders.find((o) => o.order_no === no)!.id;
+  fake.profile.role = 'SUPER_ADMIN'; fake.profile.display_name = 'Staff';
+  await fake.install(page);
+  await page.addInitScript(() => { try { localStorage.setItem('bizops.lang', 'en'); } catch { /* ignore */ } });
+  await page.goto(`/#/shop-admin?order=${id}`);
+  await expect(page.locator('aside.drawer')).toContainText(no);
+});
+
 test.describe('orders', () => {
   test('lists customer orders, opens one and walks a paid order through to shipped', async ({ page }) => {
     const fake = new FakeShop(); const no = seed(fake, 'admin-order-001'); await openAdmin(page, fake);

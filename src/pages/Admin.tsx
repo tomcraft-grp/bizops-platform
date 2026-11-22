@@ -12,6 +12,7 @@ import { Gate } from '../ui/Shell';
 import { audit } from '../domain/core';
 import { t as tl } from '../lib/i18n';
 import { BRAND } from '../brand';
+import { LineSettingsCard } from './LineSettings';
 
 // ================= Team & access =================
 export function Team() {
@@ -150,6 +151,7 @@ function SettingsInner() {
           </div>
         </Card>
       </div>
+      <div className="mt16"><LineSettingsCard /></div>
     </>
   );
 }

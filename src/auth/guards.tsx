@@ -9,11 +9,14 @@ function Splash() {
   return <div className="auth-shell"><div className="spinner" /></div>;
 }
 
+/** Where to go back to after signing in: the whole link, query included (a link from LINE such as #/shop-admin?order=<id> must open that order). */
+export const returnTo = (loc: { pathname: string; search: string }) => loc.pathname + (loc.search ?? '');
+
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { session, loading } = useAuth();
   const loc = useLocation();
   if (loading) return <Splash />;
-  if (!session) return <Navigate to="/login" state={{ from: loc.pathname }} replace />;
+  if (!session) return <Navigate to="/login" state={{ from: returnTo(loc) }} replace />;
   return <>{children}</>;
 }
 

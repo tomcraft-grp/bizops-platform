@@ -6,6 +6,8 @@ Migration `supabase/migrations/20261120100000_slip_review.sql`, rollback `supaba
 
 **Status at the time of writing (2026-11-20): built and tested on branch `feat/slip-review-eod`, NOT applied to the live database, NOT deployed.** The AI and the database behaviour ship dark (two switches, both off), but **the staff screens do not**: they change the moment the app is deployed, whatever the switches say. Read the next section before deploying. The Anthropic request was never made for real (no API key was available), so the first real call is part of the go-live checklist.
 
+**Change coming with [line-notifications.md](line-notifications.md) (migration `20261122140000`, owner's decision 2026-11-22):** the bank reference becomes **optional** at Confirm and at Post. With a reference, every reuse check below still applies. In addition, on every path that records money, a payment with the same amount, to the same receiving account, within one minute of a recorded payment is refused as a possible duplicate (`DUPLICATE_SUSPECT`): without a reference it is compared with all payments and verified wallet top-ups, with a reference only with payments that have none. After checking the statement a person can answer "two different transfers" (recorded as `evidence.dup_override`). Post may add the reference from the bank statement. Payments confirmed from LINE ("quick approve") are marked **อนุมัติด่วนจาก LINE** and payments without any reference **ไม่มีเลขอ้างอิง** on the dashboard, so the end-of-day check can focus on them. The legacy one-step verify still requires a reference.
+
 ## What is dark and what is not
 
 **Dark (nothing is different until a manager switches it on, `ai_review_enabled` and `post_requires_manager` both off):**
