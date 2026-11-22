@@ -9,6 +9,7 @@ import { promptPayPayload } from '../../src/lib/promptpay';
 import { FakeWallet, NOT_HANDLED } from './fakeWallet';
 import { FakeReview } from './fakeReview';
 import { FakeRewards } from './fakeRewards';
+import { FakeLine } from './fakeLine';
 
 export const USER_ID = '11111111-1111-4111-8111-111111111111';
 const HOST = 'hlvravynjalculvplrxc.supabase.co';
@@ -42,6 +43,8 @@ export class FakeShop {
   rv = new FakeReview(this);
   /** points, per-bill board picks and the event boards (fakeRewards.ts) */
   rw = new FakeRewards(this);
+  /** the LINE notifications settings (fakeLine.ts) */
+  ln = new FakeLine(this);
   private fail = new Map<string, number>();
   private drop = new Set<string>();
   private seq = 0;
@@ -194,7 +197,7 @@ export class FakeShop {
       }
       case 'finance_role': return this.w.role;
       case 'finance_staff': return null;
-      default: { const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
+      default: { const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const ln = this.ln.rpc(fn, a); if (ln !== NOT_HANDLED) return ln; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
     }
   }
 
@@ -352,6 +355,7 @@ export class FakeShop {
         try { body = JSON.parse(req.postData() || '{}') as Record<string, unknown>; } catch { /* no body */ }
         const name = p.slice('/functions/v1/'.length);
         this.invokes.push({ name, body });
+        if (name === 'line-dispatch') return json(route, this.ln.test());
         if (name !== 'slip-analyze') return json(route, { error: `Unknown function ${name}` }, 404);
         const answer = this.rv.analyze(body);                                          // the staff dashboard specs read this record too
         if (this.invokeMode === 'hang') await this.gate;                               // never answers (until the test opens the gate)
