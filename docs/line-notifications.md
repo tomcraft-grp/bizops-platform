@@ -5,7 +5,7 @@ Design: `docs/superpowers/specs/2026-11-22-line-order-notifications-design.md`; 
 Migration `supabase/migrations/20261122140000_line_order_notifications.sql`, rollback `supabase/rollbacks/20261122140000_line_order_notifications_down.sql`,
 Edge Functions `supabase/functions/line-webhook/` and `supabase/functions/line-dispatch/` (shared code in `supabase/functions/_shared/`).
 
-**Status (2026-11-22): built and tested on branch `feat/line-order-notifications`. NOT applied to the live database, NOT deployed, NOT published.**
+**Status (2026-11-23): LIVE but DARK.** Migration `20261122140000` applied to the live project (LINE switched off, quick approve off, outbox empty); Edge Functions `line-webhook` and `line-dispatch` deployed (JWT verification off, smoke-tested: 503 without a channel secret, 401 without the dispatch secret, 403 for a test call that is not a SUPER_ADMIN's); merged into `main` (48aa648), dist rebuilt, `gh-pages` deployed as `895da9d` (the page serves build `0.1.0+48aa648`; previous deploy and app rollback target: `gh-pages` `533a1f4`). **The optional bank reference and the duplicate rule are live now.** What remains is the owner's LINE setup ("Setting up LINE" and "Go-live" steps 4–7 below).
 
 ## What it does
 
