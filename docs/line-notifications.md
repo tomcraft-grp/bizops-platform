@@ -26,7 +26,7 @@ Edge Functions `supabase/functions/line-webhook/` and `supabase/functions/line-d
 
 ## Setting up LINE (once)
 
-1. **LINE Developers console** (developers.line.biz) → the **same provider** that holds the existing LINE Login channel `2012605932` (the LIFF app). Create a **Messaging API** channel there (this creates the LINE Official Account). Using the same provider keeps a customer's LINE user ID identical in both channels, which the optional customer message needs.
+1. A Messaging API channel can no longer be created in the LINE Developers console directly. First note which **provider** holds the existing LINE Login channel `2012605932` (the LIFF app) in the LINE Developers console. Then create (or pick) the shop's **LINE Official Account** in the LINE Official Account Manager (manager.line.biz) → *Settings* → *Messaging API* → **Enable Messaging API** → choose **that same provider** (it cannot be changed later). This creates the Messaging API channel. Using the same provider keeps a customer's LINE user ID identical in both channels, which the optional customer message needs.
 2. In the Messaging API channel:
    * **Channel secret** (tab *Basic settings*) and a **long-lived channel access token** (tab *Messaging API* → *Issue*). Keep both private.
    * **Webhook URL**: `https://hlvravynjalculvplrxc.supabase.co/functions/v1/line-webhook`, then **Use webhook: on**. (*Verify* works only once the function is deployed and the secret is saved.)
