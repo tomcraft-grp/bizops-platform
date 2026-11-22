@@ -16,6 +16,7 @@ import Loyalty from './pages/Loyalty';
 import Promotions from './pages/Promotions';
 import Events from './pages/Events';
 import Products from './pages/Products';
+import Categories from './pages/Categories';
 import Inventory from './pages/Inventory';
 import Purchasing from './pages/Purchasing';
 import Production from './pages/Production';
@@ -114,6 +115,7 @@ export default function App() {
             <Route path="promotions" element={<G perm="promotions:view"><Promotions /></G>} />
             <Route path="events" element={<G perm="events:view"><Events /></G>} />
             <Route path="products" element={<G perm="catalog:view"><Products /></G>} />
+            <Route path="categories" element={<G perm="catalog:view"><Categories /></G>} />
             <Route path="inventory" element={<G perm="inventory:view"><Inventory /></G>} />
             <Route path="purchasing" element={<G perm="purchasing:view"><Purchasing /></G>} />
             <Route path="production" element={<G perm="production:view"><Production /></G>} />

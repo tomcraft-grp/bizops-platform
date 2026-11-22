@@ -1,7 +1,7 @@
 // Record a payment at the back office: a bank transfer found in the statement, or cash received at the shop. It is saved already confirmed (by the person who typed it)
 // and still has to be posted; it can never be more than the invoice can still take, which the database checks again. A transfer needs its bank and reference and may carry
 // the slip file; cash needs a note saying where it was received. Nothing here is pre-filled by the AI and nothing is sent until the person presses the button.
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast, useLang } from '../domain/store';
 import { t as tl } from '../lib/i18n';
 import { money } from '../lib/util';
@@ -37,12 +37,14 @@ export default function RecordPayment({ target, onClose, onDone }: { target: Rec
   const sentAt = fromLocalInput(when);                                      // typed as Bangkok time, sent with an explicit +07:00
   const future = isFutureInput(when);                                       // the database allows 10 minutes ahead; more is a typo
   const valid = amountOk && sentAt != null && !future && note.trim().length >= 3 && (cash || (banksReady && refLen(ref) >= 4 && (banks.length === 0 || !!bankId)));
+  // the same filled-in form keeps its request key: a double click or a retry after a lost answer records the payment once; changing a field makes it a new request
+  const key = useMemo(() => crypto.randomUUID(), [target.invoiceId, method, amount, when, ref, bankId]); // eslint-disable-line react-hooks/exhaustive-deps
   const close = () => { if (!busy) onClose(); };                            // Esc, the X and a click outside do nothing while the request runs
 
   const save = async () => {
     setBusy(true);
     try {
-      await review.recordPayment({ invoiceId: target.invoiceId, method, amount: amt, receivedAt: sentAt!, bankRef: ref.trim(), bankAccountId: bankId || null, note: note.trim(), file: cash ? null : file });
+      await review.recordPayment({ invoiceId: target.invoiceId, method, amount: amt, receivedAt: sentAt!, bankRef: ref.trim(), bankAccountId: bankId || null, note: note.trim(), file: cash ? null : file, key });
       toast('success', tl(lang, 'Payment recorded. It is confirmed and waits to be posted.'));
       onDone();
     } catch (e) { toast('error', reviewErrorText(lang, e)); } finally { setBusy(false); }

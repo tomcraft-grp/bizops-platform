@@ -18,6 +18,21 @@ import { useAuth } from '../auth/AuthProvider';
 import { DEMO_SEED } from '../domain/demo';
 import { BrandMark } from './Brand';
 import { BRAND } from '../brand';
+import { listNotifications } from '../lib/feedbackApi';
+import { useOtherTabs } from './tabGuard';
+
+/** Unread feedback notifications of the signed-in person (status changes and replies on issues they reported or handle), checked every minute. */
+function useFeedbackUnread(enabled: boolean): number {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const load = () => { listNotifications(50).then((r) => setN(r.filter((x) => !x.read_at).length)).catch(() => undefined); };
+    load();
+    const i = setInterval(load, 60_000);
+    return () => clearInterval(i);
+  }, [enabled]);
+  return n;
+}
 
 interface NavItem { to: string; label: string; icon: ReactNode; perm: string; badge?: 'orders' | 'slips' | 'prints' | 'sync' | 'low' }
 const NAV: { title: string; items: NavItem[] }[] = [
@@ -41,6 +56,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
   ] },
   { title: 'Supply', items: [
     { to: '/products', label: 'Products', icon: <Tag />, perm: 'catalog:view' },
+    { to: '/categories', label: 'Product categories', icon: <Layers />, perm: 'catalog:view' },
     { to: '/inventory', label: 'Inventory', icon: <Boxes />, perm: 'inventory:view', badge: 'low' },
     { to: '/purchasing', label: 'Purchasing', icon: <Truck />, perm: 'purchasing:view' },
     { to: '/production', label: 'BOM & production', icon: <Factory />, perm: 'production:view' },
@@ -88,6 +104,8 @@ export function Shell() {
     void syncSkus();
     return startSkuSyncWatch();
   }, [signedIn, canSyncSkus]);
+  const feedbackUnread = useFeedbackUnread(!DEMO_SEED && signedIn);
+  const otherTabs = useOtherTabs(!DEMO_SEED);
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen(true); } };
     window.addEventListener('keydown', h);
@@ -136,14 +154,17 @@ export function Shell() {
           </select>
           <Button variant="ghost" icon onClick={() => setLang(lang === 'th' ? 'en' : 'th')} title={lang === 'th' ? 'Switch to English' : 'สลับเป็นภาษาไทย'} aria-label="Switch language"><Languages size={18} /></Button>
           <Button variant="ghost" icon onClick={() => setTheme(ui.theme === 'dark' ? 'light' : ui.theme === 'light' ? 'system' : 'dark')} title={t(lang, 'Theme: {theme}', { theme: t(lang, ui.theme) })} aria-label={t(lang, 'Toggle theme')}>{ui.theme === 'dark' ? <Moon size={18} /> : ui.theme === 'light' ? <Sun size={18} /> : <Monitor size={18} />}</Button>
-          <Popover width={340} trigger={(_o, tg) => <Button variant="ghost" icon onClick={tg} aria-label={t(lang, 'Notifications')} style={{ position: 'relative' }}><Bell size={18} />{alerts.total > 0 && <span style={{ position: 'absolute', top: 3, right: 3, width: 8, height: 8, borderRadius: 4, background: 'var(--crit)' }} />}</Button>}>
-            {(close) => <Notifications close={close} />}
+          <Popover width={340} trigger={(_o, tg) => <Button variant="ghost" icon onClick={tg} aria-label={t(lang, 'Notifications')} style={{ position: 'relative' }}><Bell size={18} />{alerts.total + feedbackUnread > 0 && <span style={{ position: 'absolute', top: 3, right: 3, width: 8, height: 8, borderRadius: 4, background: 'var(--crit)' }} />}</Button>}>
+            {(close) => <Notifications close={close} feedbackUnread={feedbackUnread} />}
           </Popover>
           <Popover width={300} trigger={(_o, tg) => <button className="user-chip" onClick={tg} aria-label={t(lang, 'Account menu — signed in as {email}', { email: profile?.email ?? '' })}><Avatar name={profile?.display_name || profile?.email || '?'} color={user.color} /><span className="nm" style={{ fontWeight: 600, fontSize: 13 }}>{(profile?.display_name || profile?.email || '').split(' ')[0].split('@')[0]}</span></button>}>
             {(close) => <UserMenu close={close} />}
           </Popover>
         </header>
-        <main className="content"><Outlet /></main>
+        <main className="content">
+          {otherTabs > 0 && <div className="banner warn mb16" role="alert" data-testid="other-tab-warning"><div className="grow"><b>{t(lang, 'The back office is open in another tab on this computer.')}</b> {t(lang, 'Work in one tab only: receipts, orders and stock saved in one tab can be overwritten by the other. Close the other tab.')}</div></div>}
+          <Outlet />
+        </main>
       </div>
       {searchOpen && <SearchPalette onClose={() => setSearchOpen(false)} go={(p) => { setSearchOpen(false); nav(p); }} />}
       <FeedbackButton />
@@ -151,12 +172,13 @@ export function Shell() {
   );
 }
 
-function Notifications({ close }: { close: () => void }) {
+function Notifications({ close, feedbackUnread = 0 }: { close: () => void; feedbackUnread?: number }) {
   const a = useAlerts();
   const lang = useLang();
   const nav = useNavigate();
   const go = (p: string) => { close(); nav(p); };
   const rows = [
+    { n: feedbackUnread, t: 'feedback updates for you', to: '/feedback', tone: 'info' as const },
     { n: a.slips.length, t: 'payment slips awaiting review', to: '/receivables?tab=slips', tone: 'warn' as const },
     { n: a.failedPrints.length, t: 'print jobs failed', to: '/printing', tone: 'bad' as const },
     { n: a.syncErrors.length, t: 'channel sync errors (unmapped SKUs etc.)', to: '/channels?tab=errors', tone: 'bad' as const },

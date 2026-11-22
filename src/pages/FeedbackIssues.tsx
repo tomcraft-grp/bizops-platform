@@ -5,20 +5,23 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Archive, Bell, Download, GitBranch, Link2, MessageSquarePlus, RefreshCw, Send, StickyNote } from 'lucide-react';
 import {
   DEV_LINK_KINDS, DevLinkKind, FEEDBACK_CATEGORIES, FEEDBACK_PRIORITIES, FEEDBACK_STATUSES, FeedbackCategory, FeedbackIssue, FeedbackNotification,
-  FeedbackPriority, FeedbackStatus, IssueThread, NEXT_STATUSES, OPEN_STATUSES, StaffMember,
+  FeedbackPriority, FeedbackStatus, IssueThread, NEXT_STATUSES, OPEN_STATUSES, StaffMember, FEEDBACK_SLA_DAYS, closingNote, isOverdue,
   addDevLink, archiveIssue, getThread, issuesToCsv, listFeedback, listNotifications, listStaff, markNotificationsRead, staffComment, staffUpdate, statusMeta,
 } from '../lib/feedbackApi';
 import { toast, useLang } from '../domain/store';
-import { Banner, Button, Card, DataTable, Drawer, Empty, Field, Input, KV, Kpi, PageHead, Popover, Select, Tabs, Textarea, Tx, useConfirm } from '../ui/kit';
+import { Badge, Banner, Button, Card, DataTable, Drawer, Empty, Field, Input, KV, Kpi, PageHead, Popover, Select, Tabs, Textarea, Tx, useConfirm } from '../ui/kit';
 import { AttachmentList, AttachmentPicker, CategoryBadge, PriorityBadge, StatusBadge } from '../ui/feedbackParts';
 import { EnglishContextCard, EvidenceCard, OriginalFeedbackCard } from '../ui/FeedbackContext';
 import { dateTimeFmt } from '../lib/util';
 import { t } from '../lib/i18n';
+import { useAuth } from '../auth/AuthProvider';
 
 const PRIORITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
 
 export default function FeedbackIssues() {
   const lang = useLang();
+  const { profile } = useAuth();
+  const myId = profile?.id ?? null;
   const [rows, setRows] = useState<FeedbackIssue[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [notes, setNotes] = useState<FeedbackNotification[]>([]);
@@ -40,9 +43,11 @@ export default function FeedbackIssues() {
 
   const staffName = useCallback((id: string | null) => (id ? staff.find((s) => s.id === id)?.display_name || staff.find((s) => s.id === id)?.email || '—' : ''), [staff]);
   const filtered = useMemo(() => rows.filter((r) =>
-    (f.status === '' || (f.status === 'open' ? OPEN_STATUSES.includes(r.status) : r.status === f.status))
-    && (!f.priority || r.priority === f.priority) && (!f.category || r.category === f.category) && (!f.source || r.source === f.source)
-    && (!f.assignee || (f.assignee === 'none' ? !r.assigned_to : r.assigned_to === f.assignee))), [rows, f]);
+    (f.status === '' || (f.status === 'open' ? OPEN_STATUSES.includes(r.status) : f.status === 'overdue' ? isOverdue(r) : f.status === 'unresolved' ? r.status !== 'closed' && r.status !== 'rejected' : r.status === f.status))
+    && (!f.priority || r.priority === f.priority) && (!f.category || r.category === f.category)
+    && (!f.source || (f.source === 'mine' ? !!myId && r.reporter_id === myId : r.source === f.source))
+    && (!f.assignee || (f.assignee === 'none' ? !r.assigned_to : f.assignee === 'me' ? !!myId && r.assigned_to === myId : r.assigned_to === f.assignee))), [rows, f, myId]);
+  const overdue = rows.filter((r) => isOverdue(r)).length;
 
   const count = (s: FeedbackStatus) => rows.filter((r) => r.status === s).length;
   const unread = notes.filter((n) => !n.read_at);
@@ -71,7 +76,7 @@ export default function FeedbackIssues() {
                 {!notes.length && <div className="muted"><Tx>Nothing yet.</Tx></div>}
                 {notes.map((n) => (
                   <button key={n.id} type="button" className="menu-item" onClick={() => { close(); open(n.issue_id); }} style={{ opacity: n.read_at ? 0.6 : 1 }}>
-                    <div className="grow" style={{ textAlign: 'left' }}><div style={{ fontWeight: n.read_at ? 400 : 650 }}>{t(lang, n.title)}</div><div className="muted" style={{ fontSize: 12 }}>{n.body} · {dateTimeFmt(n.created_at)}</div></div>
+                    <div className="grow" style={{ textAlign: 'left' }}><div style={{ fontWeight: n.read_at ? 400 : 650 }}>{t(lang, n.title)}</div><div className="muted" style={{ fontSize: 12 }}>{n.issue_id} · {n.kind === 'status' && n.body ? t(lang, statusMeta(n.body).label) : n.body} · {dateTimeFmt(n.created_at)}</div></div>
                   </button>
                 ))}
               </div>
@@ -89,7 +94,7 @@ export default function FeedbackIssues() {
         <Kpi label="Waiting for information" value={count('waiting_info')} />
         <Kpi label="Resolved / closed" value={count('resolved') + count('closed')} tone="good" />
         <Kpi label="Critical (open)" value={rows.filter((r) => r.priority === 'critical' && OPEN_STATUSES.includes(r.status)).length} tone={rows.some((r) => r.priority === 'critical' && OPEN_STATUSES.includes(r.status)) ? 'bad' : 'good'} />
-        <Kpi label="From customers" value={rows.filter((r) => r.source === 'customer').length} />
+        <Kpi label="Overdue (open)" value={overdue} tone={overdue ? 'bad' : 'good'} sub={t(lang, 'Critical {c} d · High {h} d · Medium {m} d · Low {l} d', { c: FEEDBACK_SLA_DAYS.critical, h: FEEDBACK_SLA_DAYS.high, m: FEEDBACK_SLA_DAYS.medium, l: FEEDBACK_SLA_DAYS.low })} />
       </div>
       <Card flush>
         <DataTable
@@ -98,7 +103,7 @@ export default function FeedbackIssues() {
           toolbar={
             <div className="row gap-6 wrap">
               <Select sm style={{ width: 'auto' }} value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} aria-label={t(lang, 'Status')}>
-                <option value="open">{t(lang, 'Open issues')}</option><option value="">{t(lang, 'All statuses')}</option>
+                <option value="open">{t(lang, 'Open issues')}</option><option value="unresolved">{t(lang, 'Not closed yet')}</option><option value="overdue">{t(lang, 'Overdue')}</option><option value="">{t(lang, 'All statuses')}</option>
                 {FEEDBACK_STATUSES.map((s) => <option key={s.v} value={s.v}>{t(lang, s.label)}</option>)}
               </Select>
               <Select sm style={{ width: 'auto' }} value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })} aria-label={t(lang, 'Priority')}>
@@ -108,11 +113,11 @@ export default function FeedbackIssues() {
                 <option value="">{t(lang, 'All categories')}</option>{FEEDBACK_CATEGORIES.map((c) => <option key={c.v} value={c.v}>{t(lang, c.label)}</option>)}
               </Select>
               <Select sm style={{ width: 'auto' }} value={f.assignee} onChange={(e) => setF({ ...f, assignee: e.target.value })} aria-label={t(lang, 'Assigned to')}>
-                <option value="">{t(lang, 'Anyone')}</option><option value="none">{t(lang, 'Unassigned')}</option>
+                <option value="">{t(lang, 'Anyone')}</option><option value="me">{t(lang, 'Assigned to me')}</option><option value="none">{t(lang, 'Unassigned')}</option>
                 {staff.map((s) => <option key={s.id} value={s.id}>{s.display_name || s.email}</option>)}
               </Select>
               <Select sm style={{ width: 'auto' }} value={f.source} onChange={(e) => setF({ ...f, source: e.target.value })} aria-label={t(lang, 'Source')}>
-                <option value="">{t(lang, 'Customers and staff')}</option><option value="customer">{t(lang, 'Customers only')}</option><option value="staff">{t(lang, 'Staff only')}</option>
+                <option value="">{t(lang, 'Customers and staff')}</option><option value="customer">{t(lang, 'Customers only')}</option><option value="staff">{t(lang, 'Staff only')}</option><option value="mine">{t(lang, 'Reported by me')}</option>
               </Select>
             </div>
           }
@@ -123,8 +128,8 @@ export default function FeedbackIssues() {
             { key: 'by', header: 'Submitted by', render: (r) => <div>{r.submitter_label}<div className="sub">{t(lang, r.source === 'customer' ? 'Customer' : 'Staff')}</div></div>, hideSm: true },
             { key: 'cat', header: 'Category', render: (r) => <CategoryBadge category={r.category} />, hideSm: true },
             { key: 'pr', header: 'Priority', render: (r) => <PriorityBadge priority={r.priority} />, sort: (r) => PRIORITY_RANK[r.priority] ?? 0 },
-            { key: 's', header: 'Status', render: (r) => <StatusBadge status={r.status} />, sort: (r) => r.status },
-            { key: 'as', header: 'Assigned to', render: (r) => staffName(r.assigned_to) || <span className="muted">—</span>, hideSm: true },
+            { key: 's', header: 'Status', render: (r) => <div className="row gap-4"><StatusBadge status={r.status} />{isOverdue(r) && <Badge tone="bad">{t(lang, 'Overdue')}</Badge>}</div>, sort: (r) => r.status },
+            { key: 'as', header: 'Assigned to', render: (r) => staffName(r.assigned_to) || r.handler_label || <span className="muted">—</span>, hideSm: true },
             { key: 'c', header: 'Created', render: (r) => dateTimeFmt(r.created_at), sort: (r) => r.created_at, hideSm: true },
             { key: 'u', header: 'Last updated', render: (r) => dateTimeFmt(r.last_activity_at), sort: (r) => r.last_activity_at },
           ]}
@@ -162,8 +167,17 @@ function IssueDrawer({ issueId, issue, staff, staffName, onClose, onChanged }: {
 
   const changeStatus = async (to: FeedbackStatus) => {
     let reason: string | undefined;
-    if (to === 'rejected' || to === 'closed' || to === 'waiting_info') {
-      const r = await confirm({ title: t(lang, 'Change status to "{s}"?', { s: t(lang, statusMeta(to).label) }), body: to === 'rejected' ? t(lang, 'The customer will see this reason.') : undefined, reason: to === 'rejected' ? t(lang, 'Reason (shown to the customer)') : false, confirmLabel: t(lang, 'Change status') });
+    if (to === 'resolved' && !resolution.trim()) { toast('error', t(lang, 'Write the resolution first: what was changed, fixed or completed. The reporter sees it.')); return; }
+    const reopening = (issue.status === 'closed' || issue.status === 'resolved' || issue.status === 'rejected') && to !== 'closed';
+    if (to === 'rejected' || to === 'closed' || to === 'waiting_info' || to === 'resolved' || reopening) {
+      const reasonLabel = to === 'rejected' ? t(lang, 'Reason (shown to the customer)') : to === 'closed' ? t(lang, 'Closing note (shown to the reporter, optional)') : reopening ? t(lang, 'Why it is reopened (shown to the reporter, optional)') : false;
+      const r = await confirm({
+        title: t(lang, 'Change status to "{s}"?', { s: t(lang, statusMeta(to).label) }),
+        body: to === 'rejected' ? t(lang, 'The customer will see this reason.')
+          : to === 'resolved' ? <><div>{t(lang, 'The reporter is notified and sees this resolution:')}</div><div style={{ whiteSpace: 'pre-wrap', marginTop: 6 }}><b>{resolution}</b></div></>
+          : to === 'closed' ? t(lang, 'Closing officially completes the issue. The reporter is notified and can no longer reply; it can be reopened later if needed.') : undefined,
+        reason: reasonLabel, reasonOptional: to !== 'rejected', confirmLabel: t(lang, 'Change status'),
+      });
       if (!r.ok) return;
       reason = r.reason || undefined;
     }
@@ -172,6 +186,7 @@ function IssueDrawer({ issueId, issue, staff, staffName, onClose, onChanged }: {
   const issueFiles = (th?.attachments ?? []).filter((a) => !a.comment_id);   // what came with the original report (comment attachments stay in the conversation)
   const conversation = (th?.comments ?? []).filter((c) => c.kind !== 'internal');
   const internal = (th?.comments ?? []).filter((c) => c.kind === 'internal');
+  const closeNote = closingNote(th?.events ?? [], issue.status);
 
   return (
     <Drawer title={<><span className="mono muted" style={{ fontSize: 13 }}>{issue.id}</span> {issue.title}</>} sub={`${issue.submitter_label} · ${dateTimeFmt(issue.created_at)}`} onClose={onClose}>
@@ -180,6 +195,23 @@ function IssueDrawer({ issueId, issue, staff, staffName, onClose, onChanged }: {
         <OriginalFeedbackCard issue={issue} />
         <EnglishContextCard issue={issue} attachments={issueFiles} onChanged={onChanged} />
         <EvidenceCard attachments={issueFiles} loading={!th} />
+
+        <Card title="Resolution & closure">
+          <KV items={[
+            ['Status', <StatusBadge key="s" status={issue.status} />],
+            ['Last status change', issue.status_changed_at ? dateTimeFmt(issue.status_changed_at) : '—'],
+            ['Handled by', staffName(issue.assigned_to) || issue.handler_label || '—'],
+            ['Resolved', issue.resolved_at && (issue.status === 'resolved' || issue.status === 'closed') ? `${dateTimeFmt(issue.resolved_at)}${issue.resolved_by_label ? ' · ' + issue.resolved_by_label : ''}` : '—'],
+            ['Closed', issue.closed_at ? `${dateTimeFmt(issue.closed_at)}${issue.closed_by_label ? ' · ' + issue.closed_by_label : ''}` : '—'],
+            ...(closeNote ? [[issue.status === 'rejected' ? 'Reason' : 'Closing note', closeNote] as [string, string]] : []),
+          ]} />
+          <div className="row wrap mt8" style={{ gap: 8 }}>
+            {NEXT_STATUSES[issue.status].includes('in_progress') && <Button size="sm" disabled={busy} onClick={() => changeStatus('in_progress')}><Tx>Start work (In progress)</Tx></Button>}
+            {NEXT_STATUSES[issue.status].includes('resolved') && <Button size="sm" variant="primary" disabled={busy} onClick={() => changeStatus('resolved')}><Tx>Mark resolved</Tx></Button>}
+            {NEXT_STATUSES[issue.status].includes('closed') && <Button size="sm" variant="primary" disabled={busy} onClick={() => changeStatus('closed')}><Tx>Close issue</Tx></Button>}
+          </div>
+          {NEXT_STATUSES[issue.status].includes('resolved') && <div className="muted mt8" style={{ fontSize: 12 }}><Tx>Write the resolution in the Workflow card below before marking the issue resolved.</Tx></div>}
+        </Card>
 
         <Card title="Workflow">
           <div className="form-grid">

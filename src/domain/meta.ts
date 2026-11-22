@@ -49,6 +49,7 @@ export const PAGE_META: Record<string, PageMeta> = {
   '/promotions': { page: 'Promotions', module: 'promotions' },
   '/events': { page: 'Events', module: 'events' },
   '/products': { page: 'Products', module: 'catalog' },
+  '/categories': { page: 'Product categories', module: 'catalog' },
   '/inventory': { page: 'Inventory', module: 'inventory' },
   '/purchasing': { page: 'Purchasing', module: 'purchasing' },
   '/production': { page: 'BOM & production', module: 'production' },

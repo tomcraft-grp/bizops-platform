@@ -7,6 +7,7 @@ import { cx } from '../lib/util';
 import { baht } from '../shop/format';
 import { K, ShopLang, useShopLang, useT } from '../shop/i18n';
 import { walletCode, wallet, Bank, PaymentMethods } from './api';
+import { useAuth } from '../auth/AuthProvider';
 import { bankBrand, copyableAccountNo, copyText, formatAccountNo } from './bank';
 
 export function BankBadge({ bank }: { bank: Pick<Bank, 'code' | 'logo_url' | 'bank_name_en'> }) {
@@ -86,19 +87,23 @@ export function MethodCards({ methods, value, onChange, wallet: showWallet = tru
   );
 }
 
-let cache: { at: number; v: PaymentMethods } | null = null;
+// Keyed by the signed-in user: on a shared device the next person must never see the previous customer's wallet balance.
+let cache: { at: number; v: PaymentMethods; uid: string | null } | null = null;
 export const clearMethodsCache = () => { cache = null; };
 /** The payment methods (banks, wallet balance, QR availability), cached briefly; `reload` after the balance changes. */
 export function useMethods(): { methods: PaymentMethods | null; error: boolean; reload: () => void } {
-  const [methods, setMethods] = useState<PaymentMethods | null>(cache && Date.now() - cache.at < 20_000 ? cache.v : null);
+  const uid = useAuth().profile?.id ?? null;
+  const fresh = () => !!cache && cache.uid === uid && Date.now() - cache.at < 20_000;
+  const [methods, setMethods] = useState<PaymentMethods | null>(fresh() ? cache!.v : null);
   const [error, setError] = useState(false);
   const [n, setN] = useState(0);
   useEffect(() => {
     let on = true;
-    if (n === 0 && cache && Date.now() - cache.at < 20_000) return;
-    wallet.methods().then((v) => { cache = { at: Date.now(), v }; if (on) { setMethods(v); setError(false); } }).catch(() => { if (on) setError(true); });
+    if (n === 0 && fresh()) { setMethods(cache!.v); return; }
+    setMethods(null);
+    wallet.methods().then((v) => { cache = { at: Date.now(), v, uid }; if (on) { setMethods(v); setError(false); } }).catch(() => { if (on) setError(true); });
     return () => { on = false; };
-  }, [n]);
+  }, [n, uid]); // eslint-disable-line react-hooks/exhaustive-deps
   return { methods, error, reload: () => { clearMethodsCache(); setN((x) => x + 1); } };
 }
 

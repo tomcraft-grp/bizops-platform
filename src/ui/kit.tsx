@@ -221,7 +221,7 @@ export function Drawer({ title, onClose, children, footer, sub }: { title: React
     </div>, document.body);
 }
 
-interface ConfirmOpts { title: string; body?: ReactNode; confirmLabel?: string; danger?: boolean; reason?: boolean | string; /** the reason box may stay empty */ reasonOptional?: boolean; typeToConfirm?: string }
+interface ConfirmOpts { title: string; body?: ReactNode; confirmLabel?: string; danger?: boolean; reason?: boolean | string; /** the reason box is shown but may stay empty */ reasonOptional?: boolean; typeToConfirm?: string }
 type Resolver = (v: { ok: boolean; reason: string }) => void;
 const ConfirmCtx = createContext<(o: ConfirmOpts) => Promise<{ ok: boolean; reason: string }>>(async () => ({ ok: false, reason: '' }));
 export const useConfirm = () => useContext(ConfirmCtx);

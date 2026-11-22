@@ -81,6 +81,9 @@ export function createReceipt(
   });
   d.receipts.push({ id, no: docNo(d, 'RCP'), ts: ctx.now, customerId: p.customerId, amount: p.amount, method: p.method, reference: p.reference, slipId: p.slipId, status: 'posted', journalId: jid, note: p.note, createdBy: ctx.userId });
   for (const a of allocs) d.allocations.push({ id: nid(d, 'AL'), receiptId: id, orderId: a.orderId, amount: a.amount, ts: ctx.now, active: true, kind: 'payment' });
+  // payment history: who received how much, by which method, for which customer and orders (kept even when the receipt is voided later)
+  const rc = d.receipts[d.receipts.length - 1];
+  audit(d, ctx, 'receipt.create', 'receipt', id, `${rc.no}: ${p.amount} by ${p.method}${p.reference ? ` ref ${p.reference}` : ''}${p.customerId ? ` · customer ${p.customerId}` : ''}${allocs.length ? ` · ${allocs.map((a) => `${a.orderId}=${a.amount}`).join(', ')}` : ''}${unapplied > 0.004 ? ` · credit ${unapplied}` : ''}`);
   return id;
 }
 

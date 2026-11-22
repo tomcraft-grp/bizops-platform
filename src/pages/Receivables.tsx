@@ -87,7 +87,9 @@ function ReceiveModal({ customerId, onClose }: { customerId?: ID; onClose: () =>
   const open = useMemo(() => (cid ? outstandingOrders(db, cid, alloc) : []), [db.orders, db.allocations, cid]); // eslint-disable-line
   const owing = open.reduce((s, x) => s + x.balance, 0);
   const credit = cid ? customerCredit(db, cid) : 0;
-  useEffect(() => { if (cid) { setAmount(r2(owing)); setManual({}); } }, [cid]); // eslint-disable-line
+  // A different customer starts a fresh form: nothing typed for the previous customer (method, bank reference, allocation mode or split) may be posted on this one.
+  useEffect(() => { setAmount(cid ? r2(owing) : 0); setManual({}); setRef(''); setMethod('transfer'); setMode('fifo'); }, [cid]); // eslint-disable-line
+  const custName = cid ? db.customers.find((c) => c.id === cid)?.name : undefined;
   const preview = useMemo(() => {
     let left = amount || 0;
     return open.map((x) => {
@@ -100,7 +102,7 @@ function ReceiveModal({ customerId, onClose }: { customerId?: ID; onClose: () =>
   const unapplied = r2((amount || 0) - allocated);
   const invalid = !cid || !(amount > 0) || (mode === 'manual' && allocated > amount + 0.004);
   return (
-    <Modal title="Receive payment" size="lg" onClose={onClose} footer={<><Button onClick={onClose}><Tx>Cancel</Tx></Button><Button variant="primary" disabled={invalid} onClick={() => run((d, c) => createReceipt(d, c, { customerId: cid, amount, method, reference: ref || undefined, allocations: mode === 'fifo' ? 'fifo' : preview.filter((x) => x.a > 0).map((x) => ({ orderId: x.order.id, amount: x.a })) }), { ok: 'Receipt posted and allocated', perm: 'receivables:create', onOk: onClose })}><Tx>Post receipt</Tx>{' '}{amount > 0 && `(${money(amount)})`}</Button></>}>
+    <Modal title={custName ? `${tl(lang, 'Receive payment')} — ${custName}` : 'Receive payment'} size="lg" onClose={onClose} footer={<><Button onClick={onClose}><Tx>Cancel</Tx></Button><Button variant="primary" disabled={invalid} onClick={() => run((d, c) => createReceipt(d, c, { customerId: cid, amount, method, reference: ref || undefined, allocations: mode === 'fifo' ? 'fifo' : preview.filter((x) => x.a > 0).map((x) => ({ orderId: x.order.id, amount: x.a })) }), { ok: 'Receipt posted and allocated', perm: 'receivables:create', onOk: onClose })}><Tx>Post receipt</Tx>{' '}{amount > 0 && `(${money(amount)})`}</Button></>}>
       <div className="form-grid">
         <Field label="Customer"><Select value={cid} onChange={(e) => setCid(e.target.value)}><option value="">Select…</option>{db.customers.map((c) => <option key={c.id} value={c.id}>{c.name}{customerOutstanding(db, c.id, alloc) > 0 ? tl(lang, ' — owes {amount}', { amount: money0(customerOutstanding(db, c.id, alloc)) }) : ''}</option>)}</Select></Field>
         <Field label="Amount received (฿)"><NumInput value={amount || ''} onChange={(n) => setAmount(isNaN(n) ? 0 : n)} /></Field>

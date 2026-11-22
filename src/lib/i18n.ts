@@ -9,6 +9,7 @@ import { TH_FEEDBACK } from './i18n.feedback';
 import { TH_SHOP } from './i18n.shop';
 import { TH_REWARDS } from './i18n.rewards';
 import { TH_SKUSYNC } from './i18n.skusync';
+import { TH_CATEGORIES } from './i18n.categories';
 import { TH_LINE } from './i18n.line';
 
 export type Lang = 'en' | 'th';
@@ -136,6 +137,7 @@ for (const [k, v] of Object.entries(TH_SHOP)) if (!(k in TH)) TH[k] = v;
 // Rewards (promotion rules, packs, event boards) and SKU sync screens — lib/i18n.rewards.ts, lib/i18n.skusync.ts.
 for (const [k, v] of Object.entries(TH_REWARDS)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_SKUSYNC)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_CATEGORIES)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_LINE)) if (!(k in TH)) TH[k] = v;
 
 /** Translate an English source string. `{name}` placeholders are filled from `vars` AFTER lookup, so the

@@ -220,6 +220,8 @@ export interface ConfirmInput {
 export const isDuplicateSuspect = (e: unknown) => /DUPLICATE_SUSPECT/.test(e instanceof Error ? e.message : String(e));
 export interface RecordPaymentInput {
   invoiceId: string; method: 'transfer' | 'cash'; amount: number; receivedAt: string;
+  /** one per filled-in form: a retry of the same entry is applied once (migration 20261122120000; ignored by a database without it) */
+  key?: string;
   /** a transfer needs the bank reference; cash has none */
   bankRef?: string; bankAccountId?: string | null;
   /** cash needs a note saying where the money was received */
@@ -285,11 +287,14 @@ export const review = {
       if (up.error) throw new Error(`Upload slip: ${up.error.message}`);
     }
     const cash = p.method === 'cash';
-    const r = await supabase.rpc('finance_record_payment', {
+    const args: Record<string, unknown> = {
       p_invoice: p.invoiceId, p_method: p.method, p_amount: p.amount, p_received_at: p.receivedAt,
       p_bank_trans_ref: cash ? null : clean(p.bankRef), p_bank_account: cash ? null : p.bankAccountId || null, p_note: clean(p.note),
       p_file_path: path, p_sha256: sum, p_file_type: type,
-    });
+    };
+    let r = await supabase.rpc('finance_record_payment', p.key ? { ...args, p_idempotency_key: p.key } : args);
+    // a database without migration 20261122120000 does not know the key: send the same payment without it
+    if (r.error && p.key && /could not find the function|schema cache/i.test(r.error.message)) r = await supabase.rpc('finance_record_payment', args);
     if (r.error) { if (path) void supabase.storage.from('payment-evidence').remove([path]); throw new Error(`Record payment: ${r.error.message}`); }
     return r.data as { evidence_id: string; status: 'confirmed' };
   },

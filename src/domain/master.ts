@@ -69,7 +69,7 @@ export function saveProduct(d: DB, ctx: Ctx, p: Partial<Product> & { name: strin
   d.products.push({
     id: 'N' + id, sku: p.sku, legacySku: p.legacySku || undefined, brand: p.brand?.trim() || undefined, createdAt: ctx.now, name: p.name, category: p.category ?? 'General', kind: p.kind, unit: p.unit ?? 'pcs', price: p.price ?? 0, channelPrices: p.channelPrices ?? {},
     barcode: p.barcode, active: true, emoji: p.emoji ?? '📦', color: p.color ?? '#2a78d6', stdCost: p.stdCost ?? 0, levels: p.levels ?? {}, station: p.station ?? null,
-    supplierId: p.supplierId, mediaIds: [], description: p.description, modifiers: p.modifiers,
+    supplierId: p.supplierId, mediaIds: [], description: p.description, modifiers: p.modifiers, categoryId: p.categoryId,
   });
   return 'N' + id;
 }
@@ -106,6 +106,7 @@ export interface SkuMasterRow {
   pack_qty: number | null; unit_en: string | null; unit_th: string | null; barcode: string | null; status: string;
   cost_price: number | null; retail_price: number | null; selling_price: number | null; friend_price: number | null;
   wholesale_price: number | null; ecommerce_price: number | null; needs_review: boolean; review_notes: string | null;
+  category_id?: string | null; category_name?: string | null; category_code?: string | null;
 }
 export interface SkuImportResult { created: number; updated: number; inactive: number; recoded: number; failed: { sku: string; error: string }[] }
 export interface SkuImportOptions {
@@ -135,6 +136,27 @@ function recodeProduct(d: DB, ctx: Ctx, p: Product, sku: string, legacy?: string
 }
 
 /**
+ * Local promotions and loyalty multipliers name a category by its text. When the sync gives products their central category name ("POD · Puff" -> "Puff"),
+ * re-key them so they keep matching the same products. Only when the old text became exactly ONE new name and no product still carries the old text;
+ * anything ambiguous is left as it was and logged for staff to check.
+ */
+function rekeyCategories(d: DB, ctx: Ctx, renamed: Map<string, Set<string>>) {
+  for (const [from, set] of renamed) {
+    const uses = (d.promotions ?? []).filter((p) => p.categories?.includes(from)).length + (from in (d.loyalty?.categoryMultipliers ?? {}) ? 1 : 0);
+    if (!uses) continue;
+    if (set.size !== 1 || d.products.some((p) => p.category === from)) {
+      audit(d, ctx, 'category.rekey_skipped', 'category', from, `Promotions / loyalty still name "${from}": it maps to ${[...set].join(', ')}. Check them.`, 'warn');
+      continue;
+    }
+    const to = [...set][0];
+    for (const p of d.promotions ?? []) if (p.categories?.includes(from)) p.categories = [...new Set(p.categories.map((c) => (c === from ? to : c)))];
+    const m = d.loyalty?.categoryMultipliers;
+    if (m && from in m) { if (!(to in m)) m[to] = m[from]; delete m[from]; }
+    audit(d, ctx, 'category.rekey', 'category', from, `Promotions and loyalty multipliers: category "${from}" -> "${to}" (central category)`, 'info');
+  }
+}
+
+/**
  * Bring the central SKU registry into this device's catalogue so POS can sell the real products. A product is matched by its
  * new code, or by the legacy code it was pulled with before the automatic system (it is then re-coded, never duplicated).
  * Main price = actual selling price (else the sticker price); cost = cost price; e-commerce price becomes the marketplace
@@ -145,6 +167,7 @@ export function importSkuMaster(d: DB, ctx: Ctx, rows: SkuMasterRow[], opts: Sku
   guard(d, ctx, 'catalog:edit');
   const res: SkuImportResult = { created: 0, updated: 0, inactive: 0, recoded: 0, failed: [] };
   const bySku = (code?: string | null) => (code ? d.products.find((p) => p.sku.toLowerCase() === code.toLowerCase()) : undefined);
+  const renamed = new Map<string, Set<string>>();   // old local category text -> the central category names it became (to re-key promotions and loyalty)
   for (const r of rows) {
     const cat = r.sku_category ?? skuCategoryOfCode(r.sku_code) ?? 'FG';
     const kratom = /kratom/i.test(r.domain ?? '');
@@ -165,9 +188,15 @@ export function importSkuMaster(d: DB, ctx: Ctx, rows: SkuMasterRow[], opts: Sku
         stdCost: keep && r.cost_price == null ? existing!.stdCost : r.cost_price ?? 0,
         barcode: r.barcode ?? (keep ? existing!.barcode : undefined),
         channelPrices: keep ? { ...existing!.channelPrices, ...market } : market,
+        // the central category is registry-owned once the registry has one: every device shows the same category
+        ...(r.category_id ? { categoryId: r.category_id, category: (r.category_name || r.category_code || existing?.category || 'General').trim() } : {}),
       };
+      if (existing && owned.category && existing.category !== owned.category) {
+        if (!renamed.has(existing.category)) renamed.set(existing.category, new Set());
+        renamed.get(existing.category)!.add(owned.category);
+      }
       const device = keep ? {} : {
-        category: kratom ? 'Kratom drink' : app ? r.product_type || 'General' : (r.product_type ? `POD · ${r.product_type}` : 'POD'),
+        ...(r.category_id ? {} : { category: kratom ? 'Kratom drink' : app ? r.product_type || 'General' : (r.product_type ? `POD · ${r.product_type}` : 'POD') }),
         unit: kratom ? 'bottle' : app ? r.unit_th || r.unit_en || 'pcs' : 'pcs',
         emoji: kratom ? '🍃' : app ? undefined : '💨',
         description: [r.brand, tiers.join(' · '), r.needs_review ? `ต้องตรวจสอบ: ${r.review_notes ?? ''}` : null, r.source_code && r.source_code !== r.legacy_sku_code ? `รหัสต้นฉบับ ${r.source_code}` : null].filter(Boolean).join('\n') || undefined,
@@ -192,6 +221,7 @@ export function importSkuMaster(d: DB, ctx: Ctx, rows: SkuMasterRow[], opts: Sku
       res.failed.push({ sku: r.sku_code, error: (e as Error).message });
     }
   }
+  rekeyCategories(d, ctx, renamed);
   if (res.created || res.updated) audit(d, ctx, 'product.import', 'product', 'sku_registry', `SKU registry: ${res.created} created, ${res.updated} updated (${res.recoded} re-coded), ${res.inactive} inactive`, 'info');
   return res;
 }
