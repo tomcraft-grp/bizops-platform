@@ -123,12 +123,20 @@ export interface ReviewItem {
   ai_amount: number | null; ai_transfer_at: string | null; ai_result: AiResult | null; ai_confidence: number | null; ai_status: AnalysisStatus | null;
   reasons: string[];
   confirmed_amount: number | null; confirmed_bank_ref: string | null; posted_at: string | null;
+  /** who confirmed it where: on the web, or a LINE quick approval (20261122130000_line_order_notifications.sql) */
+  confirmed_via: 'web' | 'line_quick' | null;
+  /** a transfer with no bank reference at all (neither confirmed nor posted with one): the end-of-day check against the statement should look at it */
+  no_ref: boolean;
 }
 export interface ReviewPage { total: number; items: ReviewItem[] }
+/** The bank reference is optional (owner's decision, 2026-11-22). When typed, it needs 4 to 80 characters with at least 4 letters or digits, as the database checks. */
+export const refOk = (ref: string) => ref.trim() === '' || (ref.trim().length <= 80 && ref.replace(/[^0-9A-Za-z]/g, '').length >= 4);
 
 /** The filter of the list. Every key is optional; an empty value means "no filter". The database refuses a key or a value it does not know (INVALID_FILTER). */
 export interface ReviewFilter {
   stage?: ReviewStage[]; ai_result?: AiResult[]; source?: ('customer_slip' | 'staff_entry')[]; method?: ('transfer' | 'cash')[];
+  /** where it was confirmed: 'line_quick' = LINE quick approvals */
+  via?: ('web' | 'line_quick')[];
   /** one reason code of the newest analysis */
   reason?: string;
   /** calendar days (Asia/Bangkok) on the slip's created_at, both inclusive, written YYYY-MM-DD */
@@ -187,6 +195,7 @@ const ITEM_KEYS: Record<keyof ReviewItem, true> = {
   evidence_id: true, created_at: true, source: true, method: true, status: true, stage: true, order_id: true, order_no: true, order_created_at: true, order_total: true,
   invoice_id: true, invoice_no: true, invoice_amount: true, paid: true, outstanding: true, customer_name: true, customer_phone: true, expected_amount: true, claimed_amount: true,
   ai_amount: true, ai_transfer_at: true, ai_result: true, ai_confidence: true, ai_status: true, reasons: true, confirmed_amount: true, confirmed_bank_ref: true, posted_at: true,
+  confirmed_via: true, no_ref: true,
 };
 const SUMMARY_KEYS: Record<keyof ReviewSummary, true> = { awaiting: true, ai_verified: true, manual_review: true, suspicious: true, confirmed: true, posted: true, rejected: true, more_evidence: true };
 const DETAIL_KEYS: Record<keyof ReviewDetail, true> = { evidence: true, analyses: true, order: true, invoice: true, customer: true, receipts: true, other_evidence: true, events: true };
@@ -242,8 +251,9 @@ export const review = {
     }), 'Confirm payment');
   },
   /** Make a confirmed payment official (receipt, allocation, ledger row), once. */
-  async post(evidenceId: string, note?: string): Promise<PostResult> {
-    return must(await supabase.rpc('finance_post_evidence', { p_evidence: evidenceId, p_note: clean(note) }), 'Post payment');
+  /** bankRef: optional, typed at Post from the bank statement for a payment confirmed without one */
+  async post(evidenceId: string, note?: string, bankRef?: string): Promise<PostResult> {
+    return must(await supabase.rpc('finance_post_evidence', { p_evidence: evidenceId, p_note: clean(note), ...(bankRef?.trim() ? { p_bank_ref: bankRef.trim() } : {}) }), 'Post payment');
   },
   async reject(evidenceId: string, reason: string): Promise<void> {
     must(await supabase.rpc('finance_reject_evidence', { p_evidence: evidenceId, p_reason: reason }), 'Reject payment');

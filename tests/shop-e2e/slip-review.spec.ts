@@ -231,7 +231,7 @@ test.describe('confirm, post, reject, request more, record payment', () => {
     await expect(d.getByLabel('Transfer date and time')).toHaveValue('2026-11-19T10:50');
     expect(fake.count('finance_confirm_evidence')).toBe(0);                                                                  // pre-filled is not sent
     const ok = d.getByRole('button', { name: 'Confirm', exact: true });
-    await expect(ok).toBeDisabled();                                                                                         // no reference typed yet
+    await expect(ok).toBeEnabled();                                                                                          // the reference is optional (owner's decision, 2026-11-22)
     await d.getByLabel('Amount received (฿)').fill(''); await expect(ok).toBeDisabled(); await d.getByLabel('Amount received (฿)').fill('300');
     await d.getByLabel('Bank transaction reference').fill('A-1-2'); await expect(ok).toBeDisabled();                         // fewer than 4 letters or digits
     await d.getByLabel('Bank transaction reference').fill('SCB777000222'); await expect(ok).toBeEnabled();
@@ -412,7 +412,7 @@ test.describe('only what the AI really read is pre-filled', () => {
     await expect(d.locator('[data-note="prefilled"]')).toContainText('the amount'); await expect(d.locator('[data-note="prefilled"]')).not.toContainText('date and time'); await expect(d.locator('[data-note="prefilled"]')).not.toContainText('reference');
     await expect(d.locator('[data-note="time-unread"]')).toContainText('19 Nov 2026');                                        // the date is a hint, not a value
     await expect(ok).toBeDisabled(); await expect(d.getByRole('button', { name: 'Confirm & Post' })).toBeDisabled();
-    await d.getByLabel('Transfer date and time').fill('2026-11-19T10:50'); await expect(ok).toBeDisabled();                    // the reference is still to be typed
+    await d.getByLabel('Transfer date and time').fill('2026-11-19T10:50'); await expect(ok).toBeEnabled();                     // the reference is optional (owner's decision, 2026-11-22)
     await d.getByLabel('Bank transaction reference').fill('SCB777000222'); await expect(ok).toBeEnabled();
     await ok.click(); await dlg(page).getByRole('button', { name: 'Record bank amount' }).click();
     await expect(page.locator('.modal')).toHaveCount(0);
@@ -761,5 +761,60 @@ test.describe('the fake follows the contract', () => {
     expect(() => rec(100, null)).toThrow(/NOTE_REQUIRED/); expect(() => rec(351)).toThrow(/EXCEEDS_OUTSTANDING: 351 is more than the 350/);
     rec(200); expect(() => rec(151)).toThrow(/EXCEEDS_OUTSTANDING: 151 is more than the 150/);                                // 200 is confirmed and waits to be posted
     expect(rec(150)).toMatchObject({ status: 'confirmed' });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------- LINE (20261122130000): optional reference, deep link, quick approvals
+test.describe('optional bank reference and LINE quick approvals', () => {
+  test('a link from LINE opens that slip directly', async ({ page }) => {
+    const fake = new FakeShop(); fake.profile.role = 'SUPER_ADMIN'; fake.profile.display_name = 'Staff'; fake.w.role = 'manager'; fake.rv.seed();
+    await fake.install(page);
+    await page.clock.setFixedTime(new Date(fake.rv.clockIso));
+    await page.addInitScript(() => { try { localStorage.setItem('bizops.lang', 'en'); } catch { /* ignore */ } });
+    await page.goto('/#/payment-review?evidence=ev-2');
+    await expect(dlg(page)).toContainText('Payment ·');
+    await expect(dlg(page)).toContainText('INV-000102');
+  });
+  test('Confirm with no bank reference is sent with an empty reference and succeeds', async ({ page }) => {
+    const fake = new FakeShop(); await openReview(page, fake, 'verifier');
+    await open(page, 'INV-000101');
+    await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
+    await dlg(page).getByLabel('Amount received (฿)').fill('350');
+    await dlg(page).getByLabel('Transfer date and time').fill('2026-11-19T10:20');
+    await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
+    await expect.poll(() => fake.count('finance_confirm_evidence')).toBe(1);
+    expect(fake.calls.find((c) => c.fn === 'finance_confirm_evidence')!.args.p_bank_trans_ref).toBe('');
+    expect(fake.rv.evidence.find((e) => e.id === 'ev-1')!.status).toBe('confirmed');
+  });
+  test('a suspected duplicate is explained in Thai', async ({ page }) => {
+    const fake = new FakeShop(); fake.rv.forceConfirmError = 'DUPLICATE_SUSPECT: a payment of 350 to the same account at the same minute was already recorded; enter the bank reference to continue';
+    await openReview(page, fake, 'verifier');
+    await open(page, 'INV-000101');
+    await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
+    await dlg(page).getByLabel('Amount received (฿)').fill('350');
+    await dlg(page).getByLabel('Transfer date and time').fill('2026-11-19T10:20');
+    await dlg(page).getByRole('button', { name: 'Confirm', exact: true }).click();
+    await expect(page.locator('.toast').last()).toContainText('อาจเป็นสลิปซ้ำ: มีสลิปยอดเดียวกัน');
+    await expect(page.locator('.toast').last()).toContainText('Possible duplicate: a slip with the same amount, account and minute exists.');
+  });
+  test('a LINE quick approval carries a badge and a filter', async ({ page }) => {
+    const fake = new FakeShop(); fake.rv.seed();
+    Object.assign(fake.rv.evidence.find((e) => e.id === 'ev-5')!, { confirmed_via: 'line_quick', confirmed_bank_ref: null });
+    await openReview(page, fake, 'manager', 'en', false);
+    await expect(row(page, 'INV-000105')).toContainText('LINE quick approve');
+    await expect(row(page, 'INV-000105')).toContainText('No bank reference');
+    await page.getByRole('button', { name: 'LINE quick approvals' }).click();
+    await expect.poll(() => JSON.stringify(lastList(fake).p_filter)).toContain('"via":["line_quick"]');
+    await expect(rows(page)).toHaveCount(1);
+  });
+  test('Post of a payment confirmed without a reference may add one from the statement', async ({ page }) => {
+    const fake = new FakeShop(); fake.rv.seed();
+    Object.assign(fake.rv.evidence.find((e) => e.id === 'ev-5')!, { confirmed_bank_ref: null });
+    await openReview(page, fake, 'manager', 'en', false);
+    await row(page, 'INV-000105').getByRole('button', { name: /^Post/ }).click();
+    await page.locator('.modal').last().getByLabel('Bank transaction reference (optional, from the bank statement)').fill('KB-STMT-0001');
+    await page.locator('.modal').last().getByRole('button', { name: 'Post Invoice' }).click();
+    await expect.poll(() => fake.count('finance_post_evidence')).toBe(1);
+    expect(fake.calls.find((c) => c.fn === 'finance_post_evidence')!.args.p_bank_ref).toBe('KB-STMT-0001');
   });
 });

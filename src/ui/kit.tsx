@@ -221,7 +221,7 @@ export function Drawer({ title, onClose, children, footer, sub }: { title: React
     </div>, document.body);
 }
 
-interface ConfirmOpts { title: string; body?: ReactNode; confirmLabel?: string; danger?: boolean; reason?: boolean | string; typeToConfirm?: string }
+interface ConfirmOpts { title: string; body?: ReactNode; confirmLabel?: string; danger?: boolean; reason?: boolean | string; /** the reason box may stay empty */ reasonOptional?: boolean; typeToConfirm?: string }
 type Resolver = (v: { ok: boolean; reason: string }) => void;
 const ConfirmCtx = createContext<(o: ConfirmOpts) => Promise<{ ok: boolean; reason: string }>>(async () => ({ ok: false, reason: '' }));
 export const useConfirm = () => useContext(ConfirmCtx);
@@ -232,7 +232,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const ask = useCallback((o: ConfirmOpts) => new Promise<{ ok: boolean; reason: string }>((res) => { setReason(''); setTyped(''); setSt({ o, res }); }), []);
   const done = (ok: boolean) => { st?.res({ ok, reason }); setSt(null); };
   const needReason = !!st?.o.reason;
-  const blocked = (needReason && !reason.trim()) || (!!st?.o.typeToConfirm && typed !== st.o.typeToConfirm);
+  const blocked = (needReason && !st?.o.reasonOptional && !reason.trim()) || (!!st?.o.typeToConfirm && typed !== st.o.typeToConfirm);
   const lang = useLang();
   return (
     <ConfirmCtx.Provider value={ask}>

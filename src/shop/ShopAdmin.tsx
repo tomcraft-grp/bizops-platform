@@ -2,7 +2,7 @@
 // Payment review page, never here), the product pictures / descriptions / availability customers see, and the shop settings
 // (open / closed, delivery, shipping fee). Every action is a server function that checks the caller's role again.
 import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ImagePlus, Package, Trash2, Upload } from 'lucide-react';
 import { useLang, toast } from '../domain/store';
 import { t as tl } from '../lib/i18n';
@@ -52,7 +52,8 @@ function OrdersPanel({ T, onCounts }: { T: TFn; onCounts: (c: AdminOrdersPage['c
   const [search, setSearch] = useState('');
   const [page, setPage] = useState<AdminOrdersPage | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
+  const [params] = useSearchParams();
+  const [open, setOpen] = useState<string | null>(params.get('order'));         // a link from LINE: #/shop-admin?order=<id> opens that order
   const load = useCallback(() => {
     shopAdmin.orders({ status, search, limit: 50 }).then((p) => { setPage(p); onCounts(p.counts); setError(null); }).catch((e) => setError(msg(e)));
   }, [status, search]); // eslint-disable-line react-hooks/exhaustive-deps

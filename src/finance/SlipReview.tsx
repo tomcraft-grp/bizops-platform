@@ -11,7 +11,7 @@ import { Badge, Banner, Button, Card, Check, Empty, Field, Input, Kpi, KV, Modal
 import { canFinance, finance, type FinanceRole } from './api';
 import RecordPayment, { type RecordTarget } from './RecordPayment';
 import {
-  AI_RESULT, REASON_CODES, REASON_TEXT, review, STAGE, type AiResult, type Bilingual, type PostResult, type ReviewDetail, type ReviewFilter, type ReviewItem, type ReviewPage, type ReviewSettings,
+  AI_RESULT, REASON_CODES, REASON_TEXT, refOk, review, STAGE, type AiResult, type Bilingual, type PostResult, type ReviewDetail, type ReviewFilter, type ReviewItem, type ReviewPage, type ReviewSettings,
   type ReviewStage, type ReviewSummary, type SlipAnalysis,
 } from './review';
 import {
@@ -20,8 +20,8 @@ import {
 } from './reviewUi';
 
 const PAGE = 50;
-type Filters = { stage: '' | ReviewStage; ai: '' | AiResult; suspicious: boolean; from: string; to: string; reason: string; source: '' | 'customer_slip' | 'staff_entry'; method: '' | 'transfer' | 'cash'; showAll: boolean; search: string };
-const NO_FILTER: Filters = { stage: '', ai: '', suspicious: false, from: '', to: '', reason: '', source: '', method: '', showAll: false, search: '' };
+type Filters = { stage: '' | ReviewStage; ai: '' | AiResult; suspicious: boolean; from: string; to: string; reason: string; source: '' | 'customer_slip' | 'staff_entry'; method: '' | 'transfer' | 'cash'; showAll: boolean; search: string; lineQuick: boolean };
+const NO_FILTER: Filters = { stage: '', ai: '', suspicious: false, from: '', to: '', reason: '', source: '', method: '', showAll: false, search: '', lineQuick: false };
 const isActive = (f: Filters) => JSON.stringify(f) !== JSON.stringify(NO_FILTER);
 
 /** The filter the database gets. Unresolved payments are the default, so the list is small; a chosen stage, or "Show all", replaces it. */
@@ -32,6 +32,7 @@ function toFilter(f: Filters): ReviewFilter {
   if (f.from) o.from = f.from; if (f.to) o.to = f.to;
   if (f.reason) o.reason = f.reason; if (f.source) o.source = [f.source]; if (f.method) o.method = [f.method];
   if (f.search.trim()) o.search = f.search.trim();
+  if (f.lineQuick) o.via = ['line_quick'];
   return o;
 }
 const newestDone = (as: SlipAnalysis[]) => as.find((a) => a.status === 'done') ?? null;     // analyses come newest first
@@ -40,14 +41,14 @@ const ACTION_LABEL: Record<string, string> = {
   'evidence.confirm': 'Confirmed', 'evidence.post': 'Posted', 'evidence.reject': 'Rejected', 'evidence.request_more': 'Asked for more evidence', 'evidence.record': 'Recorded by staff', 'evidence.verify': 'Verified in one step',
   'evidence.superseded': 'Replaced by a newer slip',
 };
-interface Target { id: string; invoiceNo: string; amount: number; outstanding?: number }
+interface Target { id: string; invoiceNo: string; amount: number; outstanding?: number; /** confirmed without a bank reference: Post may add one */ noRef?: boolean }
 /** The old verify form's hint, back where the money is decided: an amount above what the invoice owes is credited to the customer's wallet. Empty when it is not above. */
 const overOwed = (lang: 'en' | 'th', amount: number, outstanding: number | undefined) =>
   outstanding != null && amount > outstanding + 0.004 ? tl(lang, 'More than the invoice still owes ({n} over): the extra is credited to the customer’s wallet when the payment is posted.', { n: money(amount - outstanding) }) : '';
 interface BulkRow { id: string; label: string; ok: boolean; text: string }
 
 // ================================================================================================ the dashboard
-export default function SlipReview({ role, onChanged }: { role: FinanceRole; onChanged: () => void }) {
+export default function SlipReview({ role, onChanged, initialOpenId }: { role: FinanceRole; onChanged: () => void; /** a link from LINE: open this slip's detail */ initialOpenId?: string | null }) {
   const lang = useLang();
   const ask = useConfirm();
   const L = (b: Bilingual) => (lang === 'th' ? b.th : b.en);
@@ -60,7 +61,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
   const [f, setF] = useState<Filters>(NO_FILTER);
   const [box, setBox] = useState('');
   const [offset, setOffset] = useState(0);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
   const [record, setRecord] = useState<RecordTarget | null>(null);
   const [busy, setBusy] = useState('');
   const [bulk, setBulk] = useState<BulkRow[] | null>(null);
@@ -126,9 +127,10 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
   /** Post one confirmed payment, after a dialog that says how much. Returns true when it is done (or was already). */
   const postOne = (g: Target): Promise<boolean> => once(false, async () => {
     const over = overOwed(lang, g.amount, g.outstanding);
-    const a = await ask({ title: tl(lang, 'Post {a} to {n}?', { a: money(g.amount), n: g.invoiceNo }), body: [tl(lang, 'This makes the payment official: a receipt and a ledger entry are created. It cannot be undone, only reversed.'), over].filter(Boolean).join(' '), confirmLabel: tl(lang, 'Post Invoice') });
+    const a = await ask({ title: tl(lang, 'Post {a} to {n}?', { a: money(g.amount), n: g.invoiceNo }), body: [tl(lang, 'This makes the payment official: a receipt and a ledger entry are created. It cannot be undone, only reversed.'), over].filter(Boolean).join(' '), confirmLabel: tl(lang, 'Post Invoice'),
+      ...(g.noRef ? { reason: tl(lang, 'Bank transaction reference (optional, from the bank statement)'), reasonOptional: true } : {}) });
     if (!a.ok) return false;
-    const r = await run(g.id, async () => { try { const x = await review.post(g.id); toastPosted(x); return true; } catch (e) { toast('error', reviewErrorText(lang, e)); return false; } });
+    const r = await run(g.id, async () => { try { const x = await review.post(g.id, undefined, g.noRef ? a.reason : undefined); toastPosted(x); return true; } catch (e) { toast('error', reviewErrorText(lang, e)); return false; } });
     if (r) await refresh();
     return !!r;
   });
@@ -194,6 +196,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
           <option value="">{tl(lang, 'All AI results')}</option>{(Object.keys(AI_RESULT) as AiResult[]).map((k) => <option key={k} value={k}>{L(AI_RESULT[k])}</option>)}
         </Select>
         <button type="button" className="chip sr-chip" aria-pressed={f.suspicious} onClick={() => set({ suspicious: !f.suspicious })}>{tl(lang, 'Suspicious')}{s ? ` (${s.suspicious})` : ''}</button>
+        <button type="button" className="chip sr-chip" aria-pressed={f.lineQuick} onClick={() => set({ lineQuick: !f.lineQuick })}>{tl(lang, 'LINE quick approvals')}</button>
         <Input sm type="date" style={{ width: 'auto' }} value={f.from} onChange={(e) => set({ from: e.target.value })} aria-label={tl(lang, 'From date')} />
         <Input sm type="date" style={{ width: 'auto' }} value={f.to} onChange={(e) => set({ to: e.target.value })} aria-label={tl(lang, 'To date')} />
         <Select sm style={{ width: 'auto', maxWidth: 200 }} value={f.reason} onChange={(e) => set({ reason: e.target.value })} aria-label={tl(lang, 'Reason')}>
@@ -238,7 +241,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
               </tr></thead>
               <tbody>
                 {items.map((i) => (
-                  <Row key={i.evidence_id} i={i} lang={lang} L={L} canAct={canAct} canPostNow={canPostRow(i)} busy={busy} onOpen={() => setOpenId(i.evidence_id)} onPost={() => postOne({ id: i.evidence_id, invoiceNo: i.invoice_no, amount: amountOf(i), outstanding: i.outstanding })} />
+                  <Row key={i.evidence_id} i={i} lang={lang} L={L} canAct={canAct} canPostNow={canPostRow(i)} busy={busy} onOpen={() => setOpenId(i.evidence_id)} onPost={() => postOne({ id: i.evidence_id, invoiceNo: i.invoice_no, amount: amountOf(i), outstanding: i.outstanding, noRef: i.method === 'transfer' && !i.confirmed_bank_ref })} />
                 ))}
               </tbody>
             </table>
@@ -291,7 +294,10 @@ function Row({ i, lang, L, canAct, canPostNow, busy, onOpen, onPost }: { i: Revi
         )}
       </td>
       <td className="num">{i.ai_confidence != null ? percent(i.ai_confidence) : '—'}</td>
-      <td><Badge tone={st.tone} dot>{L(st)}</Badge></td>
+      <td><Badge tone={st.tone} dot>{L(st)}</Badge>
+        {i.confirmed_via === 'line_quick' && <div className="sub"><Badge tone="info">{tl(lang, 'LINE quick approve')}</Badge></div>}
+        {i.no_ref && (i.status === 'confirmed' || i.status === 'verified') && <div className="sub"><Badge tone="warn">{tl(lang, 'No bank reference')}</Badge></div>}
+      </td>
       <td><div className="row gap-4" style={{ flexWrap: 'wrap' }}>
         <Button size="sm" variant={canAct && i.status !== 'confirmed' ? 'primary' : undefined} onClick={onOpen}>{canAct ? <Tx>Review</Tx> : <Tx>View</Tx>}</Button>
         {i.status === 'confirmed' && canPostNow && <Button size="sm" variant="primary" disabled={!!busy} loading={busy === i.evidence_id} onClick={onPost}><Tx>Post Invoice</Tx></Button>}
@@ -337,7 +343,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
   const label = o?.order_no ?? inv.invoice_no;
   const stage = STAGE[e.stage];
   const amount = e.confirmed_amount ?? last?.extracted?.amount ?? e.claimed_amount;
-  const g: Target = { id: e.id, invoiceNo: inv.invoice_no, amount, outstanding: inv.outstanding };
+  const g: Target = { id: e.id, invoiceNo: inv.invoice_no, amount, outstanding: inv.outstanding, noRef: e.method === 'transfer' && !e.confirmed_bank_ref };
   const reasons = uniqueReasons(newest?.reasons);
   const info = reasons.filter((r) => r.severity === 'info'), rest = reasons.filter((r) => r.severity !== 'info');
   const cmp = compareRows(last, e.expected_amount);
@@ -355,7 +361,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
   const amtOk = form.amount.trim() !== '' && amt > 0 && Math.abs(Math.round(amt * 100) - amt * 100) < 1e-6;
   const sentAt = fromLocalInput(form.when);                                 // what was typed is Bangkok time, sent with an explicit +07:00
   const future = isFutureInput(form.when);                                  // the database refuses more than 10 minutes ahead: say so here, before sending
-  const formOk = amtOk && form.ref.replace(/[^0-9A-Za-z]/g, '').length >= 4 && sentAt != null && !future;
+  const formOk = amtOk && refOk(form.ref) && sentAt != null && !future;     // the bank reference is optional (owner's decision, 2026-11-22)
   const overHint = amtOk ? overOwed(lang, amt, inv.outstanding) : '';
 
   const submitConfirm = async (post: boolean) => {
@@ -364,7 +370,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
     try { await submitConfirmNow(post); } finally { asking.current = false; }
   };
   const submitConfirmNow = async (post: boolean) => {
-    if (!formOk) return toast('error', tl(lang, 'Enter the amount, the bank transaction reference and the transfer date and time from your bank record'));
+    if (!formOk) return toast('error', tl(lang, 'Enter the amount and the transfer date and time from your bank record'));
     if (e.expected_amount && Math.abs(amt - e.expected_amount) > 0.004) {
       const r = await ask({ title: tl(lang, 'The amount differs from what the order expects'), body: tl(lang, 'The order expects {e}, you entered {a}. The amount from the bank record is the one that will be recorded.', { e: money(e.expected_amount), a: money(amt) }), confirmLabel: tl(lang, 'Record bank amount') });
       if (!r.ok) return;
@@ -518,7 +524,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
             {form.aiRef && <div className="muted" style={{ fontSize: 12 }} data-note="ai-ref">{tl(lang, 'AI read from the slip: {r} — type the reference from your bank record.', { r: form.aiRef })}</div>}
             <div className="row wrap gap-8" style={{ alignItems: 'flex-start' }}>
               <Field label="Amount received (฿)"><Input type="number" inputMode="decimal" min={0} step="0.01" value={form.amount} onChange={(x) => setForm({ ...form, amount: x.target.value })} /></Field>
-              <Field label="Bank transaction reference"><Input maxLength={80} value={form.ref} onChange={(x) => setForm({ ...form, ref: x.target.value })} /></Field>
+              <Field label="Bank transaction reference" hint={tl(lang, 'Optional')}><Input maxLength={80} value={form.ref} onChange={(x) => setForm({ ...form, ref: x.target.value })} /></Field>
               <Field label="Transfer date and time"><Input type="datetime-local" value={form.when} onChange={(x) => setForm({ ...form, when: x.target.value })} /></Field>
             </div>
             {future && <div className="exp-err" role="status" data-note="future">{tl(lang, 'This time is in the future. Check the date and time.')}</div>}

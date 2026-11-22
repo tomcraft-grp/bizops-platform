@@ -13,6 +13,22 @@ import type { ReviewItem, ReviewSettings } from '../../src/finance/review';
 
 const reason = (code: string, severity: Reason['severity'], over: Partial<Reason> = {}): Reason => ({ code, severity, field: null, expected: null, found: null, message: '', ...over });
 
+describe('the bank reference is optional (owner, 2026-11-22)', () => {
+  it('refOk: empty is fine; otherwise 4 to 80 characters with at least 4 letters or digits', async () => {
+    const { refOk } = await import('../../src/finance/review');
+    expect(refOk('')).toBe(true);
+    expect(refOk('   ')).toBe(true);
+    expect(refOk('ab-1')).toBe(false);
+    expect(refOk('TX12')).toBe(true);
+    expect(refOk('x'.repeat(81))).toBe(false);
+  });
+  it('a suspected duplicate (same amount, account and minute) is a sentence in both languages', () => {
+    const e = new Error('Confirm payment: DUPLICATE_SUSPECT: a payment of 840 to the same account at the same minute was already recorded; enter the bank reference to continue');
+    expect(reviewErrorText('th', e).split('\n')[0]).toBe('อาจเป็นสลิปซ้ำ: มีสลิปยอดเดียวกัน เข้าบัญชีเดียวกัน ในนาทีเดียวกันแล้ว ใส่เลขอ้างอิงธนาคารเพื่อยืนยันต่อ');
+    expect(reviewErrorText('en', e).split('\n')[0]).toBe('Possible duplicate: a slip with the same amount, account and minute exists. Enter the bank reference to continue.');
+  });
+});
+
 describe('reasons are shown once each', () => {
   it('a repeated code is kept at its first position, with the most serious of the repeats', () => {
     const out = uniqueReasons([reason('DUPLICATE_REFERENCE', 'warn'), reason('AMOUNT_UNDER', 'high'), reason('DUPLICATE_REFERENCE', 'high', { found: 'second' })]);

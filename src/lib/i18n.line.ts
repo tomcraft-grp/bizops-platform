@@ -69,4 +69,12 @@ export const TH_LINE: Record<string, string> = {
   'Order status': 'สถานะออเดอร์',
   'Payment problem': 'ปัญหาการชำระเงิน',
   'New slip': 'สลิปใหม่',
+  // slip review (src/finance/SlipReview.tsx, reviewUi.ts): the optional bank reference and the LINE quick approvals
+  'Possible duplicate: a slip with the same amount, account and minute exists. Enter the bank reference to continue.': 'อาจเป็นสลิปซ้ำ: มีสลิปยอดเดียวกัน เข้าบัญชีเดียวกัน ในนาทีเดียวกันแล้ว ใส่เลขอ้างอิงธนาคารเพื่อยืนยันต่อ',
+  'Optional': 'ไม่บังคับ',
+  'Enter the amount and the transfer date and time from your bank record': 'ใส่ยอดเงินและวันเวลาโอนตามรายการของธนาคาร',
+  'LINE quick approve': 'อนุมัติด่วนจาก LINE',
+  'No bank reference': 'ไม่มีเลขอ้างอิง',
+  'LINE quick approvals': 'อนุมัติด่วนจาก LINE',
+  'Bank transaction reference (optional, from the bank statement)': 'เลขอ้างอิงธนาคาร (ไม่บังคับ จากรายการเดินบัญชี)',
 };
