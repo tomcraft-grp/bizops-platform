@@ -133,14 +133,19 @@ insert into t_ctx select 'P1', price::text from public.shop_sellable where sku_c
 insert into t_ctx values ('M1', (date_trunc('minute', now()) - interval '40 minutes')::text);
 update public.shop_settings set shop_open = true, pickup_enabled = true, delivery_enabled = true, shipping_fee = 50, free_shipping_min = null, require_payment_slip = false;
 -- an order of 2 x FG-000001 (pickup) by A, and its slip claimed at p_at with the receiving account SCB; keys o_<k>, i_<k>, e_<k>
-create or replace function pg_temp.order_slip(p_key text, p_at timestamptz, p_qty int default 2) returns void language plpgsql as $$
+-- (a customer may place at most 10 orders an hour: the orders are spread over customers A to D, recorded as cust_<k>)
+insert into t_ctx select 'B', id::text from public.profiles where role = 'USER' and status = 'active' order by created_at offset 1 limit 1;
+insert into t_ctx select 'C', id::text from public.profiles where role = 'USER' and status = 'active' order by created_at offset 2 limit 1;
+insert into t_ctx select 'D', id::text from public.profiles where role = 'USER' and status = 'active' order by created_at offset 3 limit 1;
+create or replace function pg_temp.order_slip(p_key text, p_at timestamptz, p_qty int default 2, p_cust text default 'A') returns void language plpgsql as $$
 declare r jsonb;
 begin
-  perform pg_temp.as_user(pg_temp.c('A')::uuid);
+  insert into t_ctx values ('cust_' || p_key, pg_temp.c(p_cust));
+  perform pg_temp.as_user(pg_temp.c(p_cust)::uuid);
   r := public.shop_place_order('line-key-' || p_key, format('[{"sku_code":"%s","qty":%s}]', pg_temp.c('SKU'), p_qty)::jsonb, 'pickup', 'Somchai', '081-234-5678', null, null,
                                p_qty * pg_temp.c('P1')::numeric, 'bank:SCB');
   insert into t_ctx values ('o_' || p_key, r -> 'order' ->> 'id'), ('i_' || p_key, r -> 'order' -> 'invoice' ->> 'id');
-  insert into t_ctx select 'e_' || p_key, public.finance_submit_evidence(pg_temp.c('i_' || p_key)::uuid, pg_temp.c('A') || '/line-' || p_key || '.png',
+  insert into t_ctx select 'e_' || p_key, public.finance_submit_evidence(pg_temp.c('i_' || p_key)::uuid, pg_temp.c(p_cust) || '/line-' || p_key || '.png',
     md5('line-' || p_key) || md5('line-b-' || p_key), 'image/png', p_qty * pg_temp.c('P1')::numeric, p_at, 'SCB', null, pg_temp.c('scb')::uuid)::text;
 end $$;
 set local role authenticated;
@@ -207,7 +212,196 @@ select pg_temp.q('L2.9 the review list filters LINE quick approvals and carries 
      pg_temp.c('e_25'), pg_temp.c('e_22')));
 reset role;
 
--- L3 section is appended above this line by a later task.
+-- ================================================================================================= L3 card data, line_act, queue
+-- shorthands: the outbox rows of an order; the card (order_new row) of an order; a LINE action as the webhook would send it (service role)
+create or replace function pg_temp.ob(p_key text, p_event text) returns bigint language sql as $$
+  select count(*) from public.line_outbox where order_id = pg_temp.c('o_' || p_key)::uuid and event = p_event $$;
+create or replace function pg_temp.card(p_key text) returns uuid language sql as $$
+  select id from public.line_outbox where order_id = pg_temp.c('o_' || p_key)::uuid and event = 'order_new' limit 1 $$;
+create or replace function pg_temp.act(p_user text, p_action text, p_key text, p_reason int default null) returns jsonb language plpgsql as $$
+declare r jsonb;
+begin
+  set local role service_role;
+  r := public.line_act(p_user, p_action, pg_temp.c('o_' || p_key)::uuid, pg_temp.card(p_key), p_reason, 'ev-' || p_action || '-' || p_key);
+  reset role;
+  -- in production each tap is its own transaction; this whole file is ONE transaction, so forget the tap's "via LINE" flag and identity afterwards
+  perform set_config('line.via_line', '', true), set_config('request.jwt.claim.sub', '', true), set_config('request.jwt.claims', '', true);
+  return r;
+exception when others then reset role; return jsonb_build_object('result', 'EXCEPTION', 'message', sqlerrm);
+end $$;
+grant all on t_res, t_ctx to service_role;
+insert into t_ctx values ('UADM', 'Uadm00000000000000000000000000001'), ('US', 'Usup00000000000000000000000000003'), ('UX', 'Unobody0000000000000000000000000x');
+
+select pg_temp.order_slip('30', pg_temp.c('M1')::timestamptz + interval '9 minutes', 2, 'B');
+select pg_temp.q('L3.1 with LINE off, an order queues nothing', $q$ select pg_temp.ob('30', 'order_new') = 0 $q$);
+-- switch LINE on inside this run: credentials were set in L1.4, bind the group, link S
+update public.line_settings set group_id = 'Cgroup0000000000000000000000000001', group_name = 'Shop admins', group_left_at = null where id;
+insert into public.line_staff_links (profile_id, line_user_id, display_name) values (pg_temp.c('S')::uuid, pg_temp.c('US'), 'Boss on LINE') on conflict do nothing;
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select public.line_admin_save_settings('{"enabled": true}');
+select pg_temp.order_slip('31', pg_temp.c('M1')::timestamptz + interval '10 minutes', 2, 'B');
+select pg_temp.order_slip('32', pg_temp.c('M1')::timestamptz + interval '12 minutes', 2, 'B');
+select pg_temp.order_slip('33', pg_temp.c('M1')::timestamptz + interval '13 minutes', 8, 'B');
+select pg_temp.order_slip('34', null, 2, 'B');
+select pg_temp.order_slip('35', pg_temp.c('M1')::timestamptz + interval '12 minutes 20 seconds', 2, 'C');
+select pg_temp.order_slip('36', pg_temp.c('M1')::timestamptz + interval '14 minutes', 2, 'C');
+select pg_temp.order_slip('37', pg_temp.c('M1')::timestamptz + interval '15 minutes', 2, 'C');
+select pg_temp.order_slip('38', pg_temp.c('M1')::timestamptz + interval '16 minutes', 2, 'C');
+select pg_temp.order_slip('39', pg_temp.c('M1')::timestamptz + interval '17 minutes', 2, 'C');
+select pg_temp.order_slip('40', pg_temp.c('M1')::timestamptz + interval '18 minutes', 2, 'D');
+reset role;
+
+select pg_temp.q('L3.2 with LINE on, one card per order', $q$ select pg_temp.ob('31', 'order_new') = 1 and pg_temp.ob('32', 'order_new') = 1 $q$);
+select pg_temp.q('L3.2 the slip sent with the order is not announced twice', $q$ select pg_temp.ob('31', 'slip_new') = 0 $q$);
+select pg_temp.q('L3.2 the card goes to the bound group', $q$ select target_type = 'group' and target_id = 'Cgroup0000000000000000000000000001' and status = 'queued'
+  from public.line_outbox where id = pg_temp.card('31') $q$);
+-- a later slip on an order placed earlier (the order is back-dated: inside one transaction now() never moves)
+update public.shop_orders set created_at = now() - interval '1 hour' where id = pg_temp.c('o_30')::uuid;
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('B')::uuid);
+select public.finance_submit_evidence(pg_temp.c('i_30')::uuid, pg_temp.c('B') || '/line-30b.png', md5('line-30b') || md5('line-30bb'), 'image/png', 2 * pg_temp.c('P1')::numeric,
+  pg_temp.c('M1')::timestamptz + interval '9 minutes 30 seconds', 'SCB', null, pg_temp.c('scb')::uuid);
+reset role;
+select pg_temp.q('L3.2 a slip added to an existing order is announced once', $q$ select pg_temp.ob('30', 'slip_new') = 1 $q$);
+
+-- card data: an order of five different products
+insert into t_ctx select 'SKU' || n, sku_code from (select sku_code, row_number() over (order by sku_code) n from public.shop_sellable where available limit 5) x;
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('D')::uuid);
+insert into t_ctx select 'o_41', public.shop_place_order('line-key-41', jsonb_build_array(
+    jsonb_build_object('sku_code', pg_temp.c('SKU1'), 'qty', 1), jsonb_build_object('sku_code', pg_temp.c('SKU2'), 'qty', 2), jsonb_build_object('sku_code', pg_temp.c('SKU3'), 'qty', 1),
+    jsonb_build_object('sku_code', pg_temp.c('SKU4'), 'qty', 1), jsonb_build_object('sku_code', pg_temp.c('SKU5'), 'qty', 1)), 'pickup', 'Somchai', '081-234-5678', null, null, null, 'bank:SCB')
+  -> 'order' ->> 'id';
+reset role;
+select pg_temp.q('L3.3 card data: 3 item lines shown, 2 more, 6 pieces, the order total, no slip yet',
+  $q$ select jsonb_array_length(d -> 'items') = 3 and (d ->> 'more_count')::int = 2 and (d ->> 'item_count')::int = 6
+       and (d ->> 'total')::numeric = (select total from public.shop_orders where id = pg_temp.c('o_41')::uuid) and (d -> 'payment' ->> 'has_slip')::boolean = false
+       and d ->> 'status' = 'new' and d ->> 'app_url' = 'https://tomcraft-grp.github.io/bizops-platform/' and d ->> 'phone' = '0812345678'
+     from (select public.line_card_data(pg_temp.c('o_41')::uuid) d) x $q$);
+select pg_temp.q('L3.3 card data of an order with a slip: has_slip, bank SCB, the transfer time, the slip id',
+  $q$ select (d -> 'payment' ->> 'has_slip')::boolean and d -> 'payment' ->> 'bank' = 'SCB' and d -> 'payment' ->> 'method' = 'transfer'
+       and (d -> 'payment' ->> 'transfer_at')::timestamptz = pg_temp.c('M1')::timestamptz + interval '10 minutes' and d -> 'payment' ->> 'evidence_id' = pg_temp.c('e_31')
+     from (select public.line_card_data(pg_temp.c('o_31')::uuid) d) x $q$);
+
+-- accept
+select pg_temp.q('L3.4 an unlinked LINE account gets not_linked', $q$ select pg_temp.act(pg_temp.c('UX'), 'accept', '31') ->> 'result' = 'not_linked' $q$);
+select pg_temp.q('L3.4 ...and the order did not change', $q$ select status = 'new' from public.shop_orders where id = pg_temp.c('o_31')::uuid $q$);
+select pg_temp.q('L3.5 a linked ADMIN accepts the order', $q$ select r ->> 'result' = 'done' and r ->> 'action' = 'accept' and r ->> 'order_no' is not null
+  from (select pg_temp.act(pg_temp.c('UADM'), 'accept', '31') r) x $q$);
+select pg_temp.q('L3.5 the order is confirmed and the event names the ADMIN', $q$ select o.status = 'confirmed' and e.actor = pg_temp.c('ADM')::uuid and e.detail ->> 'from' = 'new'
+  from public.shop_orders o join lateral (select * from public.shop_events where entity = 'order' and entity_id = o.id::text order by id desc limit 1) e on true
+  where o.id = pg_temp.c('o_31')::uuid $q$);
+select pg_temp.q('L3.5 an action from LINE does not queue a follow-up (the reply announces it)', $q$ select pg_temp.ob('31', 'order_status') = 0 $q$);
+select pg_temp.q('L3.6 a second tap on the same card says who accepted it', $q$ select r ->> 'result' = 'already_done' and r ->> 'status' = 'confirmed' and r ->> 'by' is not null
+  and r ->> 'by' = (select coalesce(nullif(btrim(display_name), ''), email) from public.profiles where id = pg_temp.c('ADM')::uuid)
+  from (select pg_temp.act(pg_temp.c('US'), 'accept', '31') r) x $q$);
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select public.finance_reject_evidence(pg_temp.c('e_39')::uuid, 'test');
+select public.shop_admin_set_status(pg_temp.c('o_39')::uuid, 'cancelled', 'Customer phoned to cancel');
+select public.shop_admin_set_status(pg_temp.c('o_40')::uuid, 'confirmed');
+reset role;
+select pg_temp.q('L3.6 a tap on an order cancelled on the web says it is cancelled', $q$ select r ->> 'result' = 'already_done' and r ->> 'status' = 'cancelled'
+  from (select pg_temp.act(pg_temp.c('UADM'), 'accept', '39') r) x $q$);
+select pg_temp.q('L3.7 a confirm on the web queues one follow-up for the group', $q$ select pg_temp.ob('40', 'order_status') = 1 and (select payload ->> 'status' from public.line_outbox
+  where order_id = pg_temp.c('o_40')::uuid and event = 'order_status') = 'confirmed' $q$);
+select pg_temp.q('L3.7 a web reject of a slip queues a payment issue', $q$ select pg_temp.ob('39', 'payment_issue') = 1 $q$);
+
+-- quick approve
+select pg_temp.q('L3.8 quick approve while it is switched off is refused', $q$ select r ->> 'result' = 'refused' and r ->> 'code' = 'QUICK_OFF'
+  from (select pg_temp.act(pg_temp.c('US'), 'quick_confirm', '32') r) x $q$);
+update public.line_settings set quick_approve_enabled = true where id;
+select pg_temp.q('L3.9 an ADMIN without a finance role cannot quick approve', $q$ select r ->> 'result' = 'not_allowed' and r ->> 'why' = 'not_verifier'
+  from (select pg_temp.act(pg_temp.c('UADM'), 'quick_confirm', '32') r) x $q$);
+select pg_temp.q('L3.9 ...and nothing changed', $q$ select o.status = 'new' and e.status = 'submitted' from public.shop_orders o, public.finance_payment_evidence e
+  where o.id = pg_temp.c('o_32')::uuid and e.id = pg_temp.c('e_32')::uuid $q$);
+select pg_temp.q('L3.10 quick_ask returns what will be approved', $q$ select r ->> 'result' = 'ask_quick' and (r ->> 'amount')::numeric = 2 * pg_temp.c('P1')::numeric
+  and r ->> 'bank' = 'SCB' and (r ->> 'transfer_at')::timestamptz = pg_temp.c('M1')::timestamptz + interval '12 minutes'
+  from (select pg_temp.act(pg_temp.c('US'), 'quick_ask', '32') r) x $q$);
+select pg_temp.q('L3.10 the card offers quick approve for this order', $q$ select (public.line_card_data(pg_temp.c('o_32')::uuid) -> 'quick' ->> 'ok')::boolean $q$);
+select pg_temp.q('L3.10 a manager quick approves', $q$ select r ->> 'result' = 'done' and r ->> 'action' = 'quick_confirm'
+  from (select pg_temp.act(pg_temp.c('US'), 'quick_confirm', '32') r) x $q$);
+select pg_temp.q('L3.10 slip confirmed via LINE, order confirmed, finance event names the manager', $q$ select e.status = 'confirmed' and e.confirmed_via = 'line_quick' and o.status = 'confirmed'
+  and exists (select 1 from public.finance_events f where f.entity_id = e.id and f.action = 'evidence.confirm' and f.actor = pg_temp.c('S')::uuid and f.detail ->> 'via' = 'line_quick')
+  from public.finance_payment_evidence e, public.shop_orders o where e.id = pg_temp.c('e_32')::uuid and o.id = pg_temp.c('o_32')::uuid $q$);
+select pg_temp.q('L3.11 above the cap: refused OVER_CAP, and the card hides quick approve', $q$ select r ->> 'code' = 'OVER_CAP'
+  and not (public.line_card_data(pg_temp.c('o_33')::uuid) -> 'quick' ->> 'ok')::boolean from (select pg_temp.act(pg_temp.c('US'), 'quick_confirm', '33') r) x $q$);
+select pg_temp.q('L3.11 no transfer time: refused NO_TRANSFER_TIME', $q$ select pg_temp.act(pg_temp.c('US'), 'quick_confirm', '34') ->> 'code' = 'NO_TRANSFER_TIME' $q$);
+select pg_temp.q('L3.11 same amount, account and minute as an approved slip: refused DUPLICATE_SUSPECT', $q$ select pg_temp.act(pg_temp.c('US'), 'quick_confirm', '35') ->> 'code' = 'DUPLICATE_SUSPECT' $q$);
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select public.finance_reject_evidence(pg_temp.c('e_36')::uuid, 'Blurred');
+select pg_temp.as_user(pg_temp.c('C')::uuid);
+select public.finance_submit_evidence(pg_temp.c('i_36')::uuid, pg_temp.c('C') || '/line-36b.png', md5('line-36b') || md5('line-36bb'), 'image/png', 2 * pg_temp.c('P1')::numeric,
+  null, 'SCB', null, pg_temp.c('scb')::uuid);
+reset role;
+select pg_temp.q('L3.12 after the customer replaced the slip, the new slip is judged (no transfer time)', $q$ select pg_temp.act(pg_temp.c('US'), 'quick_confirm', '36') ->> 'code' = 'NO_TRANSFER_TIME' $q$);
+
+-- reject
+select pg_temp.q('L3.13 reject_ask offers the reasons', $q$ select r ->> 'result' = 'ask_reason' and r -> 'reasons' = to_jsonb(array['สลิปไม่ถูกต้อง','ยอดเงินไม่ตรง','สินค้าหมด','ลูกค้าขอยกเลิก'])
+  from (select pg_temp.act(pg_temp.c('UADM'), 'reject_ask', '37') r) x $q$);
+select pg_temp.q('L3.13 an ADMIN without a finance role cannot reject an order whose slip waits', $q$ select pg_temp.act(pg_temp.c('UADM'), 'reject', '37', 1) ->> 'why' = 'not_verifier' $q$);
+select pg_temp.q('L3.13 a manager rejects with reason 1', $q$ select r ->> 'result' = 'done' and r ->> 'reason' = 'ยอดเงินไม่ตรง' from (select pg_temp.act(pg_temp.c('US'), 'reject', '37', 1) r) x $q$);
+select pg_temp.q('L3.13 slip rejected with that reason, order cancelled', $q$ select e.status = 'rejected' and e.reject_reason = 'ยอดเงินไม่ตรง' and o.status = 'cancelled' and o.cancel_reason = 'ยอดเงินไม่ตรง'
+  from public.finance_payment_evidence e, public.shop_orders o where e.id = pg_temp.c('e_37')::uuid and o.id = pg_temp.c('o_37')::uuid $q$);
+select pg_temp.q('L3.13 a reason number out of range is refused', $q$ select pg_temp.act(pg_temp.c('US'), 'reject', '38', 9) ->> 'code' = 'BAD_REASON' $q$);
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select public.finance_confirm_evidence(pg_temp.c('e_38')::uuid, 2 * pg_temp.c('P1')::numeric, 'LINETEST000038', pg_temp.c('M1')::timestamptz + interval '16 minutes');
+select public.finance_post_evidence(pg_temp.c('e_38')::uuid);
+reset role;
+select pg_temp.q('L3.14 rejecting an order whose payment is posted is refused', $q$ select r ->> 'result' = 'refused' and r ->> 'code' = 'PAYMENT_RECORDED'
+  from (select pg_temp.act(pg_temp.c('US'), 'reject', '38', 0) r) x $q$);
+select pg_temp.q('L3.14 ...and the order is still new', $q$ select status = 'new' from public.shop_orders where id = pg_temp.c('o_38')::uuid $q$);
+
+-- the dispatcher's side
+set local role service_role;
+insert into t_ctx select 'claimed', public.line_claim_outbox(50)::text;
+reset role;
+select pg_temp.q('L3.15 claim returns due rows with their card and marks them sending', $q$ select jsonb_array_length(pg_temp.c('claimed')::jsonb) >= 1
+  and exists (select 1 from jsonb_array_elements(pg_temp.c('claimed')::jsonb) x where x ->> 'id' = pg_temp.card('32')::text and x -> 'card' ->> 'order_no' is not null)
+  and (select status from public.line_outbox where id = pg_temp.card('32')) = 'sending' $q$);
+set local role service_role;
+select public.line_complete_outbox(pg_temp.card('32'), false, true, 'HTTP 500', null);
+reset role;
+select pg_temp.q('L3.15 a retryable failure: failed, attempt 1, next try in about a minute', $q$ select status = 'failed' and attempts = 1 and last_error = 'HTTP 500'
+  and next_attempt_at between now() + interval '55 seconds' and now() + interval '65 seconds' from public.line_outbox where id = pg_temp.card('32') $q$);
+set local role service_role;
+select public.line_complete_outbox(pg_temp.card('32'), false, true, 'HTTP 500', null) from generate_series(1, 5);
+select public.line_complete_outbox(pg_temp.card('33'), false, false, 'HTTP 400 bad request', null);
+select public.line_complete_outbox(pg_temp.card('31'), true, false, null, 'req-123');
+reset role;
+select pg_temp.q('L3.15 the sixth failure is dead', $q$ select status = 'dead' and attempts = 6 from public.line_outbox where id = pg_temp.card('32') $q$);
+select pg_temp.q('L3.15 a non-retryable failure is dead at once', $q$ select status = 'dead' and attempts = 1 from public.line_outbox where id = pg_temp.card('33') $q$);
+select pg_temp.q('L3.15 a success is sent with the request id', $q$ select status = 'sent' and sent_at is not null and line_request_id = 'req-123' from public.line_outbox where id = pg_temp.card('31') $q$);
+insert into t_ctx select 'card32', pg_temp.card('32')::text;          -- (clients cannot read the outbox table: keep the id before acting as staff)
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('ADM')::uuid);
+select pg_temp.q('L3.15 staff see the failed deliveries', $q$ select exists (select 1 from jsonb_array_elements(public.line_admin_outbox('failed')) x where x ->> 'id' = pg_temp.c('card32')) $q$);
+select public.line_admin_resend(pg_temp.c('card32')::uuid);
+reset role;
+select pg_temp.q('L3.15 send again puts it back in the queue', $q$ select status = 'queued' and attempts = 0 from public.line_outbox where id = pg_temp.card('32') $q$);
+
+-- customer notification
+update public.line_settings set events = events || '{"customer_notify": true}' where id;
+select set_config('request.jwt.claim.sub', '', true), set_config('request.jwt.claims', '', true);
+update public.profiles set line_user_id = 'Ucustomer000000000000000000000001' where id = pg_temp.c('B')::uuid and line_user_id is null;
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select public.shop_admin_set_status(pg_temp.c('o_30')::uuid, 'confirmed');
+reset role;
+select pg_temp.q('L3.16 the customer is told on LINE when switched on', $q$ select exists (select 1 from public.line_outbox where order_id = pg_temp.c('o_30')::uuid and event = 'customer_notify'
+  and target_type = 'user' and target_id = (select line_user_id from public.profiles where id = pg_temp.c('B')::uuid)) $q$);
+
+select pg_temp.q('L3.17 the dispatch job is scheduled every minute', $q$ select exists (select 1 from cron.job where jobname = 'line-dispatch' and schedule = '* * * * *') $q$);
+select pg_temp.q('L3.17 the LINE internals are not callable by clients',
+  $q$ select not has_function_privilege('authenticated', 'public.line_act(text, text, uuid, uuid, integer, text)', 'execute')
+       and not has_function_privilege('authenticated', 'public.line_claim_outbox(integer)', 'execute')
+       and not has_function_privilege('authenticated', 'public.line_complete_outbox(uuid, boolean, boolean, text, text)', 'execute')
+       and not has_function_privilege('authenticated', 'public.line_kick()', 'execute')
+       and not has_function_privilege('authenticated', 'public.line_card_data(uuid)', 'execute')
+       and has_function_privilege('service_role', 'public.line_act(text, text, uuid, uuid, integer, text)', 'execute') $q$);
 
 -- =========================================================================================== result
 do $$ declare r text; bad int; tot int;

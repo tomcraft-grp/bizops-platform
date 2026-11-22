@@ -572,3 +572,293 @@ do $$ begin
       public.finance_quick_confirm_evidence(uuid) from service_role;
   end if;
 end $$;
+
+-- ================================================================================================= C card data, line_act, queue
+-- C1 who did the last thing to an order (for "already accepted by A at 14:05")
+create or replace function public.line_person(p uuid)
+returns text language sql stable security definer set search_path = public as $$
+  select coalesce(nullif(btrim(display_name), ''), email) from public.profiles where id = p
+$$;
+create or replace function public.line_last_action(p_order uuid)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('by', coalesce(public.line_person(e.actor), e.actor_email, 'ระบบ'), 'at', e.at)
+    from public.shop_events e where e.entity = 'order' and e.entity_id = p_order::text and e.action in ('order.status', 'order.cancel') order by e.id desc limit 1
+$$;
+
+-- C2 the order-level guards of quick approve (the tapper's role is checked in line_act). why: QUICK_OFF | NOT_NEW | NO_SLIP | MANY_SLIPS | NOT_TRANSFER |
+-- NO_TRANSFER_TIME | OVER_CAP | AMOUNT_MISMATCH | OUT_OF_WINDOW | DUPLICATE_SUSPECT | AI_MISMATCH
+create or replace function public.line_quick_check(p_order uuid)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare s public.line_settings; fs public.finance_settings; o public.shop_orders; e public.finance_payment_evidence; i public.finance_invoices; n int; v_out numeric; v_bank text;
+        a record;
+begin
+  select * into s from public.line_settings where id;
+  select * into o from public.shop_orders where id = p_order;
+  if not coalesce(s.quick_approve_enabled, false) then return jsonb_build_object('ok', false, 'why', 'QUICK_OFF'); end if;
+  if o.id is null or o.status <> 'new' then return jsonb_build_object('ok', false, 'why', 'NOT_NEW'); end if;
+  select count(*) into n from public.finance_payment_evidence where invoice_id = o.invoice_id and status = 'submitted';
+  if n = 0 then return jsonb_build_object('ok', false, 'why', 'NO_SLIP'); end if;
+  if n > 1 then return jsonb_build_object('ok', false, 'why', 'MANY_SLIPS'); end if;
+  select * into e from public.finance_payment_evidence where invoice_id = o.invoice_id and status = 'submitted';
+  if e.method <> 'transfer' or e.source <> 'customer_slip' then return jsonb_build_object('ok', false, 'why', 'NOT_TRANSFER'); end if;
+  if e.claimed_transfer_at is null then return jsonb_build_object('ok', false, 'why', 'NO_TRANSFER_TIME'); end if;
+  if e.claimed_amount > s.quick_approve_max_amount then return jsonb_build_object('ok', false, 'why', 'OVER_CAP'); end if;
+  v_out := (public.finance_invoice_state_raw(o.invoice_id) ->> 'outstanding')::numeric;
+  if e.claimed_amount <> v_out then return jsonb_build_object('ok', false, 'why', 'AMOUNT_MISMATCH'); end if;
+  select * into fs from public.finance_settings where id;
+  select * into i from public.finance_invoices where id = o.invoice_id;
+  if e.claimed_transfer_at < o.created_at - make_interval(mins => coalesce(fs.slip_window_before_min, 120))
+     or e.claimed_transfer_at > e.created_at + make_interval(mins => coalesce(fs.slip_future_tolerance_min, 10))
+     or e.claimed_transfer_at < i.issue_date::timestamptz - interval '1 day' then
+    return jsonb_build_object('ok', false, 'why', 'OUT_OF_WINDOW'); end if;
+  if public.finance_quick_dup(e.claimed_amount, e.bank_account_id, e.claimed_transfer_at, e.id) is not null then return jsonb_build_object('ok', false, 'why', 'DUPLICATE_SUSPECT'); end if;
+  select x.status, x.result into a from public.finance_slip_analysis x where x.evidence_id = e.id order by x.attempt desc limit 1;
+  if found and not (a.status = 'done' and a.result = 'match') then return jsonb_build_object('ok', false, 'why', 'AI_MISMATCH'); end if;
+  select code into v_bank from public.finance_bank_accounts where id = e.bank_account_id;
+  return jsonb_build_object('ok', true, 'why', null, 'evidence_id', e.id, 'amount', e.claimed_amount, 'bank', coalesce(v_bank, e.claimed_bank), 'transfer_at', e.claimed_transfer_at);
+end $$;
+
+-- C3 what a card shows, read at SEND time (so a card that goes out late shows the current status)
+create or replace function public.line_card_data(p_order uuid)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare o public.shop_orders; e public.finance_payment_evidence; s public.line_settings; n int; q jsonb; v_bank text; v_method text;
+begin
+  select * into o from public.shop_orders where id = p_order;
+  if not found then return null; end if;
+  select * into s from public.line_settings where id;
+  select * into e from public.finance_payment_evidence where invoice_id = o.invoice_id and source = 'customer_slip' and status <> 'rejected'
+    order by created_at desc, id desc limit 1;
+  select count(*) into n from public.shop_order_items where order_id = o.id;
+  v_method := case when o.payment_pref = 'wallet' then 'wallet' when o.payment_pref = 'qr' then 'qr' when o.payment_pref like 'bank:%' or e.id is not null then 'transfer' else 'unpaid' end;
+  v_bank := coalesce((select b.code from public.finance_bank_accounts b where b.id = e.bank_account_id), case when o.payment_pref like 'bank:%' then substr(o.payment_pref, 6) end);
+  q := public.line_quick_check(o.id);
+  return jsonb_build_object(
+    'order_id', o.id, 'order_no', o.order_no, 'customer_name', o.contact_name, 'phone', o.contact_phone, 'created_at', o.created_at,
+    'item_count', (select coalesce(sum(qty), 0) from public.shop_order_items where order_id = o.id),
+    'items', coalesce((select jsonb_agg(jsonb_build_object('name', it.name, 'qty', it.qty, 'price', it.unit_price,
+               'image', (select public.shop_image_url(c.image_paths[1]) from public.shop_sku_content c where c.sku_code = it.sku_code)) order by it.line_no)
+             from (select * from public.shop_order_items where order_id = o.id order by line_no limit 3) it), '[]'::jsonb),
+    'more_count', greatest(n - 3, 0),
+    'total', o.total, 'fulfilment', o.fulfilment,
+    'payment', jsonb_build_object('method', v_method, 'bank', v_bank, 'has_slip', e.id is not null, 'transfer_at', e.claimed_transfer_at, 'evidence_id', e.id),
+    'status', o.status, 'quick', jsonb_build_object('ok', (q ->> 'ok')::boolean, 'why', q ->> 'why'), 'app_url', s.app_url);
+end $$;
+
+-- C4 one tap from LINE, acting AS the linked staff member: the existing functions do the work and their own role checks; their audit rows name that person.
+-- result: not_linked | not_allowed {why} | already_done {status, by, at} | refused {code, message} | ask_quick {...} | ask_reason {reasons} | done {action, ...}
+create or replace function public.line_act(p_line_user text, p_action text, p_order uuid, p_card uuid, p_reason integer default null, p_event_id text default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare p public.profiles; o public.shop_orders; s public.line_settings; q jsonb; v_name text; v_reason text; v_last jsonb; ev uuid; m text; st text;
+begin
+  if p_action not in ('accept', 'quick_ask', 'quick_confirm', 'reject_ask', 'reject') then return jsonb_build_object('result', 'refused', 'code', 'UNKNOWN_ACTION'); end if;
+  if p_card is null or not exists (select 1 from public.line_outbox where id = p_card and order_id = p_order) then
+    return jsonb_build_object('result', 'refused', 'code', 'UNKNOWN_CARD'); end if;
+  select pr.* into p from public.line_staff_links l join public.profiles pr on pr.id = l.profile_id where l.line_user_id = p_line_user;
+  if not found then return jsonb_build_object('result', 'not_linked'); end if;
+  if p.status <> 'active' or p.role not in ('ADMIN', 'SUPER_ADMIN') then return jsonb_build_object('result', 'not_allowed', 'why', 'not_staff'); end if;
+  -- from here on auth.uid() is this staff member (both settings: auth.uid() reads claim.sub first), for this transaction only
+  perform set_config('request.jwt.claim.sub', p.id::text, true);
+  perform set_config('request.jwt.claims', json_build_object('sub', p.id, 'role', 'authenticated', 'email', p.email)::text, true);
+  perform set_config('line.via_line', 'on', true);
+  v_name := public.line_person(p.id);
+  select * into s from public.line_settings where id;
+  select * into o from public.shop_orders where id = p_order for update;              -- two taps at the same moment: the second waits here, then sees the new status
+  if not found then return jsonb_build_object('result', 'refused', 'code', 'NOT_FOUND'); end if;
+  if o.status <> 'new' then
+    v_last := public.line_last_action(o.id);
+    return jsonb_build_object('result', 'already_done', 'order_no', o.order_no, 'status', o.status, 'by', v_last ->> 'by', 'at', v_last ->> 'at');
+  end if;
+  if p_action = 'reject_ask' then
+    return jsonb_build_object('result', 'ask_reason', 'order_no', o.order_no, 'reasons', to_jsonb(s.reject_reasons)); end if;
+  begin
+    if p_action = 'accept' then
+      perform public.shop_admin_set_status(o.id, 'confirmed');
+      return jsonb_build_object('result', 'done', 'action', 'accept', 'order_no', o.order_no, 'by', v_name, 'at', now());
+    elsif p_action in ('quick_ask', 'quick_confirm') then
+      if not public.finance_can('verify') then return jsonb_build_object('result', 'not_allowed', 'why', 'not_verifier'); end if;
+      q := public.line_quick_check(o.id);
+      if not (q ->> 'ok')::boolean then return jsonb_build_object('result', 'refused', 'code', q ->> 'why'); end if;
+      if p_action = 'quick_ask' then
+        return jsonb_build_object('result', 'ask_quick', 'order_no', o.order_no, 'amount', q -> 'amount', 'bank', q ->> 'bank', 'transfer_at', q ->> 'transfer_at'); end if;
+      perform public.finance_quick_confirm_evidence((q ->> 'evidence_id')::uuid);
+      perform public.shop_admin_set_status(o.id, 'confirmed');
+      return jsonb_build_object('result', 'done', 'action', 'quick_confirm', 'order_no', o.order_no, 'by', v_name, 'at', now(), 'amount', q -> 'amount');
+    else -- reject
+      if p_reason is null or p_reason < 0 or p_reason >= coalesce(array_length(s.reject_reasons, 1), 0) then
+        return jsonb_build_object('result', 'refused', 'code', 'BAD_REASON'); end if;
+      v_reason := s.reject_reasons[p_reason + 1];
+      if exists (select 1 from public.finance_payment_evidence where invoice_id = o.invoice_id and status in ('submitted', 'confirmed', 'more_evidence'))
+         and not public.finance_can('verify') then
+        return jsonb_build_object('result', 'not_allowed', 'why', 'not_verifier'); end if;
+      for ev in select id from public.finance_payment_evidence where invoice_id = o.invoice_id and status in ('submitted', 'confirmed', 'more_evidence') order by created_at loop
+        perform public.finance_reject_evidence(ev, v_reason);
+      end loop;
+      perform public.shop_admin_set_status(o.id, 'cancelled', v_reason);
+      return jsonb_build_object('result', 'done', 'action', 'reject', 'order_no', o.order_no, 'by', v_name, 'at', now(), 'reason', v_reason);
+    end if;
+  exception when others then                                                          -- everything this block did is undone (a sub-transaction)
+    get stacked diagnostics m = message_text, st = returned_sqlstate;
+    return jsonb_build_object('result', case when st = '42501' then 'not_allowed' else 'refused' end,
+      'code', case when m like 'PAYMENT_RECORDED%' then 'PAYMENT_RECORDED' when m like 'DUPLICATE_SUSPECT%' then 'DUPLICATE_SUSPECT' when m like 'PAYMENT_REQUIRED%' then 'PAYMENT_REQUIRED'
+                   when st = '42501' then 'NOT_ALLOWED' else 'ERROR' end,
+      'why', case when st = '42501' then 'not_staff' end, 'message', left(m, 300));
+  end;
+end $$;
+
+-- C5 the queue: enqueue (a no-op while LINE is off, no group is bound, or the event is switched off)
+create or replace function public.line_enqueue(p_event text, p_order uuid, p_evidence uuid, p_payload jsonb default '{}'::jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare s public.line_settings; v_target text; v_type text := 'group';
+begin
+  select * into s from public.line_settings where id;
+  if s.id is null or not s.enabled or s.group_id is null then return; end if;
+  if not coalesce((s.events ->> p_event)::boolean, false) then return; end if;
+  if p_event = 'customer_notify' then
+    select pr.line_user_id into v_target from public.shop_orders o join public.profiles pr on pr.id = o.profile_id where o.id = p_order;
+    if v_target is null then return; end if;
+    v_type := 'user';
+  else
+    v_target := s.group_id;
+  end if;
+  insert into public.line_outbox (event, order_id, evidence_id, target_type, target_id, payload) values (p_event, p_order, p_evidence, v_type, v_target, coalesce(p_payload, '{}'::jsonb))
+    on conflict do nothing;
+end $$;
+
+create or replace function public.line_trg_order_new()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin perform public.line_enqueue('order_new', new.id, null); return null; end $$;
+drop trigger if exists line_order_new on public.shop_orders;
+create trigger line_order_new after insert on public.shop_orders for each row execute function public.line_trg_order_new();
+
+create or replace function public.line_trg_order_status()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare v_payload jsonb;
+begin
+  v_payload := jsonb_build_object('order_no', new.order_no, 'status', new.status, 'by', coalesce(public.line_person(auth.uid()), 'ระบบ'), 'at', now(),
+    'reason', case when new.status = 'cancelled' then new.cancel_reason end);
+  if current_setting('line.via_line', true) is distinct from 'on' then perform public.line_enqueue('order_status', new.id, null, v_payload); end if;
+  perform public.line_enqueue('customer_notify', new.id, null, v_payload);
+  return null;
+end $$;
+drop trigger if exists line_order_status on public.shop_orders;
+create trigger line_order_status after update of status on public.shop_orders for each row
+  when (old.status is distinct from new.status and new.status in ('confirmed', 'cancelled')) execute function public.line_trg_order_status();
+
+create or replace function public.line_trg_evidence()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare o public.shop_orders;
+begin
+  select * into o from public.shop_orders where invoice_id = new.invoice_id;
+  if not found then return null; end if;
+  if tg_op = 'INSERT' then
+    if new.source = 'customer_slip' and o.created_at <> now() then perform public.line_enqueue('slip_new', o.id, new.id); end if;   -- same transaction as the order: the card covers it
+  elsif new.status in ('rejected', 'more_evidence') and current_setting('line.via_line', true) is distinct from 'on' then
+    perform public.line_enqueue('payment_issue', o.id, new.id, jsonb_build_object('order_no', o.order_no, 'kind', new.status,
+      'reason', case when new.status = 'rejected' then new.reject_reason else new.request_message end));
+  end if;
+  return null;
+end $$;
+drop trigger if exists line_evidence_new on public.finance_payment_evidence;
+create trigger line_evidence_new after insert on public.finance_payment_evidence for each row execute function public.line_trg_evidence();
+drop trigger if exists line_evidence_issue on public.finance_payment_evidence;
+create trigger line_evidence_issue after update of status on public.finance_payment_evidence for each row
+  when (old.status is distinct from new.status and new.status in ('rejected', 'more_evidence')) execute function public.line_trg_evidence();
+
+create or replace function public.line_trg_analysis()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare o public.shop_orders;
+begin
+  select so.* into o from public.finance_payment_evidence e join public.shop_orders so on so.invoice_id = e.invoice_id where e.id = new.evidence_id;
+  if found then
+    perform public.line_enqueue('payment_issue', o.id, new.evidence_id, jsonb_build_object('order_no', o.order_no, 'kind', 'ai', 'reason', new.result));
+  end if;
+  return null;
+end $$;
+drop trigger if exists line_analysis_issue on public.finance_slip_analysis;
+create trigger line_analysis_issue after update of status on public.finance_slip_analysis for each row
+  when (new.status = 'done' and old.status is distinct from 'done' and new.result is distinct from 'match') execute function public.line_trg_analysis();
+
+-- C6 the dispatcher's side: claim due rows (with the card read now), record the outcome, kick the dispatcher
+create or replace function public.line_claim_outbox(p_limit integer default 20)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v jsonb;
+begin
+  if not coalesce((select enabled from public.line_settings where id), false) then return '[]'::jsonb; end if;
+  with c as (
+    select id from public.line_outbox
+     where (status in ('queued', 'failed') and next_attempt_at <= now()) or (status = 'sending' and updated_at < now() - interval '5 minutes')
+     order by created_at limit least(greatest(coalesce(p_limit, 20), 1), 50) for update skip locked
+  ), u as (
+    update public.line_outbox o set status = 'sending', updated_at = now() from c where o.id = c.id returning o.*
+  )
+  select coalesce(jsonb_agg(jsonb_build_object('id', u.id, 'event', u.event, 'target_type', u.target_type, 'target_id', u.target_id, 'attempts', u.attempts,
+           'card', case when u.order_id is not null then public.line_card_data(u.order_id) end, 'payload', u.payload) order by u.created_at), '[]'::jsonb) into v from u;
+  return v;
+end $$;
+
+create or replace function public.line_complete_outbox(p_id uuid, p_ok boolean, p_retryable boolean, p_error text, p_request_id text)
+returns void language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if p_ok then
+    update public.line_outbox set status = 'sent', sent_at = now(), last_error = null, line_request_id = left(p_request_id, 100), updated_at = now() where id = p_id;
+    return;
+  end if;
+  update public.line_outbox set attempts = attempts + 1, last_error = left(p_error, 500), updated_at = now() where id = p_id returning attempts into n;
+  if not found then return; end if;
+  if not coalesce(p_retryable, false) or n >= 6 then
+    update public.line_outbox set status = 'dead' where id = p_id;
+  else
+    update public.line_outbox set status = 'failed', next_attempt_at = now() + make_interval(mins => (array[1, 2, 5, 15, 60])[n]) where id = p_id;
+  end if;
+end $$;
+
+create or replace function public.line_kick()
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from public.line_outbox where (status in ('queued', 'failed') and next_attempt_at <= now()) or (status = 'sending' and updated_at < now() - interval '5 minutes')) then
+    return; end if;
+  perform net.http_post(url := 'https://hlvravynjalculvplrxc.supabase.co/functions/v1/line-dispatch', body := '{}'::jsonb,
+    headers := jsonb_build_object('Content-Type', 'application/json', 'x-line-dispatch-secret', public.line_vault_get('line_dispatch_secret')), timeout_milliseconds := 10000);
+end $$;
+create or replace function public.line_trg_outbox_kick()
+returns trigger language plpgsql security definer set search_path = public as $$ begin perform public.line_kick(); return null; end $$;
+drop trigger if exists line_outbox_kick on public.line_outbox;
+create trigger line_outbox_kick after insert on public.line_outbox for each statement execute function public.line_trg_outbox_kick();
+do $$ begin
+  if exists (select 1 from cron.job where jobname = 'line-dispatch') then perform cron.unschedule('line-dispatch'); end if;
+  perform cron.schedule('line-dispatch', '* * * * *', 'select public.line_kick()');
+end $$;
+
+-- C7 staff: the delivery log and "send again"
+create or replace function public.line_admin_outbox(p_filter text default 'all', p_limit integer default 100)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+begin
+  perform public.shop_require_staff('see the LINE delivery log');
+  return coalesce((select jsonb_agg(jsonb_build_object('id', x.id, 'event', x.event, 'order_id', x.order_id, 'order_no', o.order_no, 'target_type', x.target_type, 'status', x.status,
+      'attempts', x.attempts, 'last_error', x.last_error, 'created_at', x.created_at, 'sent_at', x.sent_at, 'next_attempt_at', x.next_attempt_at) order by x.created_at desc)
+    from (select * from public.line_outbox where coalesce(p_filter, 'all') = 'all' or (p_filter = 'failed' and status in ('failed', 'dead'))
+          order by created_at desc limit least(greatest(coalesce(p_limit, 100), 1), 500)) x
+    left join public.shop_orders o on o.id = x.order_id), '[]'::jsonb);
+end $$;
+
+create or replace function public.line_admin_resend(p_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform public.shop_require_staff('send a LINE message again');
+  update public.line_outbox set status = 'queued', attempts = 0, next_attempt_at = now(), last_error = null, updated_at = now()
+   where id = p_id and status in ('failed', 'dead', 'skipped');
+  if not found then raise exception 'This message is not waiting to be sent again'; end if;
+  perform public.shop_log('line', p_id::text, 'line.resend', '{}'::jsonb);
+  perform public.line_kick();
+end $$;
+
+-- C8 grants
+revoke execute on function public.line_person(uuid), public.line_last_action(uuid), public.line_quick_check(uuid), public.line_card_data(uuid),
+  public.line_act(text, text, uuid, uuid, integer, text), public.line_enqueue(text, uuid, uuid, jsonb), public.line_claim_outbox(integer),
+  public.line_complete_outbox(uuid, boolean, boolean, text, text), public.line_kick(), public.line_trg_order_new(), public.line_trg_order_status(),
+  public.line_trg_evidence(), public.line_trg_analysis(), public.line_trg_outbox_kick() from public, anon, authenticated;
+grant execute on function public.line_act(text, text, uuid, uuid, integer, text), public.line_claim_outbox(integer),
+  public.line_complete_outbox(uuid, boolean, boolean, text, text) to service_role;
+revoke execute on function public.line_admin_outbox(text, integer), public.line_admin_resend(uuid) from public, anon;
+grant execute on function public.line_admin_outbox(text, integer), public.line_admin_resend(uuid) to authenticated;
