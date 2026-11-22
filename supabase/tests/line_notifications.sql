@@ -124,7 +124,90 @@ select pg_temp.q('L1.10 an expired code is refused',
   format($q$ select public.line_redeem_code('Uadm00000000000000000000000000001', 'Adm', %L) ->> 'result' = 'bad_code' $q$, pg_temp.c('code_old')));
 reset role;
 
--- L2 and L3 sections are appended above this line by later tasks.
+-- ================================================================================================= L2 finance: optional reference, duplicate rule, quick confirm
+-- Real orders and slips through the shop's own functions (customer A), every order the same amount; transfer minutes decide what counts as a duplicate.
+insert into t_ctx select 'scb', id::text from public.finance_bank_accounts where code = 'SCB';
+-- a real sellable SKU (the catalogue changes: never a fixed code) and its server price
+insert into t_ctx select 'SKU', sku_code from public.shop_sellable where available and (max_qty is null or max_qty >= 12) order by sku_code limit 1;
+insert into t_ctx select 'P1', price::text from public.shop_sellable where sku_code = pg_temp.c('SKU');
+insert into t_ctx values ('M1', (date_trunc('minute', now()) - interval '40 minutes')::text);
+update public.shop_settings set shop_open = true, pickup_enabled = true, delivery_enabled = true, shipping_fee = 50, free_shipping_min = null, require_payment_slip = false;
+-- an order of 2 x FG-000001 (pickup) by A, and its slip claimed at p_at with the receiving account SCB; keys o_<k>, i_<k>, e_<k>
+create or replace function pg_temp.order_slip(p_key text, p_at timestamptz, p_qty int default 2) returns void language plpgsql as $$
+declare r jsonb;
+begin
+  perform pg_temp.as_user(pg_temp.c('A')::uuid);
+  r := public.shop_place_order('line-key-' || p_key, format('[{"sku_code":"%s","qty":%s}]', pg_temp.c('SKU'), p_qty)::jsonb, 'pickup', 'Somchai', '081-234-5678', null, null,
+                               p_qty * pg_temp.c('P1')::numeric, 'bank:SCB');
+  insert into t_ctx values ('o_' || p_key, r -> 'order' ->> 'id'), ('i_' || p_key, r -> 'order' -> 'invoice' ->> 'id');
+  insert into t_ctx select 'e_' || p_key, public.finance_submit_evidence(pg_temp.c('i_' || p_key)::uuid, pg_temp.c('A') || '/line-' || p_key || '.png',
+    md5('line-' || p_key) || md5('line-b-' || p_key), 'image/png', p_qty * pg_temp.c('P1')::numeric, p_at, 'SCB', null, pg_temp.c('scb')::uuid)::text;
+end $$;
+set local role authenticated;
+select pg_temp.order_slip('21', pg_temp.c('M1')::timestamptz + interval '5 seconds');
+select pg_temp.order_slip('22', pg_temp.c('M1')::timestamptz + interval '35 seconds');
+select pg_temp.order_slip('23', pg_temp.c('M1')::timestamptz + interval '3 minutes');
+select pg_temp.order_slip('24', pg_temp.c('M1')::timestamptz + interval '4 minutes');
+select pg_temp.order_slip('25', pg_temp.c('M1')::timestamptz + interval '5 minutes');
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select pg_temp.q('L2.1 Confirm without a bank reference works',
+  format($q$ select public.finance_confirm_evidence(%L, %s, '', %L) ->> 'status' = 'confirmed' $q$, pg_temp.c('e_21'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '5 seconds'));
+reset role;
+select pg_temp.q('L2.1 it is stored without a reference and marked as confirmed on the web',
+  format($q$ select confirmed_bank_ref is null and confirmed_via = 'web' and status = 'confirmed' from public.finance_payment_evidence where id = %L $q$, pg_temp.c('e_21')));
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select pg_temp.err_like('L2.2 same amount, account and minute without a reference is a suspected duplicate',
+  format($q$ select public.finance_confirm_evidence(%L, %s, '', %L) $q$, pg_temp.c('e_22'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '35 seconds'), 'DUPLICATE_SUSPECT%');
+select pg_temp.err_state('L2.2 the duplicate refusal is SQLSTATE 23505',
+  format($q$ select public.finance_confirm_evidence(%L, %s, null, %L) $q$, pg_temp.c('e_22'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '35 seconds'), '23505');
+select pg_temp.q('L2.3 with a fresh bank reference the same slip is confirmed',
+  format($q$ select public.finance_confirm_evidence(%L, %s, 'LINETEST000022', %L) ->> 'status' = 'confirmed' $q$, pg_temp.c('e_22'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '35 seconds'));
+select pg_temp.err_like('L2.4 a reference already used is still refused as before',
+  format($q$ select public.finance_confirm_evidence(%L, %s, 'linetest-000022', %L) $q$, pg_temp.c('e_23'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '3 minutes'), 'Bank transaction % was already recorded%');
+select public.finance_confirm_evidence(pg_temp.c('e_23')::uuid, 2 * pg_temp.c('P1')::numeric, '', pg_temp.c('M1')::timestamptz + interval '3 minutes');
+select pg_temp.q('L2.5 Post without any reference creates the receipt',
+  format($q$ select (public.finance_post_evidence(%L) ->> 'receipt_no') is not null $q$, pg_temp.c('e_23')));
+reset role;
+select pg_temp.q('L2.5 the slip is posted, the receipt has no reference, one bank receipt is queued for the ledger',
+  format($q$ select e.status = 'verified' and e.bank_trans_ref is null and r.bank_trans_ref is null
+       and (select count(*) from public.finance_gl_queue g where g.ref_id = r.id and g.event_type = 'BANK_RECEIPT') = 1
+       from public.finance_payment_evidence e join public.finance_receipts r on r.evidence_id = e.id where e.id = %L $q$, pg_temp.c('e_23')));
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select pg_temp.err_like('L2.5 Post without a reference re-checks the duplicate rule (a same-minute twin was confirmed meanwhile)',
+  format($q$ select public.finance_post_evidence(%L) $q$, pg_temp.c('e_21')), 'DUPLICATE_SUSPECT%');
+select pg_temp.q('L2.6 Post may add the reference from the bank statement',
+  format($q$ select (public.finance_post_evidence(%L, null, 'LINETEST000021') ->> 'receipt_no') is not null $q$, pg_temp.c('e_21')));
+reset role;
+select pg_temp.q('L2.6 the added reference is on the slip and on the receipt',
+  format($q$ select e.confirmed_bank_ref = 'LINETEST000021' and r.bank_trans_ref = 'LINETEST000021'
+       from public.finance_payment_evidence e join public.finance_receipts r on r.evidence_id = e.id where e.id = %L $q$, pg_temp.c('e_21')));
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select pg_temp.err_like('L2.7 the legacy one-step verify still requires a reference',
+  format($q$ select public.finance_verify_evidence(%L, %s, '', %L) $q$, pg_temp.c('e_24'), 2 * pg_temp.c('P1')::numeric, pg_temp.c('M1')::timestamptz + interval '4 minutes'),
+  'The bank transaction reference is required%');
+select pg_temp.err_state('L2.8 clients cannot call the LINE quick confirm', format($q$ select public.finance_quick_confirm_evidence(%L) $q$, pg_temp.c('e_25')), '42501');
+reset role;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select pg_temp.q('L2.8 quick confirm (internal, as a manager) confirms at the claimed amount and time, without a reference',
+  format($q$ select public.finance_quick_confirm_evidence(%L) ->> 'status' = 'confirmed' $q$, pg_temp.c('e_25')));
+select pg_temp.q('L2.8 the quick-confirmed slip carries line_quick, the claimed amount and time, no reference',
+  format($q$ select confirmed_via = 'line_quick' and confirmed_amount = claimed_amount and confirmed_transfer_at = claimed_transfer_at and confirmed_bank_ref is null
+       and confirm_note = 'LINE quick approve' and confirmed_by = %L::uuid from public.finance_payment_evidence where id = %L $q$, pg_temp.c('S'), pg_temp.c('e_25')));
+select pg_temp.q('L2.8 the confirm is logged with via line_quick',
+  format($q$ select exists (select 1 from public.finance_events where entity_id = %L::uuid and action = 'evidence.confirm' and detail ->> 'via' = 'line_quick') $q$, pg_temp.c('e_25')));
+set local role authenticated;
+select pg_temp.as_user(pg_temp.c('S')::uuid);
+select pg_temp.q('L2.9 the review list filters LINE quick approvals and carries confirmed_via and no_ref',
+  format($q$ select exists (select 1 from jsonb_array_elements(public.finance_review_list('{"via":"line_quick"}', 200) -> 'items') x
+       where x ->> 'evidence_id' = %L and x ->> 'confirmed_via' = 'line_quick' and (x ->> 'no_ref')::boolean)
+       and not exists (select 1 from jsonb_array_elements(public.finance_review_list('{"via":"line_quick"}', 200) -> 'items') x where x ->> 'evidence_id' = %L) $q$,
+     pg_temp.c('e_25'), pg_temp.c('e_22')));
+reset role;
+
+-- L3 section is appended above this line by a later task.
 
 -- =========================================================================================== result
 do $$ declare r text; bad int; tot int;
