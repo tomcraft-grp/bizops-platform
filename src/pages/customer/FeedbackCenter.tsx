@@ -6,7 +6,7 @@ import { setLang, useLang } from '../../domain/store';
 import { t } from '../../lib/i18n';
 import {
   FEEDBACK_CATEGORIES, FEEDBACK_PRIORITIES, FeedbackCategory, FeedbackIssue, FeedbackNotification, FeedbackPriority, IssueThread,
-  customerMessage, getThread, listFeedback, listNotifications, markNotificationsRead, statusMeta, submitFeedback,
+  REPORTER_STATUS_TEXT, REPORTER_STEPS, closingNote, customerMessage, getThread, listFeedback, listNotifications, markNotificationsRead, reporterStep, statusMeta, submitFeedback,
 } from '../../lib/feedbackApi';
 import { Banner, Button, Empty, Field, Input, Select, Textarea } from '../../ui/kit';
 import { AttachmentList, AttachmentPicker, CategoryBadge, StatusBadge } from '../../ui/feedbackParts';
@@ -177,7 +177,41 @@ function NewFeedback({ fromArea, onCancel, onDone }: { fromArea: string; onCance
   );
 }
 
-const EVENT_TEXT: Record<string, string> = { created: 'Feedback submitted', attachment: 'File attached', resolution: 'Resolution recorded' };
+/**
+ * Where the reporter's issue stands, in plain words: the four-step path, what the current status means, when it last changed, who handles it,
+ * and once it is resolved or closed the resolution, who resolved it, and the closing note. Older databases without the closure columns show what they have.
+ */
+export function ReporterStatusCard({ issue, events }: { issue: FeedbackIssue; events: IssueThread['events'] }) {
+  const lang = useLang();
+  const step = reporterStep(issue.status);
+  const done = issue.status === 'resolved' || issue.status === 'closed';
+  const note = closingNote(events, issue.status);
+  const tone = issue.status === 'waiting_info' ? 'warn' : done ? 'good' : 'info';
+  return (
+    <div className="card card-b col gap-8" data-testid="reporter-status">
+      <ol className="row" aria-label={t(lang, 'Progress')} style={{ listStyle: 'none', margin: 0, padding: 0, gap: 4 }}>
+        {REPORTER_STEPS.map((s, i) => (
+          <li key={s} className="grow col gap-4" aria-current={i === step ? 'step' : undefined} style={{ fontSize: 11.5, textAlign: 'center' }}>
+            <span style={{ height: 4, borderRadius: 2, background: i <= step ? (issue.status === 'rejected' ? 'var(--muted, #888)' : '#047a3b') : 'var(--border)' }} />
+            <span style={{ fontWeight: i === step ? 700 : 400 }} className={i === step ? '' : 'muted'}>{t(lang, i === 3 && issue.status === 'rejected' ? 'Rejected' : s)}</span>
+          </li>
+        ))}
+      </ol>
+      <Banner tone={tone}><b>{t(lang, REPORTER_STATUS_TEXT[issue.status] ?? statusMeta(issue.status).label)}</b></Banner>
+      <div className="col gap-4" style={{ fontSize: 13 }}>
+        <div><span className="muted">{t(lang, 'Current status')}:</span> <StatusBadge status={issue.status} /></div>
+        <div><span className="muted">{t(lang, 'Last status update')}:</span> {dateTimeFmt(issue.status_changed_at ?? issue.last_activity_at)}</div>
+        {issue.handler_label && <div><span className="muted">{t(lang, 'Handled by')}:</span> {issue.handler_label}</div>}
+        {done && issue.resolution && <div><span className="muted">{t(lang, 'Resolution')}:</span> <span style={{ whiteSpace: 'pre-wrap' }}>{issue.resolution}</span></div>}
+        {done && (issue.resolved_by_label || issue.resolved_at) && <div><span className="muted">{t(lang, 'Resolved')}:</span> {issue.resolved_at ? dateTimeFmt(issue.resolved_at) : ''}{issue.resolved_by_label ? ` · ${issue.resolved_by_label}` : ''}</div>}
+        {issue.status === 'closed' && (issue.closed_at || issue.closed_by_label) && <div><span className="muted">{t(lang, 'Closed')}:</span> {issue.closed_at ? dateTimeFmt(issue.closed_at) : ''}{issue.closed_by_label ? ` · ${issue.closed_by_label}` : ''}</div>}
+        {note && <div><span className="muted">{t(lang, issue.status === 'rejected' ? 'Reason' : 'Closing note')}:</span> <span style={{ whiteSpace: 'pre-wrap' }}>{note}</span></div>}
+      </div>
+    </div>
+  );
+}
+
+const EVENT_TEXT: Record<string, string> ={ created: 'Feedback submitted', attachment: 'File attached', resolution: 'Resolution recorded' };
 
 function Thread({ issueId, issue, onBack, onChanged }: { issueId: string; issue?: FeedbackIssue; onBack: () => void; onChanged: () => void }) {
   const lang = useLang();
@@ -235,8 +269,7 @@ function Thread({ issueId, issue, onBack, onChanged }: { issueId: string; issue?
           <div className="row wrap" style={{ gap: 6 }}><CategoryBadge category={issue.category} /><span className="muted" style={{ fontSize: 12 }}>{dateTimeFmt(issue.created_at)}</span></div>
           <div style={{ whiteSpace: 'pre-wrap', fontSize: 14 }}>{issue.description}</div>
           <AttachmentList items={(th?.attachments ?? []).filter((a) => !a.comment_id)} />
-          {issue.status === 'waiting_info' && <Banner tone="warn">{t(lang, 'The team needs more information from you. Please reply below.')}</Banner>}
-          {issue.resolution && (issue.status === 'resolved' || issue.status === 'closed') && <Banner tone="good"><b>{t(lang, 'Resolution')}:</b> {issue.resolution}</Banner>}
+          <ReporterStatusCard issue={issue} events={th?.events ?? []} />
         </div>
       )}
       {err && <Banner tone="bad">{err}</Banner>}

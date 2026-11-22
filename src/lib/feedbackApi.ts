@@ -27,6 +27,8 @@ export interface FeedbackIssue {
   // English technical context (migration 20261115600000): absent/null on issues that were never processed; the description above is never changed by it
   english_context?: string | null; english_context_status?: EnglishContextStatus; english_context_error?: string | null; english_context_at?: string | null;
   english_context_source?: 'ai' | 'manual' | 'translation' | null; english_context_model?: string | null; english_context_attempts?: number; english_context_started_at?: string | null;
+  // Closure tracking (migration 20261122100000): absent on a database without it. Labels are display names, readable by the reporter too.
+  status_changed_at?: string | null; resolved_by_label?: string | null; closed_at?: string | null; closed_by_label?: string | null; handler_label?: string | null;
 }
 export interface FeedbackComment { id: string; issue_id: string; author_id: string | null; author_label: string; kind: CommentKind; body: string; requests_info: boolean; created_at: string }
 export interface FeedbackAttachment { id: string; issue_id: string; comment_id: string | null; storage_path: string; file_name: string; mime_type: string; size_bytes: number; created_at: string }
@@ -75,6 +77,39 @@ export const NEXT_STATUSES: Record<FeedbackStatus, FeedbackStatus[]> = {
   closed: ['under_review'],
   rejected: ['under_review'],
 };
+
+/** Days an open issue may wait before it counts as overdue, by priority (measured from submission; "waiting for information" never counts, the reporter has the ball). */
+export const FEEDBACK_SLA_DAYS: Record<FeedbackPriority, number> = { critical: 1, high: 3, medium: 7, low: 14 };
+export function isOverdue(i: Pick<FeedbackIssue, 'status' | 'priority' | 'created_at'>, now = Date.now()): boolean {
+  if (!OPEN_STATUSES.includes(i.status) || i.status === 'waiting_info') return false;
+  const days = FEEDBACK_SLA_DAYS[i.priority] ?? 7;
+  return now - Date.parse(i.created_at) > days * 86_400_000;
+}
+
+/** What the reporter is told about each status (English source; Thai via t()). */
+export const REPORTER_STATUS_TEXT: Record<FeedbackStatus, string> = {
+  submitted: 'Your feedback has been received.',
+  under_review: 'Your issue is being investigated.',
+  accepted: 'Your issue has been accepted and is queued for work.',
+  in_progress: 'Your issue is currently in progress.',
+  waiting_info: 'The team needs more information from you. Please reply below.',
+  resolved: 'Your issue has been resolved.',
+  closed: 'Your issue has been closed.',
+  rejected: 'Your feedback was reviewed and will not be actioned.',
+};
+
+/** The simple path the reporter sees; the side statuses map onto the nearest step. */
+export const REPORTER_STEPS = ['Submitted', 'In progress', 'Resolved', 'Closed'] as const;
+export function reporterStep(s: FeedbackStatus): number {
+  return s === 'submitted' ? 0 : s === 'resolved' ? 2 : s === 'closed' || s === 'rejected' ? 3 : 1;
+}
+
+/** The note written when the issue was last closed (or rejected), from the visible history; null when none was given. */
+export function closingNote(events: Pick<FeedbackEvent, 'kind' | 'to_value' | 'note' | 'id'>[], status: FeedbackStatus): string | null {
+  if (status !== 'closed' && status !== 'rejected') return null;
+  const e = events.filter((x) => x.kind === 'status' && x.to_value === status).sort((a, b) => b.id - a.id)[0];
+  return e?.note?.trim() || null;
+}
 
 export const statusMeta = (s: string) => FEEDBACK_STATUSES.find((x) => x.v === s) ?? { v: s as FeedbackStatus, label: s, tone: '' as Tone };
 export const priorityMeta = (p: string) => FEEDBACK_PRIORITIES.find((x) => x.v === p) ?? { v: p as FeedbackPriority, label: p, tone: '' as Tone };

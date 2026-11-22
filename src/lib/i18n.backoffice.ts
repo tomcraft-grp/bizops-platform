@@ -847,6 +847,11 @@ export const TH_BACKOFFICE: Record<string, string> = {
   'The profile tab must stay visible (members edit their details there)': 'ต้องแสดงแท็บโปรไฟล์เสมอ (สมาชิกใช้แก้ไขข้อมูลของตนเอง)',
   'The Home tab must stay visible': 'ต้องแสดงแท็บหน้าหลักเสมอ',
   // Products: pull the central SKU master
+  'Reference (optional)': 'เลขอ้างอิง (ไม่บังคับ)', 'Ref / slip no.': 'เลขอ้างอิง / เลขสลิป',
+  'No payments yet': 'ยังไม่มีการชำระเงิน', 'Wallet top-up': 'เติมเงินเข้ากระเป๋า', 'Bank transfer / QR': 'โอนเงิน / QR', 'Showing {n} of {total}.': 'แสดง {n} จาก {total} รายการ',
+  'The payment history is not installed in the database yet.': 'ฐานข้อมูลยังไม่ได้ติดตั้งประวัติการชำระเงิน',
+  'The back office is open in another tab on this computer.': 'หลังร้านเปิดอยู่ในอีกแท็บหนึ่งของเครื่องนี้',
+  'Work in one tab only: receipts, orders and stock saved in one tab can be overwritten by the other. Close the other tab.': 'กรุณาใช้งานแท็บเดียว: ใบรับเงิน คำสั่งซื้อ และสต็อกที่บันทึกในแท็บหนึ่งอาจถูกอีกแท็บเขียนทับ ปิดแท็บอื่นก่อน',
   'Pull SKUs from central database': 'ดึง SKU จากฐานข้อมูลกลาง', 'Pull SKUs': 'ดึง SKU',
   'Pull {n} SKUs into this device?': 'ดึง SKU {n} รายการเข้าเครื่องนี้?',
   'Products are created or updated by SKU code on this device (a product pulled earlier under its old code is found by that legacy code and re-coded, not duplicated; products with other codes are kept). {r} SKUs are marked "needs review"; SKUs without a price are imported as inactive.':

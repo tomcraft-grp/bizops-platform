@@ -256,6 +256,7 @@ export function registryEditPatch(p: Product, f: Product): SkuDetailsPatch {
   if (f.stdCost !== p.stdCost) patch.cost_price = f.stdCost;
   if (f.price !== p.price) patch.selling_price = f.price;
   if (f.unit !== p.unit) patch.unit_th = f.unit;
+  if (f.categoryId && f.categoryId !== p.categoryId) patch.category_id = f.categoryId;
   return patch;
 }
 
@@ -310,13 +311,14 @@ export async function saveProductEdit(p: Product, f: Product): Promise<ProductEd
 }
 
 /** The registry patch for a product typed into the New-product form: the name, and the price, cost, barcode, brand and unit when they were filled in. */
-export function newSkuDetails(f: { name: string; price: number; stdCost: number; barcode: string; brand: string; unit: string }): SkuDetailsPatch {
+export function newSkuDetails(f: { name: string; price: number; stdCost: number; barcode: string; brand: string; unit: string; categoryId?: string }): SkuDetailsPatch {
   const patch: SkuDetailsPatch = { name_full: f.name.trim() };
   if (f.price > 0) patch.selling_price = f.price;
   if (f.stdCost > 0) patch.cost_price = f.stdCost;
   if (f.barcode) patch.barcode = f.barcode;
   if (f.brand.trim()) patch.brand = f.brand.trim();
   if (f.unit.trim()) patch.unit_th = f.unit.trim();
+  if (f.categoryId) patch.category_id = f.categoryId;
   return patch;
 }
 

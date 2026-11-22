@@ -92,9 +92,11 @@ export interface RegistryRow {
   product_type: string | null; domain: string; pack_qty: number | null; unit_en: string | null; unit_th: string | null; barcode: string | null;
   status: 'active' | 'inactive'; cost_price: number | null; retail_price: number | null; selling_price: number | null; friend_price: number | null;
   wholesale_price: number | null; ecommerce_price: number | null; needs_review: boolean; review_notes: string | null; updated_at: string;
+  /** the central category (migration 20261122110000); absent on a database without it */
+  category_id?: string | null; category_code?: string | null; category_name?: string | null;
 }
 export interface SkuChanges { cursor: number; full: boolean; rows: RegistryRow[] }
-export type SkuDetailsPatch = Partial<Pick<RegistryRow, 'name_full' | 'brand' | 'unit_th' | 'barcode' | 'cost_price' | 'selling_price' | 'retail_price' | 'ecommerce_price' | 'product_type' | 'pack_qty'>>;
+export type SkuDetailsPatch = Partial<Pick<RegistryRow, 'name_full' | 'brand' | 'unit_th' | 'barcode' | 'cost_price' | 'selling_price' | 'retail_price' | 'ecommerce_price' | 'product_type' | 'pack_qty'>> & { category_id?: string };
 export interface SkuChangeRow { id: number; at: string; sku_code: string; actor_name: string | null; changes: Record<string, { old: unknown; new: unknown }> }
 
 // ------------------------------------------------------------------------------------------------ customer calls

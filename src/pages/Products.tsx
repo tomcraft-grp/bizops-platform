@@ -18,10 +18,10 @@ import { toast } from '../domain/store';
 import { cx, dateFmt, money, money0, pct, qtyFmt, shortDay, dayKey } from '../lib/util';
 import type { DB, ID, Product, ProductKind } from '../domain/types';
 import { t as tl } from '../lib/i18n';
-import { PullSkuButton } from '../ui/PullSkuButton';
 import { SkuCodesButton } from '../ui/SkuCodesButton';
 import { KINDS_OF_CATEGORY, SKU_CATEGORIES, SKU_CATEGORY_LABEL, isStandardSku, skuCategoryOf, type SkuCategory } from '../domain/sku';
 import { newClientRef, peekSku, reserveSku, voidSku } from '../lib/skuApi';
+import { categoryChoices, categoryName, useCategories, useCategoryStore } from '../lib/categoryApi';
 
 /** The marketplace prices the central registry owns (its e-commerce price, see importSkuMaster): read-only on this device for products that have a registry code. */
 const REGISTRY_MARKET: string[] = ['SHOPEE', 'LAZADA', 'TIKTOK'];
@@ -39,17 +39,22 @@ export default function Products() {
   const [adding, setAdding] = useState(false);
   const sync = useSkuSync();
   const packs = usePackCodes();
+  const cats = useCategories(!DEMO_SEED);
+  const catsOn = cats.status === 'ready';
+  const catById = useMemo(() => new Map(cats.items.map((c) => [c.id, c])), [cats.items]);
+  const [catF, setCatF] = useState('');
+  const catLabel = (p: Product) => { const c = p.categoryId ? catById.get(p.categoryId) : undefined; return c ? categoryName(c, lang === 'en' ? 'en' : 'th') : p.category; };
   // Opening the page brings in what changed in the central registry (one small call when nothing did), unless that already happened within the last 5 minutes.
   useEffect(() => { if (canEdit && !DEMO_SEED) void syncSkusIfStale(); }, [canEdit]);
   const openId = sp.get('p');
   const stock = useMemo(() => { const m: Record<ID, number> = {}; for (const k in db.balances) { const pid = k.split('|')[1]; m[pid] = (m[pid] || 0) + db.balances[k].qty; } return m; }, [db.balances]);
   // "Not synced yet": no registry code (the product exists only on this device), or its price and details are still waiting to be uploaded.
   const notSynced = (p: Product) => !isStandardSku(p.sku) || sync.waiting.includes(p.sku);
-  const rows = db.products.filter((p) => (!kind || p.kind === kind) && (!skuType || skuCategoryOf(p.kind) === skuType) && (!status || (status === 'unsynced' ? notSynced(p) : (status === 'active') === p.active)));
+  const rows = db.products.filter((p) => (!catF || (catF === '__none__' ? !p.categoryId : p.categoryId === catF || catById.get(p.categoryId ?? '')?.parent_id === catF)) && (!kind || p.kind === kind) && (!skuType || skuCategoryOf(p.kind) === skuType) && (!status || (status === 'unsynced' ? notSynced(p) : (status === 'active') === p.active)));
   return (
     <>
       <PageHead title="Products" desc="One catalog for resale goods, manufactured goods, menu items (recipes), raw materials and packaging — with channel prices, images and cost history."
-        actions={<>{canEdit && <SkuCodesButton />}{canEdit && <PullSkuButton />}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>}</>} />
+        actions={<>{canEdit && <SkuCodesButton />}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>}</>} />
       {canEdit && !DEMO_SEED && <SyncBanner sync={sync} />}
       <div className="grid g4 mb16">
         <Kpi label="Products" value={db.products.length} sub={<Tx vars={{ n: db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).length }}>{'{n} sellable'}</Tx>} />
@@ -58,12 +63,12 @@ export default function Products() {
         <Kpi label="Inactive" value={db.products.filter((p) => !p.active).length} sub="hidden from POS" />
       </div>
       <Card flush>
-        <DataTable rows={rows} rowKey={(p) => p.id} pageSize={14} onRow={(p) => setSp({ p: p.id })} search={(p) => `${p.name} ${p.sku} ${p.legacySku ?? ''} ${p.barcode ?? ''} ${p.brand ?? ''} ${p.category} ${p.description ?? ''}`}
-          toolbar={<><Select sm style={{ width: 'auto' }} value={skuType} onChange={(e) => setSkuType(e.target.value as typeof skuType)}><option value="">All SKU types</option>{SKU_CATEGORIES.map((c) => <option key={c} value={c}>{SKU_CATEGORY_LABEL[c]}</option>)}</Select><Select sm style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}><option value="">All types</option>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select><Select sm style={{ width: 'auto' }} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="unsynced">Not synced yet</option></Select></>}
+        <DataTable rows={rows} rowKey={(p) => p.id} pageSize={14} onRow={(p) => setSp({ p: p.id })} search={(p) => `${p.name} ${p.sku} ${p.legacySku ?? ''} ${p.barcode ?? ''} ${p.brand ?? ''} ${p.category} ${catLabel(p)} ${p.description ?? ''}`}
+          toolbar={<><Select sm style={{ width: 'auto' }} value={skuType} onChange={(e) => setSkuType(e.target.value as typeof skuType)}><option value="">All SKU types</option>{SKU_CATEGORIES.map((c) => <option key={c} value={c}>{SKU_CATEGORY_LABEL[c]}</option>)}</Select><Select sm style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}><option value="">All types</option>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select><Select sm style={{ width: 'auto' }} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="unsynced">Not synced yet</option></Select>{catsOn && <Select sm style={{ width: 'auto' }} value={catF} onChange={(e) => setCatF(e.target.value)} aria-label={tl(lang, 'Category')}><option value="">{tl(lang, 'All categories')}</option>{cats.items.filter((c) => c.is_group || c.product_count > 0 || c.is_active).map((c) => <option key={c.id} value={c.id}>{c.is_group ? '▸ ' : c.parent_id ? '\u00a0\u00a0' : ''}{categoryName(c, lang === 'en' ? 'en' : 'th')}{c.is_active ? '' : ` (${tl(lang, 'inactive')})`}</option>)}<option value="__none__">{tl(lang, 'No category yet')}</option></Select>}</>}
           cols={[
             { key: 'n', header: 'Product', sort: (p) => p.name, render: (p) => <div className="row"><ProductEmoji p={p} size={36} /><div><b>{p.name}</b>{packs.has(p.sku) && <>{' '}<span title={tl(lang, 'Promotion pack')}><Badge tone="info">Pack</Badge></span></>}<div className="sub">{p.sku}{p.barcode ? ` · ${p.barcode}` : ''}</div></div></div> },
             { key: 'k', header: 'Type', hideSm: true, render: (p) => <Badge><Tx>{PRODUCT_KIND_LABEL[p.kind]}</Tx></Badge> },
-            { key: 'c', header: 'Category', hideSm: true, render: (p) => p.category },
+            { key: 'c', header: 'Category', hideSm: true, sort: (p) => catLabel(p), render: (p) => catLabel(p) },
             { key: 'p', header: 'Price', num: true, sort: (p) => p.price, render: (p) => (p.price ? money(p.price) : <span className="muted">–</span>) },
             ...(canCost ? [{ key: 'cost', header: 'Avg cost', num: true, render: (p: Product) => money(p.kind === 'menu' ? (bomForProduct(db, p.id) ? rollupPerUnit(db, p.id) : p.stdCost) : globalAvgCost(db, p.id)) }, { key: 'm', header: 'Margin', num: true, render: (p: Product) => { if (!p.price) return <span className="muted">–</span>; const c = p.kind === 'menu' ? rollupPerUnit(db, p.id) : globalAvgCost(db, p.id); return pct((p.price / 1.07 - c) / (p.price / 1.07), 0); } }] : []),
             { key: 's', header: 'On hand', num: true, sort: (p) => stock[p.id] || 0, render: (p) => (p.kind === 'menu' ? <span className="muted"><Tx>recipe</Tx></span> : `${qtyFmt(stock[p.id] || 0)} ${p.unit}`) },
@@ -115,7 +120,7 @@ function SyncBanner({ sync }: { sync: ReturnType<typeof useSkuSync> }) {
       </div>
       {failed
         ? <Button size="sm" onClick={() => sync.run()}>{tl(lang, 'Sync failed - retry')}</Button>
-        : <Button size="sm" variant="ghost" onClick={() => sync.run()} disabled={syncing}>{tl(lang, 'Sync now')}</Button>}
+        : null}
     </div>
   );
 }
@@ -150,6 +155,19 @@ function ProductStatus({ p }: { p: Product }) {
     </div>
   );
 }
+/** Registered categories only (never free text), under their group. `keep` shows the product's current category even if it was deactivated. */
+function CategorySelect({ value, onChange, disabled, keep }: { value: string; onChange: (id: string) => void; disabled?: boolean; keep?: string | null }) {
+  const lang = useLang();
+  const { items } = useCategoryStore();
+  const l = lang === 'en' ? 'en' : 'th';
+  const opt = (c: (typeof items)[number]) => <option key={c.id} value={c.id}>{categoryName(c, l)}{c.is_active ? '' : ` (${tl(lang, 'inactive')})`}</option>;
+  return (
+    <Select value={value} disabled={disabled} onChange={(e) => e.target.value && onChange(e.target.value)} data-testid="category-select">
+      <option value="" disabled>{tl(lang, 'Choose a category…')}</option>
+      {categoryChoices(items, keep).map((g) => (g.group ? <optgroup key={g.group.id} label={categoryName(g.group, l)}>{g.items.map(opt)}</optgroup> : g.items.map(opt)))}
+    </Select>
+  );
+}
 function rollupPerUnit(db: DB, pid: ID) {
   const b = bomForProduct(db, pid);
   const v = b && versionAt(b, new Date().toISOString());
@@ -166,7 +184,9 @@ function NewProduct({ onClose, onCreated }: { onClose: () => void; onCreated: (i
   const db = useDB();
   const run = useRun();
   const canSave = useHas('catalog:create') && useHas('catalog:edit');
-  const [f, setF] = useState({ name: '', cat: 'FG' as SkuCategory, kind: 'resale' as ProductKind, category: 'General', brand: '', unit: 'pcs', price: 0, stdCost: 0, barcode: '' });
+  const [f, setF] = useState({ name: '', cat: 'FG' as SkuCategory, kind: 'resale' as ProductKind, category: 'General', categoryId: '', brand: '', unit: 'pcs', price: 0, stdCost: 0, barcode: '' });
+  const catStore = useCategoryStore();
+  const catsOn = catStore.status === 'ready';
   const [preview, setPreview] = useState<string | null>(null);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -182,11 +202,14 @@ function NewProduct({ onClose, onCreated }: { onClose: () => void; onCreated: (i
     if (busy) return;
     if (!canSave) { toast('error', tl(lang, 'You do not have permission to create products')); return; }
     if (!f.name.trim()) { toast('error', tl(lang, 'Name is required')); return; }
+    if (catsOn && !f.categoryId) { toast('error', tl(lang, 'Choose a category from the list')); return; }
+    const chosen = catsOn ? catStore.items.find((c) => c.id === f.categoryId && c.is_active && !c.is_group) : undefined;
+    if (catsOn && !chosen) { toast('error', tl(lang, 'That category is no longer available. Choose another one.')); return; }
     if (f.barcode && db.products.some((x) => x.barcode === f.barcode)) { toast('error', tl(lang, 'Barcode is already used by another product')); return; }
     setBusy(true);
     try {
       const sku = await reserveSku(f.cat, f.name.trim(), ref.current);
-      const id = run((d, c) => saveProduct(d, c, { name: f.name.trim(), sku: sku.code, kind: f.kind, category: f.category, brand: f.brand.trim() || undefined, unit: f.unit, price: f.price, stdCost: f.stdCost, barcode: f.barcode || undefined }), { perm: 'catalog:create' });
+      const id = run((d, c) => saveProduct(d, c, { name: f.name.trim(), sku: sku.code, kind: f.kind, category: chosen ? chosen.name_th : f.category, categoryId: chosen?.id, brand: f.brand.trim() || undefined, unit: f.unit, price: f.price, stdCost: f.stdCost, barcode: f.barcode || undefined }), { perm: 'catalog:create' });
       if (!id) { // saved nowhere: void the reserved code (it is never reused) and use a fresh request id next time
         await voidSku(sku.code, 'product could not be saved on this device').catch(() => undefined);
         ref.current = newClientRef();
@@ -195,7 +218,7 @@ function NewProduct({ onClose, onCreated }: { onClose: () => void; onCreated: (i
       toast('success', tl(lang, 'Product created — SKU code {code} was generated automatically', { code: sku.code }));
       // The registry only knows the name so far: send the price, cost, barcode, brand and unit too, so the shop and the other devices have them. The product is
       // already saved here; if the upload fails it is kept and re-sent by the next sync, and the person is told.
-      const up = await pushSkuDetails(sku.code, newSkuDetails({ name: f.name, price: f.price, stdCost: f.stdCost, barcode: f.barcode, brand: f.brand, unit: f.unit }));
+      const up = await pushSkuDetails(sku.code, newSkuDetails({ name: f.name, price: f.price, stdCost: f.stdCost, barcode: f.barcode, brand: f.brand, unit: f.unit, categoryId: chosen?.id }));
       if (!up.ok) toast('error', tl(lang, 'The product is saved on this device, but its price and details could not be sent to the central database ({e}). They will be sent again at the next sync.', { e: tl(lang, up.error) }));
       onCreated(id);
     } catch (e) {
@@ -213,7 +236,7 @@ function NewProduct({ onClose, onCreated }: { onClose: () => void; onCreated: (i
         <Field label="Barcode"><Input value={f.barcode} onChange={(e) => setF({ ...f, barcode: e.target.value })} /></Field>
         <Field label="Brand"><Input value={f.brand} onChange={(e) => setF({ ...f, brand: e.target.value })} /></Field>
         <Field label="Kind"><Select value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value as ProductKind })}>{KINDS_OF_CATEGORY[f.cat].map((k) => <option key={k} value={k}>{PRODUCT_KIND_LABEL[k]}</option>)}</Select></Field>
-        <Field label="Category"><Input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></Field>
+        <Field label="Category" hint={catsOn ? 'Choose from the registered categories. New categories are added on the Categories page.' : undefined}>{catsOn ? <CategorySelect value={f.categoryId} onChange={(id) => setF({ ...f, categoryId: id })} /> : <Input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} />}</Field>
         <Field label="Unit"><Input value={f.unit} onChange={(e) => setF({ ...f, unit: e.target.value })} /></Field>
         <Field label="Selling price (฿, incl. VAT)"><NumInput value={f.price} onChange={(n) => setF({ ...f, price: n || 0 })} /></Field>
         <Field label="Standard cost (฿)"><NumInput value={f.stdCost} onChange={(n) => setF({ ...f, stdCost: n || 0 })} /></Field>
@@ -231,6 +254,8 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
   const canCost = useHas('finance:cost');
   const canMedia = useHas('media:create') || canEdit;
   const [tab, setTab] = useState<'details' | 'images' | 'stock' | 'channels'>('details');
+  const catStore = useCategoryStore();
+  const catsOn = catStore.status === 'ready';
   const p = db.products.find((x) => x.id === id);
   const [f, setF] = useState<Product | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -270,7 +295,9 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
           <Field label="Name" full><Input value={cur.name} disabled={!canEdit} onChange={(e) => set({ name: e.target.value })} /></Field>
           <Field label="SKU code" hint={cur.legacySku ? tl(lang, 'Legacy code: {c}', { c: cur.legacySku }) : isStandardSku(cur.sku) ? 'Assigned automatically; it cannot be edited.' : 'Old-style code. Use “Assign standard SKU codes” on the Products page to give it a standard one.'}><Input className="mono" readOnly aria-readonly="true" value={cur.sku} /></Field>
           <Field label="Barcode"><Input value={cur.barcode ?? ''} disabled={!canEdit} onChange={(e) => set({ barcode: e.target.value || undefined })} /></Field>
-          <Field label="Category"><Input value={cur.category} disabled={!canEdit} onChange={(e) => set({ category: e.target.value })} /></Field>
+          <Field label="Category" hint={catsOn && p.categoryId && !catStore.items.find((c) => c.id === p.categoryId)?.is_active ? 'This category is inactive. The product keeps it until you choose another one.' : undefined}>{catsOn
+            ? <CategorySelect value={cur.categoryId ?? ''} keep={p.categoryId} disabled={!canEdit} onChange={(id) => { const c = catStore.items.find((x) => x.id === id); if (c) set({ categoryId: c.id, category: c.name_th }); }} />
+            : <Input value={cur.category} disabled={!canEdit} onChange={(e) => set({ category: e.target.value })} />}</Field>
           <Field label="Brand"><Input value={cur.brand ?? ''} disabled={!canEdit} onChange={(e) => set({ brand: e.target.value || undefined })} /></Field>
           <Field label="Unit"><Input value={cur.unit} disabled={!canEdit} onChange={(e) => set({ unit: e.target.value })} /></Field>
           <Field label="Price (฿, incl. VAT)"><NumInput value={cur.price} disabled={!canEdit} onChange={(n) => set({ price: n || 0 })} /></Field>

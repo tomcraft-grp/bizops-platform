@@ -350,7 +350,10 @@ test.describe('confirm, post, reject, request more, record payment', () => {
     await expect(row(page, 'INV-000102').filter({ hasText: 'Cash' })).toContainText('Payment Confirmed');
     await expect(row(page, 'INV-000102').filter({ hasText: 'Cash' })).toContainText('฿150.00');
     const calls = fake.calls.filter((c) => c.fn === 'finance_record_payment');
-    expect(calls).toHaveLength(2); expect(calls[1].args).toEqual({ p_invoice: 'inv-2', p_method: 'cash', p_amount: 150, p_received_at: expect.any(String), p_bank_trans_ref: null, p_bank_account: null, p_note: 'Cash at the counter', p_file_path: null, p_sha256: null, p_file_type: null });
+    expect(calls).toHaveLength(2); expect(calls[1].args).toEqual({ p_invoice: 'inv-2', p_method: 'cash', p_amount: 150, p_received_at: expect.any(String), p_bank_trans_ref: null, p_bank_account: null, p_note: 'Cash at the counter', p_file_path: null, p_sha256: null, p_file_type: null, p_idempotency_key: expect.any(String) });
+    // one request key per filled-in form (migration 20261122120000): the refused amount and the corrected one are two different requests
+    expect(calls[0].args.p_idempotency_key).toEqual(expect.any(String));
+    expect(calls[1].args.p_idempotency_key).not.toBe(calls[0].args.p_idempotency_key);
     expect(fake.rv.evidence.at(-1)).toMatchObject({ source: 'staff_entry', method: 'cash', status: 'confirmed', confirmed_amount: 150 });
     await expect(kpi(page, 'confirmed')).toContainText('2');
   });

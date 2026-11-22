@@ -79,7 +79,7 @@ export default function POS() {
       <PageHead title="Point of sale" desc={<Tx vars={{ branch: branch.name, wh: String(db.warehouses.find((w) => w.id === wh)?.name) }}>{'{branch} · stock is deducted from {wh}'}</Tx>}
         actions={<>
           {branches.length > 1 && <select aria-label={tl(lang, 'Branch')} className="select sm" style={{ width: 'auto' }} value={branchId} onChange={(e) => setBranchId(e.target.value)}>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>}
-          {parked.length > 0 && <Button size="sm" onClick={() => { const p = parked[0]; setCart(p.cart); setCustomerId(p.customerId); setParked((x) => x.slice(1)); }}><Play size={14} />{' '}<Tx>Recall (</Tx>{parked.length})</Button>}
+          {parked.length > 0 && <Button size="sm" onClick={() => { const p = parked[0]; setCart(p.cart); setCustomerId(p.customerId); setCouponId(''); setPromoCode(''); setManual(0); setShowManual(false); setParked((x) => x.slice(1)); }}><Play size={14} />{' '}<Tx>Recall (</Tx>{parked.length})</Button>}
         </>} />
       <div className="pos">
         <div className="pos-left">
@@ -165,7 +165,7 @@ export default function POS() {
       </div>
 
       {modFor && <ModifierModal p={modFor} onClose={() => setModFor(null)} onAdd={(mods, qty, note) => { add(modFor, mods, qty, note); setModFor(null); }} />}
-      {pickCust && <CustomerPicker onClose={() => setPickCust(false)} onPick={(id) => { setCustomerId(id); setPickCust(false); }} />}
+      {pickCust && <CustomerPicker onClose={() => setPickCust(false)} onPick={(id) => { if (id !== customerId) setCouponId(''); setCustomerId(id); setPickCust(false); }} />}
       {paying && quote && (
         <PayModal total={quote.total} customerId={customerId} onClose={() => setPaying(false)}
           onPay={(payments, extra) => {
@@ -214,6 +214,7 @@ function PayModal({ total, customerId, onClose, onPay }: { total: number; custom
   const [pays, setPays] = useState<Pay[]>([]);
   const [method, setMethod] = useState<PayMethod>('cash');
   const [tender, setTender] = useState<number>(total);
+  const [payRef, setPayRef] = useState('');
   const [useCredit, setUseCredit] = useState(false);
   const [payLater, setPayLater] = useState(false);
   const cust = customerId ? db.customers.find((c) => c.id === customerId) : undefined;
@@ -227,7 +228,8 @@ function PayModal({ total, customerId, onClose, onPay }: { total: number; custom
   const cashTendered = pays.filter((p) => p.method === 'cash').reduce((s, p) => s + p.amount, 0);
   const change = r2(Math.max(0, paid - due) > 0 ? Math.min(cashTendered, paid - due) : 0);
   useEffect(() => { setTender(remaining); }, [remaining, method]);
-  const addPay = () => { if (tender > 0) setPays([...pays, { method, amount: tender }]); };
+  // each payment line keeps its own reference (QR / transfer / card slip number), so a split payment stays traceable line by line
+  const addPay = () => { if (tender > 0) { setPays([...pays, { method, amount: tender, ...(method !== 'cash' && payRef.trim() ? { reference: payRef.trim().slice(0, 80) } : {}) }]); setPayRef(''); } };
   const settled = remaining <= 0.004;
   const canLater = !!cust && cust.creditLimit > 0 && remaining <= available + 0.004;
   return (
@@ -240,13 +242,14 @@ function PayModal({ total, customerId, onClose, onPay }: { total: number; custom
           <div className="card card-b" style={{ background: 'var(--surface-2)' }}><div className="muted"><Tx>Amount due</Tx></div><div style={{ fontSize: 28, fontWeight: 700 }} className="num">{money(due)}</div></div>
           <div className="card card-b" style={{ background: remaining > 0 ? 'var(--warn-soft)' : 'var(--good-soft)' }}><div className="muted">{remaining > 0 ? <Tx>{'Remaining'}</Tx> : change > 0 ? <Tx>{'Change due'}</Tx> : <Tx>{'Settled'}</Tx>}</div><div style={{ fontSize: 28, fontWeight: 700 }} className="num">{remaining > 0 ? money(remaining) : money(change)}</div></div>
         </div>
-        {pays.map((p, i) => <div key={i} className="row between chip" style={{ padding: '6px 10px' }}><span className="row gap-6"><Tx>{METHOD_ICON[p.method]}</Tx><Tx>{PAY_METHODS.find((m) => m.key === p.method)?.label}</Tx></span><span className="row gap-6"><b className="num">{money(p.amount)}</b><Button size="sm" icon variant="ghost" onClick={() => setPays(pays.filter((_, k) => k !== i))}><X size={14} /></Button></span></div>)}
+        {pays.map((p, i) => <div key={i} className="row between chip" style={{ padding: '6px 10px' }}><span className="row gap-6"><Tx>{METHOD_ICON[p.method]}</Tx><Tx>{PAY_METHODS.find((m) => m.key === p.method)?.label}</Tx>{p.reference && <span className="muted mono" style={{ fontSize: 12 }}>{p.reference}</span>}</span><span className="row gap-6"><b className="num">{money(p.amount)}</b><Button size="sm" icon variant="ghost" onClick={() => setPays(pays.filter((_, k) => k !== i))}><X size={14} /></Button></span></div>)}
         {!settled && (
           <>
             <div className="row wrap gap-6">{PAY_METHODS.map((m) => <Button key={m.key} variant={method === m.key ? 'primary' : undefined} onClick={() => setMethod(m.key)}><Tx>{METHOD_ICON[m.key]}</Tx> <Tx>{m.label}</Tx></Button>)}</div>
             {method === 'qr' && <div className="row gap-16 wrap" style={{ alignItems: 'center' }}><QR data={promptPayPayload(db.org.promptPayId, tender)} size={150} /><div className="text2" style={{ fontSize: 13 }}><Tx>Customer scans with any banking app.</Tx><br /><Tx>PromptPay ID</Tx>{' '}<b>{db.org.promptPayId}</b> · <b>{money(tender)}</b><br /><span className="muted"><Tx>Confirm only after the payment notification arrives.</Tx></span></div></div>}
             <div className="row">
               <Field label={method === 'cash' ? 'Cash received' : 'Amount'}><NumInput value={tender} onChange={setTender} /></Field>
+              {method !== 'cash' && <Field label="Reference (optional)"><Input value={payRef} maxLength={80} onChange={(e) => setPayRef(e.target.value)} placeholder="Ref / slip no." /></Field>}
               <div style={{ alignSelf: 'flex-end' }}><Button variant="soft" onClick={addPay}><Tx>Add payment</Tx></Button></div>
             </div>
             {method === 'cash' && <div className="row wrap gap-6">{[remaining, 100, 500, 1000].filter((v, i, a) => v > 0 && a.indexOf(v) === i).map((v) => <Button key={v} size="sm" onClick={() => setTender(v)}>{v === remaining ? <Tx>{'Exact'}</Tx> : money(v)}</Button>)}</div>}
