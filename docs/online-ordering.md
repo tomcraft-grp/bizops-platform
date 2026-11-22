@@ -53,4 +53,5 @@ Order status and payment status are separate. Payment statuses: unpaid, awaiting
 * No payment-provider or bank callbacks: payments are verified by staff against the bank statement (the interface for a provider exists, `finance_verify_evidence(... p_via => 'provider')`, but no provider credentials are configured).
 * No central stock: availability is the sold-out switch and a maximum per order. No discounts or coupons.
 * Not tested inside the real LINE app.
+* Staff can be told about new orders in a LINE group and accept / approve / reject them from the card: see [line-notifications.md](line-notifications.md) (built, not live yet).
 * Slips are still checked by people against the bank record. An AI pre-check of each slip, a two-step Confirm then Post at the end of the day, partial payments and back-office (transfer or cash) payments are built behind two switches that are **off** by default: see [slip-review.md](slip-review.md) (it also holds the go-live checklist and the rollback).
