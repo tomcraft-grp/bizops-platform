@@ -17,12 +17,22 @@ export interface FIssue {
   created_at: string; updated_at: string; last_activity_at: string; resolved_at: string | null; archived_at: string | null; idempotency_key?: string;
   english_context?: string | null; english_context_status?: string; english_context_error?: string | null; english_context_at?: string | null; english_context_source?: string | null;
   english_context_model?: string | null; english_context_attempts?: number; english_context_started_at?: string | null;
+  status_changed_at?: string | null; resolved_by_label?: string | null; closed_at?: string | null; closed_by_label?: string | null; handler_label?: string | null;
 }
+export interface FEvent { id: number; issue_id: string; actor_label: string; kind: string; from_value: string | null; to_value: string | null; note: string | null; customer_visible: boolean; created_at: string }
+/** public.feedback_transition_ok */
+const NEXT: Record<string, string[]> = {
+  submitted: ['under_review', 'accepted', 'in_progress', 'waiting_info', 'rejected'], under_review: ['accepted', 'in_progress', 'waiting_info', 'rejected'],
+  accepted: ['in_progress', 'waiting_info', 'rejected'], in_progress: ['waiting_info', 'resolved', 'accepted'], waiting_info: ['under_review', 'in_progress', 'rejected'],
+  resolved: ['closed', 'in_progress'], closed: ['under_review'], rejected: ['under_review'],
+};
 interface FAtt { id: string; issue_id: string; comment_id: string | null; storage_path: string; file_name: string; mime_type: string; size_bytes: number; created_at: string }
 
 export class FakeFeedback {
   issues: FIssue[] = [];
   attachments: FAtt[] = [];
+  events: FEvent[] = [];
+  private ev = 0;
   /** files in the storage bucket: path -> bytes and type, as uploaded by the browser */
   files = new Map<string, { type: string; bytes: Buffer }>();
   uploads: { path: string; type: string; size: number }[] = [];
@@ -100,6 +110,27 @@ export class FakeFeedback {
         Object.assign(i, { english_context: text, english_context_status: 'completed', english_context_error: null, english_context_at: new Date().toISOString(), english_context_source: source, english_context_model: null });
         return i;
       }
+      case 'feedback_staff_update': {
+        // feedback_staff_update + the closure trigger of 20261122100000 (supabase/tests/feedback_closure.sql proves the real ones)
+        if (!this.staff) { const e = new Error('Only support staff can update issues'); throw e; }
+        const i = this.issue(String(a.p_issue)); if (!i) this.err(`Issue ${a.p_issue} not found`);
+        const who = this.shop.profile.display_name ?? 'Staff'; const now = new Date().toISOString();
+        const to = a.p_status as string | null;
+        if (a.p_resolution != null && a.p_resolution !== i.resolution) { i.resolution = String(a.p_resolution); this.events.push({ id: ++this.ev, issue_id: i.id, actor_label: who, kind: 'resolution', from_value: null, to_value: null, note: i.resolution, customer_visible: true, created_at: now }); }
+        if (to && to !== i.status) {
+          if (!NEXT[i.status]?.includes(to)) this.err(`Cannot move an issue from ${i.status} to ${to}`);
+          if (to === 'rejected' && !String(a.p_reason ?? '').trim()) this.err('Give the customer a reason for rejecting');
+          if (to === 'resolved' && !String(i.resolution ?? '').trim()) this.err('Record the resolution before marking the issue resolved');
+          this.events.push({ id: ++this.ev, issue_id: i.id, actor_label: who, kind: 'status', from_value: i.status, to_value: to, note: (a.p_reason as string) ?? null, customer_visible: true, created_at: now });
+          i.status = to; i.status_changed_at = now;
+          i.resolved_at = ['resolved', 'closed', 'rejected'].includes(to) ? (i.resolved_at ?? now) : null;
+          if (to === 'resolved') i.resolved_by_label = who;
+          if (!['resolved', 'closed'].includes(to)) i.resolved_by_label = null;
+          if (to === 'closed') { i.closed_at = now; i.closed_by_label = who; } else { i.closed_at = null; i.closed_by_label = null; }
+        }
+        i.updated_at = now; i.last_activity_at = now;
+        return i;
+      }
       case 'feedback_staff_list': return [];
       case 'feedback_mark_read': return null;
       default: this.err(`Unknown function ${fn}`);
@@ -111,7 +142,8 @@ export class FakeFeedback {
     switch (table) {
       case 'bizops_feedback_issues': return this.issues.filter((i) => this.visible(i) && !i.archived_at);
       case 'feedback_attachments': return this.attachments.filter((a) => a.issue_id === eq('issue_id') && this.visible(this.issue(a.issue_id)!));
-      case 'feedback_comments': case 'feedback_dev_links': case 'feedback_events': case 'feedback_notifications': return [];
+      case 'feedback_events': return this.events.filter((e) => e.issue_id === eq('issue_id') && (this.staff || (e.customer_visible && this.visible(this.issue(e.issue_id)!))));
+      case 'feedback_comments': case 'feedback_dev_links': case 'feedback_notifications': return [];
       default: return undefined;
     }
   }

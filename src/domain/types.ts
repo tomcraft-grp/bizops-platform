@@ -47,6 +47,7 @@ export interface Product {
   trackLot?: boolean; mediaIds: ID[]; description?: string; listingMap?: Partial<Record<ChannelCode, string>>;
   legacySku?: string; // the code this product had before the automatic SKU system (kept for history, search and audit)
   brand?: string; createdAt?: string; // optional so products saved before these fields existed stay valid; createdAt is set when a product is created or first pulled
+  categoryId?: string; // id in the central category list (product_categories); `category` then holds its name as a display copy for older readers
 }
 
 // ---------- inventory

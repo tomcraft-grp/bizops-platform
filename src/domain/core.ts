@@ -36,7 +36,11 @@ export function audit(
 ) {
   if (ctx.seed && severity === 'info') return;
   d.audit.push({ id: nid(d, 'AU'), ts: ctx.now, userId: ctx.userId, action, entity, entityId, detail, severity });
-  if (d.audit.length > 4000) d.audit.splice(0, d.audit.length - 4000);
+  // The log stays bounded (the whole local database is saved at every change), but money records (receipts) and critical entries are history and are never dropped.
+  if (d.audit.length > 4000) {
+    let extra = d.audit.length - 4000;
+    d.audit = d.audit.filter((e) => !(extra > 0 && e.severity !== 'critical' && e.entity !== 'receipt' && extra-- > 0));
+  }
 }
 
 // ---------- lookups (throwing)

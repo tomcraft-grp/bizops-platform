@@ -2,7 +2,7 @@
 // money events to the general ledger on this device, and the daily bank / reconciliation reports.
 // Every action is a server function that checks the caller's finance role again; verification, refunds, adjustments and
 // reversals are never possible for a customer, and nothing here edits a balance directly.
-import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, Eye, Plus } from 'lucide-react';
 import { act, toast, useDB, useLang } from '../domain/store';
@@ -12,6 +12,7 @@ import { roleCode } from '../domain/accounting';
 import { eventLabel, financeNetCredit, planFinanceRow, postFinanceRow, verifyPosted } from '../domain/financeLedger';
 import { Badge, Banner, Button, Drawer, Empty, Field, Input, Modal, PageHead, SearchBox, Select, Skeleton, Switch, Tabs, Textarea, useHas } from '../ui/kit';
 import { canFinance, finance, FinanceRole } from '../finance/api';
+import { CustomerPaymentHistory } from '../finance/PaymentHistory';
 import { ShopError } from '../shop/api';
 import { BankAccountRow, BankReportRow, FinanceSettings, GlRow, LedgerRow, newKey, PaymentRow, Reconciliation, walletAdmin, WalletReconcile, WalletRow } from './api';
 import { BankBadge } from './ui';
@@ -20,8 +21,8 @@ import { formatAccountNo } from './bank';
 type Tab = 'payments' | 'wallets' | 'banks' | 'ledger' | 'reports';
 type TFn = (s: string, v?: Record<string, string | number>) => string;
 const msg = (e: unknown) => (e instanceof ShopError ? e.message.replace(/^[A-Z_]{3,}:\s*/, '') : e instanceof Error ? e.message : String(e));
-const STATUS_TONE: Record<string, 'good' | 'warn' | 'bad' | 'info' | ''> = { pending: 'warn', submitted: 'info', under_review: 'info', verified: 'good', rejected: 'bad', cancelled: '' };
-const STATUS_LABEL: Record<string, string> = { pending: 'Pending', submitted: 'Submitted', under_review: 'Under review', verified: 'Verified', rejected: 'Rejected', cancelled: 'Cancelled' };
+const STATUS_TONE: Record<string, 'good' | 'warn' | 'bad' | 'info' | ''> = { pending: 'warn', submitted: 'info', under_review: 'info', verified: 'good', rejected: 'bad', cancelled: '', reversed: 'bad', confirmed: 'info', more_evidence: 'warn' };
+const STATUS_LABEL: Record<string, string> = { pending: 'Pending', submitted: 'Submitted', under_review: 'Under review', verified: 'Verified', rejected: 'Rejected', cancelled: 'Cancelled', reversed: 'Reversed', confirmed: 'Confirmed', more_evidence: 'More evidence requested' };
 const KIND_LABEL: Record<string, string> = { deposit: 'Wallet deposit', invoice_slip: 'Invoice slip', wallet_payment: 'Wallet payment' };
 const TYPE_LABEL: Record<string, string> = { DEPOSIT: 'Deposit', INVOICE_PAYMENT: 'Invoice payment', REFUND: 'Refund', ADJUSTMENT: 'Adjustment', WITHDRAWAL: 'Withdrawal', REVERSAL: 'Reversal' };
 const StatusBadge = ({ s, T }: { s: string; T: TFn }) => <Badge tone={STATUS_TONE[s] ?? ''} dot>{T(STATUS_LABEL[s] ?? s)}</Badge>;
@@ -56,7 +57,9 @@ function PaymentsPanel({ T, role }: { T: TFn; role: FinanceRole | null }) {
   const [banks, setBanks] = useState<BankAccountRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<PaymentRow | null>(null);
-  const load = useCallback(() => { walletAdmin.payments({ ...f, limit }).then((r) => { setData(r); setError(null); }).catch((e) => setError(msg(e))); }, [f, limit]);
+  const [history, setHistory] = useState<{ id: string; name: string } | null>(null);
+  const seq = useRef(0);   // an older, slower answer (previous filter or search) must never replace the newest one
+  const load = useCallback(() => { const my = ++seq.current; walletAdmin.payments({ ...f, limit }).then((r) => { if (my === seq.current) { setData(r); setError(null); } }).catch((e) => { if (my === seq.current) setError(msg(e)); }); }, [f, limit]);
   useEffect(() => { const h = setTimeout(load, f.search ? 300 : 0); return () => clearTimeout(h); }, [load, f.search]);
   useEffect(() => { walletAdmin.banks().then(setBanks).catch(() => undefined); }, []);
   return (
@@ -87,12 +90,14 @@ function PaymentsPanel({ T, role }: { T: TFn; role: FinanceRole | null }) {
                   {p.kind === 'deposit' && ['submitted', 'under_review'].includes(p.status) && <Button size="sm" variant="primary" onClick={() => setReview(p)}>{T('Review')}</Button>}
                   {p.kind === 'invoice_slip' && p.status === 'submitted' && <Link className="btn sm" to="/payment-review">{T('Review in Payment review')}</Link>}
                   {p.file_path && p.kind !== 'wallet_payment' && <SlipButton path={p.file_path} T={T} />}
+                  <Button size="sm" variant="ghost" onClick={() => setHistory({ id: p.customer_id, name: p.customer_name })}>{T('History')}</Button>
                 </td>
               </tr>))}</tbody></table>
         </div>
       )}
       {data && data.items.length < data.total && <Button onClick={() => setLimit(limit + 50)}>{T('Show more')} ({data.items.length}/{data.total})</Button>}
       {review && <DepositReview p={review} T={T} role={role} onClose={() => setReview(null)} onDone={() => { setReview(null); load(); }} />}
+      {history && <CustomerPaymentHistory key={history.id} customerId={history.id} customerName={history.name} onClose={() => setHistory(null)} />}
     </div>
   );
 }
@@ -190,11 +195,16 @@ function WalletDrawer({ w, T, role, onClose, onChanged }: { w: WalletRow; T: TFn
   const [rf, setRf] = useState({ receipt: '', amount: '', reason: '' });
   const [busy, setBusy] = useState('');
   const manage = canFinance(role, 'manage');
+  const seq = useRef(0);   // answers for another customer, or for an older request, are dropped
   const load = useCallback(() => {
-    walletAdmin.ledger(w.customer_id, 100, 0).then((r) => { setLed(r); setError(null); }).catch((e) => setError(msg(e)));
-    walletAdmin.refundable(w.customer_id).then(setRefunds).catch(() => setRefunds([]));
+    const my = ++seq.current;
+    walletAdmin.ledger(w.customer_id, 100, 0).then((r) => { if (my === seq.current) { setLed(r); setError(null); } }).catch((e) => { if (my === seq.current) setError(msg(e)); });
+    walletAdmin.refundable(w.customer_id).then((r) => { if (my === seq.current) setRefunds(r); }).catch(() => { if (my === seq.current) setRefunds([]); });
   }, [w.customer_id]);
   useEffect(load, [load]);
+  // One idempotency key per filled-in form: a retry of the same adjustment / refund (double click, lost answer) is applied once; changing any field makes it a new request.
+  const adjKey = useMemo(() => newKey(), [w.customer_id, adj.direction, adj.amount, adj.reason, adj.note]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rfKey = useMemo(() => newKey(), [w.customer_id, rf.receipt, rf.amount, rf.reason]); // eslint-disable-line react-hooks/exhaustive-deps
   const reversed = useMemo(() => new Set((led?.items ?? []).map((x) => x.reversal_of).filter(Boolean) as string[]), [led]);
   const run = async (what: string, fn: () => Promise<{ balance: number }>, ok: string, reset?: () => void) => {
     setBusy(what); setError(null);
@@ -212,7 +222,7 @@ function WalletDrawer({ w, T, role, onClose, onChanged }: { w: WalletRow; T: TFn
             <Field label={T('Reason (at least 10 characters, kept in the audit log)')}><Textarea rows={2} value={adj.reason} onChange={(e) => setAdj({ ...adj, reason: e.target.value })} /></Field>
             <Field label={T('Note the customer will see (optional)')}><Input maxLength={200} value={adj.note} onChange={(e) => setAdj({ ...adj, note: e.target.value })} /></Field>
             <div><Button variant="primary" loading={busy === 'adj'} disabled={!!busy || !(Number(adj.amount) > 0) || adj.reason.trim().length < 10}
-              onClick={() => void run('adj', () => walletAdmin.adjust({ customer: w.customer_id, direction: adj.direction, amount: Number(adj.amount), reason: adj.reason, customerNote: adj.note, key: newKey() }), 'Wallet adjusted', () => setAdj({ ...adj, amount: '', reason: '', note: '' }))}>{T('Apply adjustment')}</Button></div>
+              onClick={() => void run('adj', () => walletAdmin.adjust({ customer: w.customer_id, direction: adj.direction, amount: Number(adj.amount), reason: adj.reason, customerNote: adj.note, key: adjKey }), 'Wallet adjusted', () => setAdj({ ...adj, amount: '', reason: '', note: '' }))}>{T('Apply adjustment')}</Button></div>
           </div>
         )}
         {manage && refunds.length > 0 && (
@@ -222,7 +232,7 @@ function WalletDrawer({ w, T, role, onClose, onChanged }: { w: WalletRow; T: TFn
               <Input type="number" step="0.01" min="0" value={rf.amount} onChange={(e) => setRf({ ...rf, amount: e.target.value })} aria-label={T('Amount')} /></div>
             <Field label={T('Reason')}><Input value={rf.reason} onChange={(e) => setRf({ ...rf, reason: e.target.value })} /></Field>
             <div><Button loading={busy === 'rf'} disabled={!!busy || !rf.receipt || !(Number(rf.amount) > 0) || !rf.reason.trim()}
-              onClick={() => void run('rf', () => walletAdmin.refund({ receipt: rf.receipt, amount: Number(rf.amount), reason: rf.reason, key: newKey() }), 'Refunded into the wallet', () => setRf({ receipt: '', amount: '', reason: '' }))}>{T('Refund to wallet')}</Button></div>
+              onClick={() => void run('rf', () => walletAdmin.refund({ receipt: rf.receipt, amount: Number(rf.amount), reason: rf.reason, key: rfKey }), 'Refunded into the wallet', () => setRf({ receipt: '', amount: '', reason: '' }))}>{T('Refund to wallet')}</Button></div>
           </div>
         )}
         <b>{T('Ledger')}</b>

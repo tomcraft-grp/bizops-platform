@@ -84,7 +84,7 @@ export async function importBackup(json: string) {
   useStore.setState({ db });
   await kvSet(KEY, db);
   // The SKU sync cursor belongs to the database that was just replaced: forget it (a dynamic import, because skuSync itself imports this store).
-  try { await (await import('./skuSync')).forgetSkuCursor(); } catch { /* the sync would only be a little late: "Re-sync everything" covers it */ }
+  try { await (await import('./skuSync')).forgetSkuCursor(); } catch { /* the sync would only be a little late: the next automatic sync is a full one */ }
 }
 
 /**
