@@ -21,6 +21,7 @@ import { CheckoutQrPanel, PayToBank } from '../wallet/PayTo';
 import { Choice, PayMethodPicker, useMethods } from '../wallet/ui';
 import { removeOrderSlip, slipFingerprint, slipProblem, uploadOrderSlip } from '../wallet/api';
 import { review } from '../finance/review';
+import { SlipHint } from '../slipReader/SlipHint';
 
 export function CartCore() {
   const t = useT();
@@ -265,6 +266,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
             {slip ? (
               <div className="col gap-8" data-testid="slip-preview">
                 {slip.total !== quote.total && !loading && <Banner tone="warn">{t('co.slipTotalChanged', { was: baht(slip.total), now: baht(quote.total) })}</Banner>}
+                <SlipHint file={slip.file} total={quote.total} />
                 {slipUrl ? <img src={slipUrl} alt={t('co.slipPreview')} className="wl-slip" /> : <div className="muted wl-slip-file">{slip.file.name}</div>}
                 <label>{t('co.slipWhen')}<input type="datetime-local" value={slipWhen} onChange={(e) => patch({ slipWhen: e.target.value })} /></label>
                 <label>{t('co.slipRef')}<input value={slipRef} maxLength={80} onChange={(e) => patch({ slipRef: e.target.value })} /></label>

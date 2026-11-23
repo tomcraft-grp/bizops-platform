@@ -145,6 +145,8 @@ const D = {
   'sc.amount': ['ยอดบนสลีป {slip} ไม่ตรงกับยอดที่ต้องชำระ {want}', 'The slip says {slip} but the amount to pay is {want}'], 'sc.datePast': ['วันที่บนสลีป ({date}) เป็นวันก่อนหน้าคำสั่งซื้อนี้', 'The date on the slip ({date}) is before this order'],
   'sc.dateFuture': ['วันที่บนสลีป ({date}) เป็นวันในอนาคต', 'The date on the slip ({date}) is in the future'], 'sc.used': ['สลีปนี้เคยใช้กับการชำระเงินรายการอื่นแล้ว', 'This slip was already used for another payment'],
   'sc.notSlip': ['รูปที่แนบไม่ใช่สลีปการโอนเงิน', 'The picture is not a transfer slip'], 'sc.unreadable': ['ระบบอ่านยอดเงินหรือวันที่บนสลีปไม่ชัดเจน', 'The amount or the date on the slip could not be read clearly'], 'sc.generic': ['ข้อมูลบนสลีปไม่ตรงกับคำสั่งซื้อ', 'The slip does not agree with the order'],
+  'sh.amount': ['ยอดบนสลีปที่แนบดูเหมือนเป็น {slip} แต่ต้องโอน {want}', 'The slip looks like {slip}, but {want} is to be transferred'], 'sh.notSlip': ['รูปที่แนบอาจไม่ใช่สลีปการโอนเงิน', 'This picture may not be a transfer slip'],
+  'sh.body': ['กรุณาตรวจสอบ หากถูกต้องแล้วสั่งซื้อต่อได้', 'Please check. If it is correct, you can place the order.'],
   'sc.resend': ['แนบสลีปใหม่', 'Attach another slip'],
   'qr.afterOrder': ['ระบบจะแสดง QR ตามยอดชำระทันทีหลังกดสั่งซื้อ', 'The QR for the exact amount appears right after you place the order.'],
   'co.walletAfter': ['ระบบจะพาไปยืนยันการจ่ายจากกระเป๋าเงินหลังกดสั่งซื้อ', 'You confirm the payment from your wallet right after you place the order.'],

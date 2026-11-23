@@ -3,12 +3,15 @@
 // The AI is a reader and a risk flagger, never the decision maker: its result is a hint (shown to staff only), nothing it says is ever ticked, filled in as a decision or
 // sent for a person, and every amount a person confirms is typed (or checked) by that person. What a role may do is decided by the database; the buttons only mirror it.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, ExternalLink, Play, Plus, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Play, Plus, ScanLine, XCircle } from 'lucide-react';
 import { toast, useLang } from '../domain/store';
 import { t as tl } from '../lib/i18n';
 import { cx, money } from '../lib/util';
 import { Badge, Banner, Button, Card, Check, Empty, Field, Input, Kpi, KV, Modal, Select, Switch, Textarea, Tx, useConfirm } from '../ui/kit';
 import { canFinance, finance, type FinanceRole } from './api';
+import { ReaderCard } from '../slipReader/ReaderCard';
+import { isPicture, ownReader, readEvidence, type OwnReaderStatus } from '../slipReader/store';
+import { readerAvailable, ReaderError } from '../slipReader/engine';
 import RecordPayment, { type RecordTarget } from './RecordPayment';
 import {
   AI_RESULT, isDuplicateSuspect, REASON_CODES, REASON_TEXT, refOk, review, STAGE, type AiResult, type Bilingual, type PostResult, type ReviewDetail, type ReviewFilter, type ReviewItem, type ReviewPage, type ReviewSettings,
@@ -106,6 +109,8 @@ export default function SlipReview({ role, onChanged, initialOpenId }: { role: F
   useEffect(() => { void loadList(); }, [loadList]);
   useEffect(() => { void loadSummary(); }, [loadSummary, f.from, f.to]);
   useEffect(() => { review.settings().then((s) => setSettings(s ?? null)).catch(() => setSettings(null)); }, []);
+  const [reader, setReader] = useState<OwnReaderStatus | null>(null);       // the shop's own slip reader; null = a database without it: nothing of it is shown
+  useEffect(() => { ownReader.status().then(setReader).catch(() => setReader(null)); }, []);
   useEffect(() => {                                                        // typing waits 300 ms; the page goes back to the first only when the text really changed (opening the screen must not undo a Next press)
     const h = setTimeout(() => { if (appliedSearch.current === box) return; appliedSearch.current = box; setF((x) => ({ ...x, search: box })); setOffset(0); }, 300);
     return () => clearTimeout(h);
@@ -271,10 +276,11 @@ export default function SlipReview({ role, onChanged, initialOpenId }: { role: F
         </div>
       )}
 
+      {reader && (reader.can_manage || (reader.enabled && reader.can_read)) && <ReaderCard status={reader} onStatus={setReader} onRead={refresh} />}
       {role === 'manager' && settings && <SettingsCard settings={settings} onSaved={setSettings} />}
 
       {openId && (
-        <Detail id={openId} role={role} settings={settings} busy={busy} run={run} postOne={postOne} rejectOne={rejectOne} onClose={() => setOpenId(null)} onRefresh={refresh}
+        <Detail id={openId} role={role} settings={settings} reader={reader} busy={busy} run={run} postOne={postOne} rejectOne={rejectOne} onClose={() => setOpenId(null)} onRefresh={refresh}
           onRecord={(t) => setRecord(t)} />
       )}
       {record && <RecordPayment target={record} onClose={() => setRecord(null)} onDone={() => { setRecord(null); setOpenId(null); void refresh(); }} />}
@@ -326,10 +332,10 @@ function Row({ i, lang, L, canAct, canPostNow, busy, onOpen, onPost }: { i: Revi
 
 // ================================================================================================ the detail: the slip beside its order
 interface DetailProps {
-  id: string; role: FinanceRole; settings: ReviewSettings | null; busy: string; run: <T>(key: string, fn: () => Promise<T>) => Promise<T | undefined>;
+  id: string; role: FinanceRole; settings: ReviewSettings | null; reader: OwnReaderStatus | null; busy: string; run: <T>(key: string, fn: () => Promise<T>) => Promise<T | undefined>;
   postOne: (g: Target) => Promise<boolean>; rejectOne: (g: Target) => Promise<boolean>; onClose: () => void; onRefresh: () => Promise<void>; onRecord: (t: RecordTarget) => void;
 }
-function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, onRefresh, onRecord }: DetailProps) {
+function Detail({ id, role, settings, reader, busy, run, postOne, rejectOne, onClose, onRefresh, onRecord }: DetailProps) {
   const lang = useLang();
   const ask = useConfirm();
   const askDistinct = useAskDistinct();
@@ -351,6 +357,21 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
   const path = d?.evidence.file_path ?? null;
   useEffect(() => { setUrl(null); if (path) finance.slipUrl(path).then(setUrl).catch((e: Error) => toast('error', e.message)); }, [path]);
   useEffect(() => { if (mode !== 'view') panel.current?.scrollIntoView({ block: 'nearest' }); }, [mode]);
+
+  // a slip nobody has read yet is read when a verifier opens it (in this browser, no AI service); a failed reading changes nothing and can be tried again with the button
+  const [reading, setReading] = useState(false);
+  const autoRead = useRef('');
+  const ev = d?.evidence;
+  const mayRead = !!ev && canAct && reader?.enabled === true && reader.can_read && isPicture(ev.file_type) && !!ev.file_path && (ev.status === 'submitted' || ev.status === 'confirmed') && ev.source !== 'staff_entry';
+  const nowRunning = d?.analyses[0]?.status === 'queued' || d?.analyses[0]?.status === 'running';
+  const readNow = useCallback(async (quiet: boolean) => {
+    if (!ev) return;
+    setReading(true);
+    try { await readEvidence(ev); if (!quiet) toast('success', tl(lang, 'The slip was read')); }
+    catch (x) { if (!quiet) toast('error', x instanceof ReaderError ? tl(lang, 'The slip could not be read. A person has to check it.') : reviewErrorText(lang, x)); }
+    finally { setReading(false); await load(); await onRefresh(); }
+  }, [ev, lang, load, onRefresh]);
+  useEffect(() => { if (mayRead && readerAvailable() && d && d.analyses.length === 0 && autoRead.current !== id) { autoRead.current = id; void readNow(true); } }, [mayRead, d, id, readNow]);
 
   const done = async () => { onClose(); await onRefresh(); };
   const thenDone = (p: Promise<boolean>) => { void p.then((ok) => (ok ? done() : undefined)); };
@@ -488,9 +509,9 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
           </div>
         </div>
 
-        {(d.analyses.length > 0 || canRunAi) && (
+        {(d.analyses.length > 0 || canRunAi || mayRead) && (
           <div>
-            <h3 className="rv-h"><Tx>AI reading</Tx></h3>
+            <h3 className="rv-h">{newest?.engine?.startsWith('browser-ocr/') || (!newest && mayRead) ? <Tx>Slip reading (no AI)</Tx> : <Tx>AI reading</Tx>}</h3>
             <Banner tone="warn"><Tx>AI result is a hint, not proof that money arrived. Check your bank record.</Tx></Banner>
             {newest && (newest.status === 'queued' || newest.status === 'running') && <div style={{ marginTop: 8 }}><Banner tone="info"><Tx>AI check in progress</Tx></Banner></div>}
             {newest?.status === 'failed' && <div style={{ marginTop: 8 }}><Banner tone="bad"><div><Tx>The AI could not read this slip. A person has to check it.</Tx>{newest.error && <div className="mono" style={{ marginTop: 2 }}>{newest.error}</div>}</div></Banner></div>}
@@ -502,6 +523,8 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
               </div>
             )}
             {canRunAi && <div style={{ marginTop: 8 }}><Button size="sm" disabled={off || mode !== 'view'} loading={busy === 'ai'} onClick={runAi}><Play size={13} /> <Tx>Run AI check</Tx></Button></div>}
+            {reading && <div style={{ marginTop: 8 }}><Banner tone="info"><Tx>Reading the slip in this browser…</Tx></Banner></div>}
+            {mayRead && !reading && !nowRunning && d.analyses.length < 5 && <div style={{ marginTop: 8 }}><Button size="sm" disabled={off || mode !== 'view' || !readerAvailable()} onClick={() => void readNow(false)}><ScanLine size={13} /> <Tx>{newest ? 'Read the slip again' : 'Read the slip'}</Tx></Button></div>}
 
             {/* a resent transfer's "found" is an internal id, so only its sentence is shown */}
             {info.map((r) => <div key={r.code} style={{ marginTop: 8 }}><Banner tone="info"><div><b>{L(REASON_TEXT(r.code))}</b>{r.code !== 'RESUBMITTED_TRANSFER' && reasonValue(r, r.found) && <div className="muted">{reasonValue(r, r.found)}</div>}</div></Banner></div>)}
