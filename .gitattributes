@@ -1,2 +1,1 @@
-# Shell scripts must keep LF line endings on Windows checkouts (core.autocrlf): a CR after "set -euo pipefail" breaks them.
-*.sh text eol=lf
+public/ocr/** -text
