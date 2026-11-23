@@ -24,6 +24,7 @@ import { AccountSummary } from '../shop/Account';
 import { WalletView } from '../wallet/Wallet';
 import { ShopHeader } from '../shop/Header';
 import { useCart, useCartCount } from '../shop/cart';
+import { useCheckoutDraft } from '../shop/checkoutDraft';
 import { useT } from '../shop/i18n';
 import { ShopHost, useShopNav } from '../shop/nav';
 
@@ -51,7 +52,7 @@ export default function CustomerApp() {
   const lineId = lineMeta?.line_user_id;
   const isStaff = profile?.role === 'ADMIN' || profile?.role === 'SUPER_ADMIN';
   const needsSignup = !!lineId && !!profile && (!profile.phone || !profile.pdpa_consent_at);
-  useEffect(() => { useCart.getState().hydrate(uid); }, [uid]);
+  useEffect(() => { useCart.getState().hydrate(uid); useCheckoutDraft.getState().hydrate(uid); }, [uid]);
   useEffect(() => { document.body.classList.add('customer-app'); return () => document.body.classList.remove('customer-app'); }, []);   // lets the shell put toasts where they do not cover the menu
   const [cid, setCid] = useState<ID | null>(null);
   const memberKey = lineId ?? (uid ? `account:${uid}` : null);

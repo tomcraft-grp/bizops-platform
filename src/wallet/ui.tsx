@@ -1,11 +1,12 @@
 // Customer-facing pieces shared by the wallet screens and the invoice payment panel: bank logo / badge, selectable bank cards
 // (name in Thai and English, account number, holder, copy button, instructions), the payment-method picker, error text.
-import { useEffect, useState } from 'react';
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Check, Copy, QrCode, Wallet as WalletIcon } from 'lucide-react';
 import { toast } from '../domain/store';
 import { cx } from '../lib/util';
 import { baht } from '../shop/format';
 import { K, ShopLang, useShopLang, useT } from '../shop/i18n';
+import { Fold, focusFold } from '../shop/ui';
 import { walletCode, wallet, Bank, PaymentMethods } from './api';
 import { useAuth } from '../auth/AuthProvider';
 import { bankBrand, copyableAccountNo, copyText, formatAccountNo } from './bank';
@@ -84,6 +85,44 @@ export function MethodCards({ methods, value, onChange, wallet: showWallet = tru
         </div>
       )}
     </div>
+  );
+}
+
+/** The chosen method in one line, for the closed picker: its badge, its name and the detail that tells it apart. */
+export function ChoiceSummary({ methods, value }: { methods: PaymentMethods; value: Choice }) {
+  const t = useT();
+  const lang = useShopLang();
+  const bank = value?.kind === 'bank' ? methods.banks.find((x) => x.id === value.id) : undefined;
+  const row = (key: string, badge: ReactNode, name: string, detail: string) => <span className="wl-sum" data-testid="chosen-method" data-chosen={key}>{badge}<span className="wl-sum-t"><b>{name}</b><small>{detail}</small></span></span>;
+  if (bank) return row(bank.code, <BankBadge bank={bank} />, lang === 'en' ? bank.bank_name_en : bank.bank_name_th, `${formatAccountNo(bank.account_no)} · ${bank.account_name}`);
+  if (value?.kind === 'wallet') return row('wallet', <span className="wl-logo wl-badge wl-wallet" aria-hidden><WalletIcon size={20} /></span>, t('pm.wallet'), t('pm.walletBalance', { amount: baht(methods.wallet.balance) }));
+  if (value?.kind === 'qr') return row('qr', <span className="wl-logo wl-badge wl-qr" aria-hidden><QrCode size={20} /></span>, t('pm.qr'), t('pm.qrHint'));
+  return <span data-testid="chosen-method" data-chosen="">{t('pm.title')}</span>;
+}
+
+/**
+ * The payment methods behind one line. Closed it shows the chosen method; tapping it lists them all; tapping a method picks it and closes the list again.
+ * Arrow keys move between the methods without closing (a keyboard user must be able to pass over one); Enter closes.
+ */
+export function PayMethodPicker({ id = 'payment', title, methods, value, onChange, open, setOpen, wallet = true, qr = true, hint }: {
+  id?: string; title: string; methods: PaymentMethods; value: Choice; onChange: (c: Choice) => void; open: boolean; setOpen: (o: boolean) => void; wallet?: boolean; qr?: boolean; hint?: ReactNode;
+}) {
+  const t = useT();
+  const byTap = useRef(false);
+  const done = () => { setOpen(false); focusFold(id); };
+  // a tap on a card is a click on its label and then one the browser sends to the radio inside: only the second closes (the radio must still exist to take it)
+  const click = (e: MouseEvent) => {
+    const el = e.target as HTMLElement;
+    if (el instanceof HTMLInputElement && el.type === 'radio') { const tap = byTap.current; byTap.current = false; if (tap) done(); }
+    else byTap.current = e.detail > 0 && !!el.closest('label.wl-card');
+  };
+  return (
+    <Fold id={id} title={title} open={open} onToggle={() => setOpen(!open)} action={value ? t('pm.change') : t('pm.choose')} summary={<ChoiceSummary methods={methods} value={value} />}>
+      <div onClick={click} onKeyDown={(e) => { if (e.key === 'Enter' && e.target instanceof HTMLInputElement) { e.preventDefault(); done(); } }}>
+        <MethodCards methods={methods} value={value} onChange={onChange} wallet={wallet} qr={qr} />
+      </div>
+      {hint && <div className="sp-note">{hint}</div>}
+    </Fold>
   );
 }
 

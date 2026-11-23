@@ -2,19 +2,19 @@
 // the server), Save QR image, slip upload, and a clear message for every outcome. A slip never settles anything by
 // itself; only staff verification (or later a verification provider / bank record) does.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, Upload } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { useLang, toast } from '../domain/store';
 import { Lang, t as tl } from '../lib/i18n';
 import { Badge, Banner, Button, Card, Field, Input } from '../ui/kit';
-import { Choice, MethodCards, useMethods } from '../wallet/ui';
+import { PayToBank, QrPanel, QrProblem, QrWaiting } from '../wallet/PayTo';
+import { Choice, PayMethodPicker, useMethods } from '../wallet/ui';
 import { TransferAmount, WalletPayPanel } from '../wallet/PayInvoice';
-import { QR } from '../ui/shared';
 import { dateFmt, dateTimeFmt, money } from '../lib/util';
 import { CustomerEvidence, finance, InvoiceRow, QrRequest, Receipt, STATUS, StatusCode } from './api';
 import { review } from './review';
 import { payNotes } from '../shop/pay';
 import { withTimeout } from '../shop/timeout';
-import { downloadBlob, renderQrCard } from './qrImage';
+import { tr } from '../shop/i18n';
 
 const MSG: Record<StatusCode, { th: string; en: string; tone: 'info' | 'warn' | 'bad' | 'good' }> = {
   0: { th: 'ยังไม่ได้ชำระ เลือกช่องทางชำระเงินด้านล่าง', en: 'Not paid yet. Choose how to pay below.', tone: 'info' },
@@ -55,7 +55,8 @@ export function CustomerInvoices({ lang: langProp, hide }: { lang?: Lang; hide?:
   );
 }
 
-export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, preferred }: { inv: InvoiceRow; onChanged: () => void; lang?: Lang; defaultOpen?: boolean; preferred?: string | null }) {
+/** `compact`: inside an order page, which already shows whose order it is and what it costs: only what is paid and what remains. */
+export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, preferred, compact }: { inv: InvoiceRow; onChanged: () => void; lang?: Lang; defaultOpen?: boolean; preferred?: string | null; compact?: boolean }) {
   const storeLang = useLang();
   const lang = langProp ?? storeLang;
   // the panel opens by itself when there is something to do: pay (1), pay again after the QR expired (9), or send another slip because the shop asked for more evidence (10)
@@ -71,7 +72,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   useEffect(() => () => { if (pickedUrl.current) URL.revokeObjectURL(pickedUrl.current); }, []);
   const [qr, setQr] = useState<QrRequest | null>(null);
   // how the customer pays: a bank account, the wallet or the PromptPay QR (all from the database-driven payment methods)
-  const { methods, reload: reloadMethods } = useMethods();
+  const { methods, error: methodsError, reload: reloadMethods } = useMethods();
   const [picked0, setChoice] = useState<Choice>(null);
   const hasMethods = !!methods && (methods.banks.length > 0 || methods.wallet.balance > 0);
   // the customer's choice at checkout (when it is still available) comes first, then the first bank
@@ -79,16 +80,19 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
     : preferred.startsWith('bank:') ? (() => { const b = methods.banks.find((x) => x.code === preferred.slice(5)); return b ? { kind: 'bank' as const, id: b.id } : null; })() : null;
   const choice: Choice = picked0 ?? prefChoice ?? (hasMethods ? (methods!.banks.length ? { kind: 'bank', id: methods!.banks[0].id } : methods!.wallet.balance > 0 ? { kind: 'wallet' } : methods!.promptpay ? { kind: 'qr' } : null) : null);
   const bankChoice = choice?.kind === 'bank' ? methods?.banks.find((b) => b.id === choice.id) : undefined;
-  const showQr = !hasMethods || choice?.kind === 'qr';
+  const loadingMethods = !methods && !methodsError;
+  const showQr = !loadingMethods && (!hasMethods || choice?.kind === 'qr');   // without any other method (or on an old database) the QR is the only way to pay
+  const [picking, setPicking] = useState(false);                             // the list of methods is closed until the customer wants to change the method
+  const [qrError, setQrError] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
-  const [img, setImg] = useState<string | null>(null);
   const [history, setHistory] = useState<{ ev: CustomerEvidence[]; rc: Receipt[] } | null>(null);
   const [form, setForm] = useState({ amount: '', when: '', bank: '', ref: '' });
   const file = useRef<HTMLInputElement>(null);
   const st = STATUS[inv.status_code] ?? STATUS[0];
   const msg = MSG[inv.status_code] ?? MSG[0];   // a state this build does not know (a newer database) reads as "not paid yet" instead of crashing
   const notes = payNotes(inv, lang);
-  const live = qr ?? (inv.request && !inv.request.expired ? { ...inv.request, account_label: '', merchant_name: null } : null);
+  // a QR made for another amount (the shop recorded a part payment meanwhile) must not be paid: it counts as no QR, and a new one is made
+  const live = [qr, inv.request && !inv.request.expired ? { ...inv.request, account_label: '', merchant_name: null } : null].find((q) => q && Number(q.amount) === Number(inv.outstanding)) ?? null;
   const payable = inv.status_code !== 8 && inv.status_code !== 5 && inv.status_code !== 6 && inv.outstanding > 0;
 
   const loadHistory = useCallback(async () => {
@@ -100,22 +104,14 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   useEffect(() => { setForm((f) => ({ ...f, amount: f.amount || String(inv.outstanding) })); }, [inv.outstanding]);
 
   const makeQr = async () => {
-    setBusy('qr');
-    try { setQr(await finance.requestPayment(inv.id)); setImg(null); onChanged(); } catch (e) { toast('error', (e as Error).message); } finally { setBusy(''); }
+    setBusy('qr'); setQrError(null);
+    try { setQr(await finance.requestPayment(inv.id)); onChanged(); } catch (e) { setQrError((e as Error).message); toast('error', (e as Error).message); } finally { setBusy(''); }
   };
-  const card = async () => {
-    if (!live) return null;
-    return renderQrCard({ payload: live.qr_payload, amount: live.amount, ref: live.ref, merchant: live.merchant_name || qr?.account_label || '', invoiceNo: inv.invoice_no, expiresAt: live.expires_at, lang });
-  };
-  const save = async () => {
-    setBusy('save');
-    try {
-      const b = await card(); if (!b) return;
-      downloadBlob(b, `QR-${inv.invoice_no}-${live!.ref}.png`);
-      // LINE's in-app browser may ignore downloads: also show the picture so it can be pressed and held
-      setImg(URL.createObjectURL(b));
-    } catch (e) { toast('error', (e as Error).message); } finally { setBusy(''); }
-  };
+  // choosing the QR shows it: no second button to find. Not while a slip waits (3), more evidence is wanted (10) or after a QR expired (9): then the money may already
+  // have been sent, so a new QR is only made when the customer asks for it.
+  const autoQr = open && payable && choice?.kind === 'qr' && !live && !busy && !qrError && [0, 1, 4, 7].includes(inv.status_code);
+  const asked = useRef('');
+  useEffect(() => { const k = `${inv.id}:${inv.outstanding}`; if (autoQr && asked.current !== k) { asked.current = k; void makeQr(); } }, [autoQr, inv.id, inv.outstanding]); // eslint-disable-line react-hooks/exhaustive-deps
   const upload = async (f: File | null) => {
     if (!f) return;
     const amount = Number(form.amount);
@@ -123,7 +119,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
     setBusy('slip');
     try {
       // a stalled upload gives up after 60 s so the button comes back instead of waiting for ever (FB-001019)
-      const evidenceId = await withTimeout(() => finance.submitEvidence({ invoiceId: inv.id, file: f, claimedAmount: amount, transferAt: form.when ? new Date(form.when).toISOString() : null, bank: bankChoice ? bankChoice.code : form.bank, ref: form.ref, bankAccountId: bankChoice?.id ?? null }), 60_000);
+      const evidenceId = await withTimeout(() => finance.submitEvidence({ invoiceId: inv.id, file: f, claimedAmount: amount, transferAt: form.when ? new Date(form.when).toISOString() : null, bank: bankChoice ? bankChoice.code : choice?.kind === 'qr' ? form.bank || 'PromptPay' : form.bank, ref: form.ref, bankAccountId: bankChoice?.id ?? null }), 60_000);
       void review.analyze({ evidenceId });   // best effort and never awaited: the slip is saved, and the shop checks it by hand whatever happens to the reader (analyze never throws)
       toast('success', tl(lang, 'Slip sent. The shop will verify it shortly.'));
       pick(null); setForm((x) => ({ ...x, ref: '' })); onChanged(); void loadHistory();
@@ -137,11 +133,13 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
         <div><b>{inv.invoice_no}</b><div className="muted" style={{ fontSize: 12 }}>{dateFmt(inv.issue_date)} · {tl(lang, 'due')} {dateFmt(inv.due_date)}</div></div>
         <Badge tone={st.tone} dot>{lang === 'th' ? st.th : st.en}</Badge>
       </div>
-      {inv.description && <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>{inv.description}</div>}
+      {!compact && inv.description && <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>{inv.description}</div>}
       <div className="col gap-4" style={{ marginTop: 8, fontSize: 13.5 }}>
-        <div className="row between"><span className="muted">{tl(lang, 'Customer')}</span><span>{inv.customer_name}</span></div>
-        <div className="row between"><span className="muted">{tl(lang, 'Invoice amount')}</span><span>{money(inv.amount)}</span></div>
-        <div className="row between"><span className="muted">{tl(lang, 'Paid so far')}</span><span>{money(inv.paid)}</span></div>
+        {!compact && <div className="row between"><span className="muted">{tl(lang, 'Customer')}</span><span>{inv.customer_name}</span></div>}
+        {(!compact || inv.paid > 0) && <>
+          <div className="row between"><span className="muted">{tl(lang, 'Invoice amount')}</span><span>{money(inv.amount)}</span></div>
+          <div className="row between"><span className="muted">{tl(lang, 'Paid so far')}</span><span>{money(inv.paid)}</span></div>
+        </>}
         <div className="row between"><b>{tl(lang, 'Remaining')}</b><b style={{ fontSize: 18 }}>{money(inv.outstanding)}</b></div>
       </div>
       <div style={{ marginTop: 8 }}><Banner tone={msg.tone}>{lang === 'th' ? msg.th : msg.en}</Banner></div>
@@ -154,40 +152,32 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
       {payable && !open && <Button variant="primary" className="block mt8" onClick={() => setOpen(true)}>{tl(lang, 'Pay this invoice')}</Button>}
       {open && payable && (
         <div className="col gap-8" style={{ marginTop: 10 }}>
-          {hasMethods && <>
-            <div className="dev-sub">{lang === 'th' ? 'เลือกช่องทางการชำระเงิน' : 'Choose how to pay'}</div>
-            <MethodCards methods={methods!} value={choice} onChange={setChoice} qr />
-          </>}
+          {loadingMethods && <div className="muted" aria-busy="true" style={{ fontSize: 12.5 }}>{tr(lang, 'pm.loading')}</div>}
+          {hasMethods && <PayMethodPicker id={`pay-${inv.id}`} title={tr(lang, 'pm.title')} methods={methods!} value={choice} onChange={(c) => { setChoice(c); setQrError(null); }} open={picking} setOpen={setPicking} />}
           {choice?.kind === 'wallet' && methods && <WalletPayPanel inv={inv} balance={methods.wallet.balance} onPaid={() => { reloadMethods(); onChanged(); void loadHistory(); }} />}
-          {bankChoice && <TransferAmount amount={inv.outstanding} reference={inv.invoice_no} />}
-          {showQr && (!live
-            ? <Button variant="primary" className="block" loading={busy === 'qr'} disabled={!!busy} onClick={makeQr}>{tl(lang, 'Create payment QR')} · {money(inv.outstanding)}</Button>
-            : <>
-              <div className="col gap-4" style={{ alignItems: 'center' }}>
-                <QR data={live.qr_payload} size={190} />
-                <b style={{ fontSize: 24 }}>{money(live.amount)}</b>
-                <span className="muted mono" style={{ fontSize: 12 }}>{tl(lang, 'Ref')} {live.ref}</span>
-                <span className="muted" style={{ fontSize: 12 }}>{tl(lang, 'Valid until')} {dateTimeFmt(live.expires_at)}</span>
-              </div>
-              <Button className="block" loading={busy === 'save'} disabled={!!busy} onClick={save}><Download size={15} /> {tl(lang, 'Save QR image')}</Button>
-              {img && <div className="col gap-4" style={{ alignItems: 'center' }}><img src={img} alt={tl(lang, 'Payment QR')} style={{ width: '100%', maxWidth: 300, border: '1px solid var(--border)', borderRadius: 8 }} /><span className="muted" style={{ fontSize: 12, textAlign: 'center' }}>{tl(lang, 'If nothing downloaded, press and hold the picture to save it.')}</span></div>}
-              <div className="muted" style={{ fontSize: 12 }}>{tl(lang, 'Open any banking app, choose scan from your photos, pick the saved picture and confirm the amount shown.')}</div>
+          {bankChoice && <><PayToBank bank={bankChoice} /><TransferAmount amount={inv.outstanding} reference={inv.invoice_no} /></>}
+          {showQr && (live
+            ? <>
+              <QrPanel payload={live.qr_payload} amount={live.amount} merchant={live.merchant_name || live.account_label || null} reference={live.ref} expires={dateTimeFmt(live.expires_at)} expiresAt={live.expires_at} invoiceNo={inv.invoice_no} fileName={`QR-${inv.invoice_no}-${live.ref}.png`} />
               <Button size="sm" variant="ghost" onClick={makeQr} disabled={!!busy}>{tl(lang, 'Create a new QR')}</Button>
-            </>)}
+            </>
+            : qrError ? <QrProblem message={tr(lang, 'qr.errorHint')} busy={!!busy} onRetry={() => void makeQr()} onOther={hasMethods ? () => setPicking(true) : undefined} />
+              : busy === 'qr' ? <QrWaiting />
+                : <Button variant="primary" className="block" disabled={!!busy} onClick={makeQr}>{tl(lang, 'Create payment QR')} · {money(inv.outstanding)}</Button>)}
 
-          {choice?.kind !== 'wallet' && <>
+          {!loadingMethods && choice?.kind !== 'wallet' && <>
           <div className="dev-sub"><Tx2>{tl(lang, 'After you pay: upload your slip')}</Tx2></div>
-          <Field label={tl(lang, 'Amount transferred (฿)')}><Input type="number" inputMode="decimal" min={0} step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></Field>
-          <Field label={tl(lang, 'Transfer date and time')}><Input type="datetime-local" value={form.when} onChange={(e) => setForm({ ...form, when: e.target.value })} /></Field>
-          <div className="row gap-6">
-            {!bankChoice && <Field label={tl(lang, 'Bank / channel')}><Input maxLength={60} value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} /></Field>}
-            <Field label={tl(lang, 'Reference on slip')}><Input maxLength={80} value={form.ref} onChange={(e) => setForm({ ...form, ref: e.target.value })} /></Field>
-          </div>
           <input ref={file} type="file" hidden accept="image/jpeg,image/png,application/pdf" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) pick(f); }} />
           {picked ? (
             <div className="col gap-8" data-testid="slip-preview">
               {picked.url ? <img src={picked.url} alt={tl(lang, 'Slip preview')} style={{ width: '100%', maxHeight: 320, objectFit: 'contain', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }} />
                 : <div className="muted" style={{ padding: 12, border: '1px dashed var(--border)', borderRadius: 8 }}>{picked.file.name}</div>}
+              <Field label={tl(lang, 'Amount transferred (฿)')}><Input type="number" inputMode="decimal" min={0} step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></Field>
+              <Field label={tl(lang, 'Transfer date and time')}><Input type="datetime-local" value={form.when} onChange={(e) => setForm({ ...form, when: e.target.value })} /></Field>
+              <div className="row gap-6">
+                {!bankChoice && choice?.kind !== 'qr' && <Field label={tl(lang, 'Bank / channel')}><Input maxLength={60} value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} /></Field>}
+                <Field label={tl(lang, 'Reference on slip')}><Input maxLength={80} value={form.ref} onChange={(e) => setForm({ ...form, ref: e.target.value })} /></Field>
+              </div>
               <Button variant="primary" className="block" loading={busy === 'slip'} disabled={!!busy} onClick={() => void upload(picked.file)}><Upload size={15} /> {tl(lang, 'Submit this slip')}</Button>
               <Button className="block" disabled={!!busy} onClick={() => file.current?.click()}>{tl(lang, 'Choose another picture')}</Button>
             </div>

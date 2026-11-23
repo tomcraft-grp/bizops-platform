@@ -6,6 +6,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { tr, type K } from '../../src/shop/i18n';
 import { FakeShop } from './fakeBackend';
+import { openMethods, pickMethod } from './methods';
 
 const t = (k: K, v?: Record<string, string | number>) => tr('th', k, v);
 const SHOTS = process.env.SHOP_SHOTS ?? 'test-results/shop';
@@ -28,7 +29,7 @@ async function openOrderInvoice(page: Page) {
   await tab(page, t('nav.orders')).click();
   await page.locator('.sp-order').first().click();
   await expect(page.locator('.sp-order-detail')).toBeVisible();
-  await expect(page.locator('[data-bank="SCB"]')).toBeVisible();
+  await openMethods(page); await expect(page.locator('[data-bank="SCB"]')).toBeVisible();
 }
 async function openWallet(page: Page) {
   await tab(page, t('nav.account')).click();
@@ -50,7 +51,7 @@ test.describe('payment methods on an invoice', () => {
     await expect(page.locator('[data-method="qr"]')).toBeVisible();
     // the first bank is preselected and the exact amount to transfer comes from the invoice (the database), not from the customer
     await expect(page.getByTestId('transfer-amount').first()).toContainText(`฿${order.total.toLocaleString('en-US')}`);
-    await methodRadio(page, 'BBL').click();
+    await pickMethod(page, 'BBL'); await openMethods(page);
     await expect(page.locator('[data-bank="BBL"]')).toHaveClass(/on/); await expect(page.locator('[data-bank="SCB"]')).not.toHaveClass(/on/);
     await page.screenshot({ path: `${SHOTS}/pay-methods-mobile.png`, fullPage: true });
     await noOverflow(page);
@@ -268,8 +269,8 @@ test.describe('wallet screens: responsive and accessible', () => {
       await openWallet(page); await noOverflow(page);
       await page.getByRole('button', { name: t('w.add') }).first().click(); await expect(page.locator('[data-bank="SCB"]')).toBeVisible(); await noOverflow(page);
       await page.getByRole('button', { name: t('w.back') }).first().click();
-      await tab(page, t('nav.orders')).click(); await page.locator('.sp-order').first().click(); await expect(page.locator('[data-bank="BBL"]')).toBeVisible(); await noOverflow(page);
-      await page.locator('[data-method="wallet"] label').click(); await expect(page.getByTestId('wallet-pay')).toBeVisible(); await noOverflow(page);
+      await tab(page, t('nav.orders')).click(); await page.locator('.sp-order').first().click(); await openMethods(page); await expect(page.locator('[data-bank="BBL"]')).toBeVisible(); await noOverflow(page);
+      await pickMethod(page, 'wallet'); await expect(page.getByTestId('wallet-pay')).toBeVisible(); await noOverflow(page); await openMethods(page);
       const box = await page.locator('[data-bank="SCB"]').boundingBox(); expect(box!.width).toBeLessThanOrEqual(vp.w);
     });
   }
@@ -285,7 +286,7 @@ test.describe('wallet screens: responsive and accessible', () => {
     await methodRadio(page, 'SCB').click(); await page.getByLabel(t('dep.amount')).fill('1500'); await page.getByRole('button', { name: t('dep.create') }).click();
     await expect(page.getByTestId('transfer-amount')).toBeVisible(); await check('transfer details');
     await page.getByRole('button', { name: t('w.back') }).first().click(); await page.getByRole('button', { name: t('w.back') }).first().click();
-    await tab(page, t('nav.orders')).click(); await page.locator('.sp-order').first().click(); await expect(page.locator('[data-bank="BBL"]')).toBeVisible(); await check('invoice payment methods');
+    await tab(page, t('nav.orders')).click(); await page.locator('.sp-order').first().click(); await openMethods(page); await expect(page.locator('[data-bank="BBL"]')).toBeVisible(); await check('invoice payment methods');
     await page.locator('[data-method="wallet"] label').click(); await expect(page.getByTestId('wallet-pay')).toBeVisible(); await check('pay from wallet');
   });
 });
