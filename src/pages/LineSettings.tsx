@@ -70,7 +70,7 @@ export function LineSettingsCard() {
   const credLine = (k: 'secret' | 'token') => {
     const set = k === 'secret' ? s.secret_set : s.token_set;
     const at = k === 'secret' ? s.secret_set_at : s.token_set_at;
-    return <span data-cred={k}><Badge tone={set ? 'good' : 'warn'}>{set ? t(lang, 'Set') : t(lang, 'Not set')}</Badge>{set && at ? <span className="muted"> {when(at)}</span> : null}</span>;
+    return <span data-cred={k}><Badge tone={set ? 'good' : 'warn'}>{set ? t(lang, 'Configured') : t(lang, 'Not set')}</Badge>{set && at ? <span className="muted"> {when(at)}</span> : null}</span>;
   };
 
   return (

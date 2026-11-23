@@ -15,13 +15,13 @@ async function openSettings(page: Page, fake: FakeShop, lang: 'en' | 'th' = 'en'
 }
 const card = (page: Page) => page.locator('[data-line-settings]');
 
-test('a SUPER_ADMIN saves the access token: the box is cleared and only "Set" is shown', async ({ page }) => {
+test('a SUPER_ADMIN saves the access token: the box is cleared and only "Configured" is shown', async ({ page }) => {
   const fake = new FakeShop(); await openSettings(page, fake);
   await card(page).getByLabel('Channel access token').fill('TESTTOKEN-line-0123456789-abcdefghij');
   await card(page).getByRole('button', { name: 'Save credentials' }).click();
   await expect.poll(() => fake.ln.token).toBe('TESTTOKEN-line-0123456789-abcdefghij');
   await expect(card(page).getByLabel('Channel access token')).toHaveValue('');
-  await expect(card(page).locator('[data-cred="token"]')).toContainText('Set');
+  await expect(card(page).locator('[data-cred="token"]')).toContainText('Configured');
   await expect(card(page)).not.toContainText('TESTTOKEN');
 });
 

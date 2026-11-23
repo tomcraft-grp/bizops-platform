@@ -10,7 +10,7 @@ export const TH_LINE: Record<string, string> = {
   'LINE notifications on': 'เปิดแจ้งเตือนผ่าน LINE',
   'Channel secret': 'Channel secret',
   'Channel access token': 'Channel access token',
-  'Set': 'ตั้งค่าแล้ว',
+  'Configured': 'ตั้งค่าแล้ว',
   'Not set': 'ยังไม่ได้ตั้งค่า',
   'set {date}': 'ตั้งค่าแล้ว {date}',
   'Leave empty to keep the current value': 'เว้นว่างไว้เพื่อใช้ค่าเดิม',

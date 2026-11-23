@@ -15,6 +15,13 @@ describe('lineErrorText', () => {
   it('any other message is shown as it is', () => { expect(lineErrorText('en', new Error('boom'))).toBe('boom'); });
 });
 
+describe('labels', () => {
+  it('a saved credential reads "ตั้งค่าแล้ว" in Thai (not "ชุด", the product-set word that "Set" already means elsewhere)', async () => {
+    const { t } = await import('../../src/lib/i18n');
+    expect(t('th', 'Configured')).toBe('ตั้งค่าแล้ว');
+  });
+});
+
 describe('form checks', () => {
   it('validMaxAmount: a positive amount with at most 2 decimals, up to 1,000,000', () => {
     expect(validMaxAmount('3000')).toBe(true);
