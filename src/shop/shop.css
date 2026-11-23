@@ -258,11 +258,42 @@ div.wl-card .wl-no { user-select: all; }
 .wl-sum-t { display: flex; flex-direction: column; min-width: 0; } .wl-sum-t b { color: var(--text); font-size: 14px; } .wl-sum-t small { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .wl-payto { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .wl-payto .wl-no { user-select: all; }
-.wl-qr-panel { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); text-align: center; min-width: 0; }
-.wl-qrbox { width: min(260px, 100%); aspect-ratio: 1 / 1; background: #fff; border-radius: 8px; overflow: hidden; line-height: 0; }
-.wl-qrwait { display: grid; place-items: center; line-height: 1.4; background: var(--surface-3); color: var(--text-2); font-size: 13px; }
-.wl-qr-to { font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; } .wl-qr-amt { font-size: 24px; } .wl-qr-panel .btn { justify-content: center; }
-.wl-qr-saved { width: 100%; max-width: 300px; border: 1px solid var(--border); border-radius: 8px; }
+/* the payment card: fixed colours in both themes (a dark card with gold lines); the QR itself is always black on white and nothing decorative touches it */
+.pq-card { position: relative; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 18px 16px 20px; border-radius: 24px; color: #fff; text-align: center; min-width: 0; overflow: hidden; isolation: isolate;
+  background: radial-gradient(120% 70% at 85% -10%, rgba(241, 220, 167, .20), transparent 60%), radial-gradient(90% 60% at 0% 110%, rgba(64, 120, 200, .28), transparent 65%), linear-gradient(160deg, #0b1d36 0%, #14315a 55%, #091628 100%);
+  border: 1px solid rgba(241, 220, 167, .42); box-shadow: 0 18px 44px -18px rgba(6, 18, 40, .75), inset 0 1px 0 rgba(255, 255, 255, .10); }
+.pq-card::before { content: ''; position: absolute; inset: 0 0 auto; height: 3px; background: linear-gradient(90deg, #b98f45, #f6e6bd, #b98f45); background-size: 200% 100%; animation: pq-sheen 6s linear infinite; }
+@keyframes pq-sheen { to { background-position: -200% 0; } }
+.pq-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pq-brand { font-size: 12.5px; font-weight: 700; letter-spacing: .04em; color: #f1dca7; }
+.pq-status { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 650; color: #fff; background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .18); }
+.pq-status i { width: 7px; height: 7px; border-radius: 50%; background: #f6c453; animation: pq-pulse 2s ease-in-out infinite; }
+@keyframes pq-pulse { 50% { opacity: .35; } }
+.pq-title { font-size: 20px; font-weight: 800; letter-spacing: .01em; }
+.pq-plate { width: min(288px, 100%); aspect-ratio: 1 / 1; padding: 6px; border-radius: 22px; background: #fff; box-shadow: 0 0 0 3px #d9b870, 0 14px 34px -12px rgba(0, 0, 0, .6); line-height: 0; }
+.pq-plate img { width: 100%; height: 100%; display: block; border-radius: 16px; image-rendering: auto; -webkit-touch-callout: default; user-select: auto; }
+.pq-wait { display: grid; place-items: center; line-height: 1.4; color: #334155; font-size: 13px; padding: 16px; }
+.pq-amount { display: flex; flex-direction: column; gap: 2px; } .pq-amount span { font-size: 12.5px; color: #c7d3e6; } .pq-amount b { font-size: 36px; line-height: 1.1; font-weight: 800; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.pq-rows { width: 100%; margin: 0; display: flex; flex-direction: column; border-radius: 16px; background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .12); overflow: hidden; }
+.pq-rows > div { display: flex; justify-content: space-between; gap: 14px; padding: 10px 14px; font-size: 13.5px; } .pq-rows > div + div { border-top: 1px solid rgba(255, 255, 255, .10); }
+.pq-rows dt { color: #c7d3e6; flex: none; } .pq-rows dd { margin: 0; font-weight: 650; text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.pq-save { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 12px 16px; border: 0; border-radius: 14px; font: inherit; font-size: 15px; font-weight: 750; color: #1b1405; cursor: pointer; background: linear-gradient(180deg, #f6e6bd, #d9b870); box-shadow: 0 8px 20px -10px rgba(217, 184, 112, .9); transition: transform .12s, filter .12s; }
+.pq-save:hover { filter: brightness(1.05); } .pq-save:active { transform: translateY(1px); } .pq-save:disabled { opacity: .6; cursor: default; }
+.pq-save:focus-visible, .pq-link:focus-visible { outline: 3px solid #f6e6bd; outline-offset: 2px; }
+.pq-link { border: 0; background: none; color: #f1dca7; font: inherit; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; padding: 4px 8px; min-height: 32px; cursor: pointer; border-radius: 8px; }
+.pq-steps { width: 100%; margin: 0; padding: 12px 0 0; list-style: none; counter-reset: s; display: flex; flex-direction: column; gap: 8px; text-align: left; border-top: 1px solid rgba(255, 255, 255, .12); }
+.pq-steps li { counter-increment: s; display: flex; gap: 10px; font-size: 13px; line-height: 1.45; color: #e6edf7; }
+.pq-steps li::before { content: counter(s); flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 750; color: #f1dca7; border: 1px solid rgba(241, 220, 167, .6); }
+.pq-sheet { z-index: 80; text-align: left; } .pq-sheet .sp-sheet-card { max-height: 94dvh; overflow-y: auto; align-items: stretch; } .pq-sheet p { margin: 0; }
+.pq-saved { width: 100%; max-width: 300px; align-self: center; border-radius: 16px; -webkit-touch-callout: default; user-select: auto; }
+@media (prefers-reduced-motion: reduce) { .pq-card::before, .pq-status i { animation: none; } }
+/* what the customer is told while the slip is checked */
+.sc-card { display: flex; gap: 12px; margin-top: 8px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface-2, var(--surface)); color: var(--text); font-size: 13.5px; line-height: 1.5; }
+.sc-card.attention { background: var(--warn-soft); border-color: var(--warn); color: var(--warn-text); }
+.sc-ic { flex: none; width: 24px; height: 24px; display: grid; place-items: center; } .sc-main { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; } .sc-main b { font-size: 14.5px; } .sc-detail { font-weight: 700; overflow-wrap: anywhere; } .sc-main .btn { margin-top: 4px; }
+.sc-spin { width: 20px; height: 20px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--brand); animation: sc-spin .9s linear infinite; }
+@keyframes sc-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sc-spin { animation-duration: 3s; } }
 .wl-qr-err { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--radius); background: var(--warn-soft); color: var(--warn-text); font-size: 13.5px; }
 .wl-balance { display: flex; flex-direction: column; gap: 4px; padding: 16px; border-radius: var(--radius); color: #fff; background: linear-gradient(135deg, var(--ca-card-from, var(--brand)), var(--ca-card-to, var(--brand-hover))); }
 .wl-bal-k { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; opacity: .92; } .wl-bal-v { font-size: 34px; line-height: 1.1; letter-spacing: -.01em; }

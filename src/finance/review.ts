@@ -49,6 +49,8 @@ const REASONS = {
   DATE_MISSING: { en: 'The transfer date could not be read from the slip', th: 'อ่านวันที่โอนจากสลิปไม่ได้' },
   DATE_OUT_OF_RANGE: { en: 'The transfer is on a different day from the order', th: 'วันที่โอนไม่ตรงกับวันที่สั่งซื้อ' },
   DUPLICATE_REFERENCE: { en: 'This bank reference was already used on another slip, receipt or deposit', th: 'เลขอ้างอิงธนาคารนี้เคยถูกใช้แล้ว (สลิป ใบเสร็จ หรือการฝากเงินอื่น)' },
+  DUPLICATE_FILE: { en: 'The same file was already sent as another payment slip', th: 'ไฟล์เดียวกันนี้เคยถูกส่งเป็นสลิปของรายการอื่นแล้ว' },
+  FILE_HASH_MISMATCH: { en: 'The stored file is not the file the app declared', th: 'ไฟล์ที่เก็บไว้ไม่ตรงกับไฟล์ที่แอปแจ้ง' },
   LOW_CONFIDENCE: { en: 'The AI is not confident enough about what it read', th: 'AI ไม่มั่นใจในสิ่งที่อ่านได้มากพอ' },
   NOT_A_SLIP: { en: 'The picture does not look like a transfer slip', th: 'ภาพนี้ดูเหมือนไม่ใช่สลิปโอนเงิน' },
   QR_BAD_CRC: { en: 'The checksum of the QR code on the slip is wrong', th: 'รหัสตรวจสอบ (CRC) ของ QR บนสลิปไม่ถูกต้อง' },

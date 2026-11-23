@@ -18,6 +18,8 @@ import { STATUS } from '../../src/finance/api';
 import { t } from '../../src/lib/i18n';
 
 const SQL = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/20261120100000_slip_review.sql'), 'utf8');
+// 20261124100000 adds two rules to the classifier (the file that is really stored)
+const SQL_FILE = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/20261124100000_slip_check_customer.sql'), 'utf8');
 const THAI = /[฀-๿]/;
 const nonEmpty = (s: unknown) => typeof s === 'string' && s.trim().length > 0;
 
@@ -125,7 +127,7 @@ describe('reason texts agree with the classifier in the migration', () => {
     if (found.size === 0) for (const c of body.matchAll(/'([A-Z][A-Z0-9_]{3,})'/g)) found.add(c[1]);
     return found;
   })();
-  const allSqlCodes = reasonCodes(SQL);              // the classifier plus finance_analysis_fail (AI_UNAVAILABLE)
+  const allSqlCodes = new Set([...reasonCodes(SQL), ...reasonCodes(SQL_FILE)]);              // the classifier plus finance_analysis_fail (AI_UNAVAILABLE)
 
   it('the reader of the SQL finds the codes it should (a guard against reading nothing and passing)', () => {
     expect([...classifyCodes].sort()).toEqual([
@@ -133,7 +135,8 @@ describe('reason texts agree with the classifier in the migration', () => {
       'QR_REF_MISMATCH', 'RECEIVER_MISMATCH', 'RECEIVER_UNCLEAR', 'RESUBMITTED_TRANSFER', 'STATUS_NOT_SUCCESS', 'TAMPER_SIGNAL', 'TIME_MISSING', 'TIME_OUT_OF_RANGE', 'UNREADABLE',
     ]);
     expect(allSqlCodes.has('AI_UNAVAILABLE')).toBe(true);
-    expect(allSqlCodes.size).toBe(classifyCodes.size + 1);
+    expect([...reasonCodes(SQL_FILE)].sort()).toEqual(['DUPLICATE_FILE', 'FILE_HASH_MISMATCH']);
+    expect(allSqlCodes.size).toBe(classifyCodes.size + 3);
     // the loose read (every upper-case literal of the classifier that looks like a code) must not find a code the structured read missed: a reason passed in a way the reader does not understand
     const loose = [...fnBody('finance_classify_slip').matchAll(/'([A-Z][A-Z0-9_]{3,})'/g)].map((x) => x[1]);
     expect(loose.filter((c) => !classifyCodes.has(c))).toEqual([]);

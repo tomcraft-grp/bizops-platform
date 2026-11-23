@@ -67,6 +67,11 @@ export async function slipFingerprint(file: File): Promise<{ type: string; sha25
   if (file.size > EVIDENCE_MAX) throw new ShopError('The file must be 5 MB or smaller', 'FILE_TOO_BIG');
   return { type, sha256: await sha256(file), ext: type === 'application/pdf' ? 'pdf' : type === 'image/png' ? 'png' : 'jpg' };
 }
+/** Why a picked file cannot be a slip (its real type by the first bytes, its size), or null: told at once instead of after "place order". */
+export async function slipProblem(file: File): Promise<'err.slipBad' | 'err.slipBig' | null> {
+  if (!(await sniffType(file))) return 'err.slipBad';
+  return file.size > EVIDENCE_MAX ? 'err.slipBig' : null;
+}
 /** Upload the slip into the customer's own folder of the private bucket BEFORE the order is placed. The same order key always gives the same path,
  *  so a retry reuses the file instead of leaving a second one. The order itself is created (with the slip) by one database call. */
 export async function uploadOrderSlip(file: File, key: string, fp: { type: string; ext: string }): Promise<string> {

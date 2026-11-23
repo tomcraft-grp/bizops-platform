@@ -352,7 +352,8 @@ type FetchFn = (url: string, init: { method: string; headers: Record<string, str
 export interface ProviderOptions { timeoutMs?: number; retryDelayMs?: number }
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
-const RETRYABLE = /^AI_HTTP_(429|5\d\d)$/;
+const RETRYABLE = /^(AI_HTTP_(429|5\d\d)|AI_NETWORK)$/;      // a busy or unreachable service; never a timeout (the function would run out of its own time), a refusal or a bad reply
+const MAX_RETRIES = 2;
 const sleep = (ms: number) => (ms > 0 ? new Promise<void>((r) => setTimeout(r, ms)) : Promise.resolve());
 
 async function postOnce(fetchFn: FetchFn, headers: Record<string, string>, body: unknown, timeoutMs: number, secrets: string[]): Promise<unknown> {
@@ -399,7 +400,7 @@ export function selectProvider(env: Env, fetchFn: FetchFn, opts: ProviderOptions
       for (let attempt = 0; ; attempt++) {
         try { j = (await postOnce(fetchFn, headers, body, timeoutMs, [key])) as typeof j; break; }
         catch (e) {
-          if (attempt === 0 && e instanceof GenError && RETRYABLE.test(e.code)) { await sleep(retryDelayMs); continue; }   // one retry on 429 / 5xx
+          if (attempt < MAX_RETRIES && e instanceof GenError && RETRYABLE.test(e.code)) { await sleep(retryDelayMs * (attempt + 1)); continue; }
           throw e;
         }
       }

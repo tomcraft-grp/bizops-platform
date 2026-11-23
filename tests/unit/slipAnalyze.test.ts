@@ -2,6 +2,7 @@
 // decoder and the request handler, all with FAKES (no network, no key, no database). What is proven here is the logic around the AI, not the quality of a real
 // model's reading: a real slip of each bank still has to be tried by hand once the Anthropic key exists.
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -342,10 +343,16 @@ describe('selectProvider', () => {
       expect(f.calls).toHaveLength(2);
     }
   });
-  it('gives up after the single retry when the service keeps failing with 500', async () => {
+  it('retries a connection that could not be made', async () => {
+    let n = 0;
+    const flaky = (async () => { if (++n < 3) throw new Error('connect ECONNRESET'); return { ok: true, status: 200, json: async () => okBody(GOOD).body, text: async () => '' }; }) as never;
+    expect(await selectProvider({ ANTHROPIC_API_KEY: KEY }, flaky, { retryDelayMs: 0 })!.extract(IMG)).toBe(GOOD);
+    expect(n).toBe(3);
+  });
+  it('gives up after two retries when the service keeps failing with 500', async () => {
     const f = fakeFetch(() => ({ ok: false, status: 500, body: { error: { message: 'down' } } }));
     await expect(selectProvider({ ANTHROPIC_API_KEY: KEY }, f.fn, { retryDelayMs: 0 })!.extract(IMG)).rejects.toMatchObject({ code: 'AI_HTTP_500' });
-    expect(f.calls).toHaveLength(2);
+    expect(f.calls).toHaveLength(3);
   });
   it('does not retry a client error (400 / 401)', async () => {
     for (const status of [400, 401, 413]) {
@@ -361,7 +368,7 @@ describe('selectProvider', () => {
     expect((err as GenError).message).not.toContain('secretsecret1');
     expect(errorText(err, [KEY])).toMatch(/^AI_HTTP_401: /);
     expect(errorText(err, [KEY])).not.toContain('secretsecret1');
-    const down = selectProvider({ ANTHROPIC_API_KEY: KEY }, (async () => { throw new Error(`connect ECONNREFUSED ${KEY}`); }) as never)!;
+    const down = selectProvider({ ANTHROPIC_API_KEY: KEY }, (async () => { throw new Error(`connect ECONNREFUSED ${KEY}`); }) as never, { retryDelayMs: 0 })!;
     const e = await down.extract(IMG).catch((x) => x as GenError);
     expect((e as GenError).code).toBe('AI_NETWORK');
     expect((e as GenError).message).not.toContain('secretsecret1');
@@ -813,7 +820,7 @@ describe('request handler: the analysis', () => {
     expect(s.log.complete).toHaveLength(1);
     const c = s.log.complete[0];
     expect(c).toMatchObject({ analysisId: 'an-1', confidence: 0.96, signals: [], engine: 'claude-haiku-5-5', promptVersion: 'slip-v1' });
-    expect(c.qr).toEqual({ found: true, crc_ok: true, sending_bank: '014', trans_ref: '0002123123121200011' });
+    expect(c.qr).toEqual({ found: true, crc_ok: true, sending_bank: '014', trans_ref: '0002123123121200011', file_sha256: createHash('sha256').update(PNG_BYTES).digest('hex') });   // the fingerprint of the bytes that are stored, not the one the browser declared
     expect(c.extracted).toMatchObject({ amount: 350, transfer_at: '2026-11-19T14:02:00+07:00', time_known: true, is_slip: true, trans_ref: '016323140202BPM01234' });
   });
   it('the model request never contains an expected value, even if the database result carried extra fields', async () => {
@@ -932,7 +939,7 @@ describe('request handler: the analysis', () => {
   it('a QR decoder that throws is the same as no QR found; the analysis still completes', async () => {
     const s = setup({ decodeQr: () => { throw new Error('boom'); } });
     expect((await (await s.call()).json()).status).toBe('completed');
-    expect(s.log.complete[0].qr).toEqual({ found: false, crc_ok: null, sending_bank: null, trans_ref: null });
+    expect(s.log.complete[0].qr).toMatchObject({ found: false, crc_ok: null, sending_bank: null, trans_ref: null });
   });
   it('complete failing ends in fail, and a fail that also fails does not crash the function', async () => {
     const a = setup({ async complete() { throw new Error('db down'); } });

@@ -19,7 +19,7 @@ import { ConfirmSheet, ErrorBox, errText, Fold, ProductImage, Stepper } from './
 import { RewardsPreview } from './Rewards';
 import { CheckoutQrPanel, PayToBank } from '../wallet/PayTo';
 import { Choice, PayMethodPicker, useMethods } from '../wallet/ui';
-import { removeOrderSlip, slipFingerprint, uploadOrderSlip } from '../wallet/api';
+import { removeOrderSlip, slipFingerprint, slipProblem, uploadOrderSlip } from '../wallet/api';
 import { review } from '../finance/review';
 
 export function CartCore() {
@@ -114,6 +114,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   const address = draft.address ?? saved.address ?? '';
   const note = draft.note ?? '';
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [asking, setAsking] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
@@ -153,7 +154,10 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   const toggle = (id: 'contact' | 'items' | 'payment') => setSec((s) => (s === id ? null : id));
   const openPayment = () => { setSec('payment'); setTimeout(() => document.getElementById('fold-payment-h')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0); };
   const contactDone = () => { setTouched(true); if (!formOk) return; patch({ name, phone, address }); setSec(null); };
-  const pickSlip = (f: File) => { setSlip({ file: f, total: quote.total }); setShowPay(false); setErr(null); if (formOk) { patch({ name, phone, address }); setSec(null); } };
+  const pickSlip = async (f: File) => {
+    const bad = await slipProblem(f); if (bad) { setErr(t(bad)); return; }          // not a picture or PDF, or too big: said now, nothing is kept
+    setSlip({ file: f, total: quote.total }); setShowPay(false); setErr(null); if (formOk) { patch({ name, phone, address }); setSec(null); }
+  };
 
   const ask = () => {
     setTouched(true); setErr(null);
@@ -171,7 +175,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? address.trim() : '', note: note.trim(), pm: methodPref, slip: fp?.sha256 ?? null });
       const key = attemptKey(sessionStorage, uid, payload);
       // the same key gives the same file: a retry never leaves a second one. A stalled upload gives up after 60 s so the button comes back (FB-001019)
-      if (fp && slip) uploaded = await withTimeout(() => uploadOrderSlip(slip.file, key, fp), 60_000);
+      if (fp && slip) { setUploading(true); uploaded = await withTimeout(() => uploadOrderSlip(slip.file, key, fp), 60_000); setUploading(false); }
       const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: address.trim(), note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total,
         slip: fp && uploaded ? { path: uploaded, sha256: fp.sha256, type: fp.type, transferAt: slipWhen ? new Date(slipWhen).toISOString() : null, ref: slipRef.trim() || null } : null });
       try { localStorage.setItem(CONTACT_KEY(uid), JSON.stringify({ name: name.trim(), phone: digits(phone), address: address.trim() } satisfies Contact)); } catch { /* ignore */ }
@@ -192,7 +196,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       if (uploaded && e instanceof ShopError && code !== 'NETWORK' && code !== 'ERROR') removeOrderSlip(uploaded);   // refused for good: do not keep the file (a lost answer might still have created the order, so then it stays)
       if (code === 'PRICE_CHANGED' || code === 'CART_INVALID') refresh();   // show the new numbers / the unavailable items
       setErr(e instanceof TimeoutError ? t('err.network') : errText(t, e));   // a stalled upload: the same "could not connect, safe to try again" message
-    } finally { inflight.current = false; setBusy(false); }
+    } finally { inflight.current = false; setBusy(false); setUploading(false); }
   };
 
   return (
@@ -257,7 +261,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
               : methods ? <p className="sp-note">{t('co.slipPickMethod')}</p> : null)}
           {!slip && <p className="sp-note">{t(method?.kind === 'qr' ? 'co.slipHelpQr' : 'co.slipHelp')}</p>}
           <div className="sp-form">
-            <input ref={slipInput} type="file" hidden accept="image/jpeg,image/png,application/pdf" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) pickSlip(f); }} />
+            <input ref={slipInput} type="file" hidden accept="image/jpeg,image/png,application/pdf" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) void pickSlip(f); }} />
             {slip ? (
               <div className="col gap-8" data-testid="slip-preview">
                 {slip.total !== quote.total && !loading && <Banner tone="warn">{t('co.slipTotalChanged', { was: baht(slip.total), now: baht(quote.total) })}</Banner>}
@@ -280,7 +284,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       {err && <div data-testid="checkout-error"><Banner tone="bad">{err}</Banner></div>}
       <button type="button" className="btn primary lg block" disabled={busy || loading || !quote.ok || closed || !!unavailable} onClick={ask}>{busy ? t('co.placing') : `${t('co.place')} · ${baht(quote.total)}`}</button>
 
-      {asking && <ConfirmSheet title={t('co.confirmTitle')} body={t(needsSlip ? 'co.confirmBodySlip' : 'co.confirmBody', { total: baht(quote.total) })} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} onConfirm={place} onCancel={() => setAsking(false)} />}
+      {asking && <ConfirmSheet title={t('co.confirmTitle')} body={t(needsSlip ? 'co.confirmBodySlip' : 'co.confirmBody', { total: baht(quote.total) })} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} busyLabel={t(uploading ? 'co.uploading' : 'co.placing')} onConfirm={place} onCancel={() => setAsking(false)} />}
     </div>
   );
 }
