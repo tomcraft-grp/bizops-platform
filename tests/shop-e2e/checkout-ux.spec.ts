@@ -35,7 +35,7 @@ async function attach(page: Page, name = 'slip.png') {
 }
 /** what a banking app reads from the QR that is on the screen */
 async function scan(page: Page, box: Locator = page.getByTestId('pay-qr')): Promise<string | undefined> {
-  await expect(box).toBeVisible(); await expect(box.locator('svg')).toBeVisible(); await box.scrollIntoViewIfNeeded();
+  await expect(box).toBeVisible(); await expect.poll(() => box.evaluate((e) => (e as HTMLImageElement).complete && (e as HTMLImageElement).naturalWidth)).toBeGreaterThan(500); await box.scrollIntoViewIfNeeded();
   const p = Png.sync.read(await box.screenshot({ scale: 'css' }));
   return jsQR(new Uint8ClampedArray(p.data), p.width, p.height)?.data;
 }
@@ -110,7 +110,7 @@ test.describe('the PromptPay QR at checkout (pay first)', () => {
     await methodFold(page).locator('.sp-fold-h').click(); await expect(page.getByTestId('pay-qr')).toBeVisible();
     const n = fake.count('shop_checkout_qr'); await openFold(page, 'items'); expect(fake.count('shop_checkout_qr')).toBe(n);      // and it is not asked for again
     const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: t('qr.save') }).click()]);
-    expect(dl.suggestedFilename()).toMatch(/^QR-.*\.png$/);
+    expect(dl.suggestedFilename()).toBe('payment-qr-checkout-370.png');
     const saved = Png.sync.read(await (async () => { const s = await dl.createReadStream(); const b: Buffer[] = []; for await (const x of s) b.push(x as Buffer); return Buffer.concat(b); })());
     expect(jsQR(new Uint8ClampedArray(saved.data), saved.width, saved.height)?.data).toBe(promptPayPayload('0812345678', 370));   // the saved picture scans too
     await openFold(page, 'contact'); await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ');
@@ -315,6 +315,6 @@ test.describe('fits and is accessible', () => {
     await tab(page, en('nav.shop')).click(); await page.locator('.sp-card[data-sku="FG-000001"]').getByRole('button', { name: en('p.add') }).click();
     await tab(page, en('nav.cart')).click(); await page.getByRole('button', { name: en('cart.checkout') }).click();
     await expect(chosen(page)).toContainText('Siam Commercial Bank'); await pickMethod(page, 'qr');
-    await expect(page.getByRole('img', { name: en('qr.alt', { amount: '฿370' }) })).toBeVisible(); await expect(page.getByText(en('qr.how'))).toBeVisible();
+    await expect(page.getByRole('img', { name: en('qr.alt', { amount: '฿370' }) })).toBeVisible(); await expect(page.getByText(en('qr.step2'))).toBeVisible();
   });
 });

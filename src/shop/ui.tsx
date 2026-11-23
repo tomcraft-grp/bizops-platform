@@ -193,8 +193,8 @@ export function Fold({ id, title, summary, open, onToggle, action, children }: {
 export const focusFold = (id: string) => { setTimeout(() => { const h = document.getElementById(`fold-${id}-h`); h?.focus({ preventScroll: true }); h?.scrollIntoView({ block: 'nearest' }); }, 0); };
 
 /** A small confirmation sheet in the shop's own language and theme (the staff app's confirm dialog is bilingual by staff setting). */
-export function ConfirmSheet({ title, body, confirmLabel, cancelLabel, danger, busy, onConfirm, onCancel }: {
-  title: string; body?: ReactNode; confirmLabel: string; cancelLabel: string; danger?: boolean; busy?: boolean; onConfirm: () => void; onCancel: () => void;
+export function ConfirmSheet({ title, body, confirmLabel, cancelLabel, danger, busy, busyLabel, onConfirm, onCancel }: {
+  title: string; body?: ReactNode; confirmLabel: string; cancelLabel: string; danger?: boolean; busy?: boolean; busyLabel?: string; onConfirm: () => void; onCancel: () => void;
 }) {
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onCancel]);
   return (
@@ -204,7 +204,7 @@ export function ConfirmSheet({ title, body, confirmLabel, cancelLabel, danger, b
         {body && <div className="sp-sheet-body">{body}</div>}
         <div className="sp-sheet-btns">
           <button type="button" className="btn lg" onClick={onCancel} disabled={busy}>{cancelLabel}</button>
-          <button type="button" className={cx('btn lg', danger ? 'danger' : 'primary')} onClick={onConfirm} disabled={busy}>{busy ? '…' : confirmLabel}</button>
+          <button type="button" className={cx('btn lg', danger ? 'danger' : 'primary')} onClick={onConfirm} disabled={busy}>{busy ? busyLabel ?? '…' : confirmLabel}</button>
         </div>
       </div>
     </div>

@@ -295,12 +295,12 @@ test.describe('checkout and payment', () => {
     await expect(page.locator('.sp-order-detail')).toContainText(t('pay.unpaid'));
     await openFold(page, 'progress'); await expect(page.locator('.sp-steps li.now')).toContainText(t('st.new'));
     await pickMethod(page, 'qr');                                                            // the invoice offers SCB, BBL, the wallet and the PromptPay QR: picking the QR shows it
-    await expect(page.locator('.qr-box svg').first()).toBeVisible();
+    await expect(page.getByTestId('pay-qr')).toBeVisible();
     await expect(page.locator('.sp-order-detail')).toContainText('฿1,010');
     const qrCall = fake.calls.find((c) => c.fn === 'finance_request_payment')!;
     expect(Object.keys(qrCall.args)).toEqual(['p_invoice']);                                  // the amount is not sent: the server owns it
     const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Save QR image|บันทึกรูป QR/ }).click()]);
-    expect(dl.suggestedFilename()).toMatch(/^QR-INV-.*\.png$/);
+    expect(dl.suggestedFilename()).toBe(`payment-qr-${order.order_no}.png`);
     await page.screenshot({ path: `${SHOTS}/payment-mobile.png`, fullPage: true });
 
     // slip: choosing a picture only shows a preview; nothing is sent until the customer confirms

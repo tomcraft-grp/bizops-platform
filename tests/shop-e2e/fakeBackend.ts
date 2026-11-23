@@ -77,6 +77,16 @@ export class FakeShop {
   failEvidenceReads = false;
   /** true = shop_place_order answers without the invoice object: the app must not depend on it once the order exists */
   placeWithoutInvoice = false;
+  /** what finance_my_slip_check answers, one after another (the last one stays) */
+  slipCheck: Record<string, unknown>[] = [];
+  /** true = a database WITHOUT the slip check migration */
+  noSlipCheck = false;
+  /** the name a manager wrote for the QR account (null = not written yet) */
+  merchantName: string | null = 'TEST SHOP';
+  /** the shop's payment accounts (staff screen) */
+  paymentAccounts: Record<string, unknown>[] = [];
+  /** every file the browser put into storage: bucket/path, its type and size */
+  uploads: { path: string; type: string | null; size: number; upsert: string | null }[] = [];
   /** true = a database WITHOUT the checkout QR migration */
   noCheckoutQr = false;
   /** true = the answer to shop_checkout_qr waits until `releaseCheckoutQr()` */
@@ -174,7 +184,7 @@ export class FakeShop {
         if (!this.settings.shop_open) this.err('SHOP_CLOSED');
         const q = this.quote(a.p_items, String(a.p_fulfilment)); if (!q.ok) this.err('CART_INVALID', JSON.stringify(q.problems));
         if (!this.w.promptpay) this.err('NO_PAYMENT_ACCOUNT');
-        return { amount: q.total, qr_payload: promptPayPayload('0812345678', q.total), account_label: 'Test shop', merchant_name: 'TEST SHOP' };
+        return { amount: q.total, qr_payload: promptPayPayload('0812345678', q.total), account_label: 'Test shop', merchant_name: this.merchantName };
       }
       case 'shop_place_order': {
         const r = this.place(a, viaHttp);
@@ -200,7 +210,18 @@ export class FakeShop {
         const o = this.orders.find((x) => x.invoice.id === a.p_invoice); if (!o) this.err('Invoice not found');
         const amt = o.invoice.amount - o.invoice.paid;
         o.invoice.req = { ref: 'PR' + (1000 + ++this.seq), amount: amt, qr_payload: promptPayPayload('0812345678', amt), expires_at: new Date(Date.now() + 24 * 3600e3).toISOString() };
-        return { ...o.invoice.req, account_label: 'Test shop', merchant_name: 'TEST SHOP' };
+        return { ...o.invoice.req, account_label: 'Test shop', merchant_name: this.merchantName };
+      }
+      case 'finance_my_slip_check': {       // migration 20261124100000: the customer's own newest slip; nothing while the reader is off
+        if (this.noSlipCheck) this.err('Could not find the function public.finance_my_slip_check(p_invoice) in the schema cache');
+        const o = this.orders.find((x) => x.invoice.id === a.p_invoice); if (!o) this.err('Invoice not found');
+        const seq = this.slipCheck; return seq.length > 1 ? seq.shift() : seq[0] ?? { state: 'none' };
+      }
+      case 'finance_set_payment_account_name': {
+        if (this.w.role !== 'manager') this.err('You are not allowed to change the shop payment account');
+        const acc = this.paymentAccounts.find((x) => x.id === a.p_account); if (!acc) this.err('Account not found');
+        if (String(a.p_name ?? '').trim().replace(/^(นาย|นางสาว|นาง|คุณ)s*/, '').length < 3) this.err('INVALID_NAME');
+        Object.assign(acc, { merchant_name: String(a.p_name).trim(), slip_name_alt: a.p_name_alt ?? null }); return acc;
       }
       case 'finance_submit_evidence': {
         const o = this.orders.find((x) => x.invoice.id === a.p_invoice); if (!o) this.err('Invoice not found');
@@ -405,6 +426,7 @@ export class FakeShop {
         if (unknown) return json(route, { code: '42703', message: `column finance_payment_evidence.${unknown} does not exist`, details: null, hint: null }, 400);
         return json(route, rows.map((r) => Object.fromEntries(cols.map((c) => [c, r[c]]))));
       }
+      if (p === '/rest/v1/finance_payment_accounts') return json(route, this.paymentAccounts);
       if (p === '/rest/v1/finance_receipts') {                                           // the customer's own receipts of one invoice
         const id = url.searchParams.get('invoice_id')?.replace('eq.', '');
         const inv = this.orders.find((o) => o.invoice.id === id)?.invoice;
@@ -412,7 +434,10 @@ export class FakeShop {
       }
       if (p.startsWith('/storage/v1/object/sign/') && req.method() === 'POST') return json(route, { signedURL: `/object/sign/${p.slice('/storage/v1/object/sign/'.length)}?token=t` });   // staff open a slip
       if (p.startsWith('/storage/v1/object/sign/')) return route.fulfill({ status: 200, contentType: 'image/png', headers: cors, body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') });
-      if (p.startsWith('/storage/v1/')) return json(route, { Key: 'payment-evidence/x', Id: 'x' });
+      if (p.startsWith('/storage/v1/')) {
+        if (req.method() === 'POST' || req.method() === 'PUT') this.uploads.push({ path: p.replace('/storage/v1/object/', ''), type: req.headers()['content-type'] ?? null, size: req.postDataBuffer()?.length ?? 0, upsert: req.headers()['x-upsert'] ?? null });
+        return json(route, { Key: 'payment-evidence/x', Id: 'x' });
+      }
       if (p.startsWith('/rest/v1/')) return json(route, this.w.rest(p.slice('/rest/v1/'.length)) ?? []);
       return json(route, {}, 404);
     });

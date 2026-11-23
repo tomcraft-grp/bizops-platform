@@ -12,18 +12,20 @@ import { TransferAmount, WalletPayPanel } from '../wallet/PayInvoice';
 import { dateFmt, dateTimeFmt, money } from '../lib/util';
 import { CustomerEvidence, finance, InvoiceRow, QrRequest, Receipt, STATUS, StatusCode } from './api';
 import { review } from './review';
+import { SlipCheck } from './SlipCheck';
 import { payNotes } from '../shop/pay';
 import { withTimeout } from '../shop/timeout';
 import { tr } from '../shop/i18n';
+import { slipProblem } from '../wallet/api';
 
 const MSG: Record<StatusCode, { th: string; en: string; tone: 'info' | 'warn' | 'bad' | 'good' }> = {
   0: { th: 'ยังไม่ได้ชำระ เลือกช่องทางชำระเงินด้านล่าง', en: 'Not paid yet. Choose how to pay below.', tone: 'info' },
   1: { th: 'รอชำระเงิน สแกน QR ด้วยแอปธนาคารใดก็ได้ แล้วอัปโหลดสลิป', en: 'Waiting for payment. Scan the QR with any banking app, then upload your slip.', tone: 'info' },
   3: { th: 'ได้รับสลิปแล้ว กำลังรอทางร้านตรวจสอบ ยอดจะอัปเดตหลังตรวจสอบเสร็จ', en: 'Slip received. The shop is checking it; your balance updates once it is verified.', tone: 'warn' },
   4: { th: 'ชำระบางส่วนแล้ว ยังมียอดค้าง เลือกช่องทางเพื่อจ่ายส่วนที่เหลือ', en: 'Partly paid. Choose how to pay the remaining balance.', tone: 'warn' },
-  5: { th: 'ชำระครบแล้ว ขอบคุณค่ะ', en: 'Fully paid. Thank you!', tone: 'good' },
+  5: { th: 'ตรวจสอบการชำระเงินสำเร็จ ชำระครบแล้ว ขอบคุณค่ะ', en: 'Payment verified. Fully paid. Thank you!', tone: 'good' },
   6: { th: 'ยอดที่ชำระมากกว่ายอดค้าง ทางร้านกำลังตรวจสอบและจะติดต่อกลับ', en: 'You paid more than the balance. The shop is reviewing it and will contact you.', tone: 'warn' },
-  7: { th: 'หลักฐานการชำระถูกปฏิเสธ ดูเหตุผลด้านล่าง แล้วส่งสลิปใหม่หรือเลือกช่องทางอื่น', en: 'Your payment evidence was rejected (see the reason below). Send a new slip or choose another way to pay.', tone: 'bad' },
+  7: { th: 'ไม่สามารถยืนยันการชำระเงินได้ กรุณาตรวจสอบข้อมูลตามเหตุผลด้านล่าง แล้วแนบสลิปใหม่หรือเลือกช่องทางอื่น', en: 'Your payment evidence was rejected (see the reason below). Send a new slip or choose another way to pay.', tone: 'bad' },
   8: { th: 'ใบแจ้งหนี้นี้ถูกยกเลิก', en: 'This invoice was cancelled.', tone: 'warn' },
   9: { th: 'QR หมดอายุ กรุณาสร้างใหม่ หากโอนไปแล้วให้อัปโหลดสลิป', en: 'The QR expired. Create a new one. If you already paid, upload your slip.', tone: 'warn' },
   10: { th: 'ทางร้านขอหลักฐานการชำระเพิ่มเติม กรุณาส่งสลิปใหม่', en: 'The shop asked for more evidence of your payment. Please send a new slip.', tone: 'warn' },
@@ -65,6 +67,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   const [picked, setPicked] = useState<{ file: File; url: string | null } | null>(null);
   const pickedUrl = useRef<string | null>(null);
   const pick = (f: File | null) => {
+    if (f) void slipProblem(f).then((bad) => { if (bad) { pick(null); toast('error', tr(lang, bad)); } });
     if (pickedUrl.current) URL.revokeObjectURL(pickedUrl.current);
     const url = f && f.type.startsWith('image/') ? URL.createObjectURL(f) : null;
     pickedUrl.current = url; setPicked(f ? { file: f, url } : null);
@@ -88,6 +91,8 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   const [history, setHistory] = useState<{ ev: CustomerEvidence[]; rc: Receipt[] } | null>(null);
   const [form, setForm] = useState({ amount: '', when: '', bank: '', ref: '' });
   const file = useRef<HTMLInputElement>(null);
+  const upBtn = useRef<HTMLDivElement>(null);
+  const [sent, setSent] = useState(0);                                       // slips sent from this card: look at the check again
   const st = STATUS[inv.status_code] ?? STATUS[0];
   const msg = MSG[inv.status_code] ?? MSG[0];   // a state this build does not know (a newer database) reads as "not paid yet" instead of crashing
   const notes = payNotes(inv, lang);
@@ -122,7 +127,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
       const evidenceId = await withTimeout(() => finance.submitEvidence({ invoiceId: inv.id, file: f, claimedAmount: amount, transferAt: form.when ? new Date(form.when).toISOString() : null, bank: bankChoice ? bankChoice.code : choice?.kind === 'qr' ? form.bank || 'PromptPay' : form.bank, ref: form.ref, bankAccountId: bankChoice?.id ?? null }), 60_000);
       void review.analyze({ evidenceId });   // best effort and never awaited: the slip is saved, and the shop checks it by hand whatever happens to the reader (analyze never throws)
       toast('success', tl(lang, 'Slip sent. The shop will verify it shortly.'));
-      pick(null); setForm((x) => ({ ...x, ref: '' })); onChanged(); void loadHistory();
+      pick(null); setForm((x) => ({ ...x, ref: '' })); setSent((x) => x + 1); onChanged(); void loadHistory();
     } catch (e) { toast('error', (e as Error).message); } finally { setBusy(''); }   // the toast shows a known message in Thai and English (lib/errorText.ts): duplicate slip, wrong date, …
   };
   const rejected = history?.ev.find((e) => e.status === 'rejected' && e.reject_reason);
@@ -143,6 +148,8 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
         <div className="row between"><b>{tl(lang, 'Remaining')}</b><b style={{ fontSize: 18 }}>{money(inv.outstanding)}</b></div>
       </div>
       <div style={{ marginTop: 8 }}><Banner tone={msg.tone}>{lang === 'th' ? msg.th : msg.en}</Banner></div>
+      {/* while a slip waits: what the check found that the customer can fix, or that a person is checking it */}
+      {inv.status_code === 3 && <SlipCheck invoiceId={inv.id} lang={lang} refresh={`${inv.status_code}:${inv.pending_evidence}:${sent}`} onResend={() => { setOpen(true); setTimeout(() => upBtn.current?.scrollIntoView({ block: 'center' }), 50); }} />}
       {/* the shop asked for more evidence: its own words, as plain text (React escapes them), above the upload below */}
       {inv.status_code === 10 && inv.more_evidence_message && <div style={{ marginTop: 6 }}><Banner tone="warn"><span data-testid="more-evidence-message" style={{ whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{inv.more_evidence_message}</span></Banner></div>}
       {(notes.remaining || notes.confirmed) && <div className="col gap-4" style={{ marginTop: 6, fontSize: 12.5 }}>{notes.remaining && <span data-testid="pay-remaining">{notes.remaining}</span>}{notes.confirmed && <span data-testid="pay-confirmed" className="muted">{notes.confirmed}</span>}</div>}
@@ -158,7 +165,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
           {bankChoice && <><PayToBank bank={bankChoice} /><TransferAmount amount={inv.outstanding} reference={inv.invoice_no} /></>}
           {showQr && (live
             ? <>
-              <QrPanel payload={live.qr_payload} amount={live.amount} merchant={live.merchant_name || live.account_label || null} reference={live.ref} expires={dateTimeFmt(live.expires_at)} expiresAt={live.expires_at} invoiceNo={inv.invoice_no} fileName={`QR-${inv.invoice_no}-${live.ref}.png`} />
+              <QrPanel payload={live.qr_payload} amount={Number(live.amount)} merchant={live.merchant_name} account={live.account_label || null} orderNo={inv.source_ref ?? inv.invoice_no} reference={live.ref} expires={dateTimeFmt(live.expires_at)} expiresAt={live.expires_at} fileId={inv.source_ref || inv.invoice_no} onRetry={() => void makeQr()} onOther={hasMethods ? () => setPicking(true) : undefined} />
               <Button size="sm" variant="ghost" onClick={makeQr} disabled={!!busy}>{tl(lang, 'Create a new QR')}</Button>
             </>
             : qrError ? <QrProblem message={tr(lang, 'qr.errorHint')} busy={!!busy} onRetry={() => void makeQr()} onOther={hasMethods ? () => setPicking(true) : undefined} />
@@ -166,7 +173,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
                 : <Button variant="primary" className="block" disabled={!!busy} onClick={makeQr}>{tl(lang, 'Create payment QR')} · {money(inv.outstanding)}</Button>)}
 
           {!loadingMethods && choice?.kind !== 'wallet' && <>
-          <div className="dev-sub"><Tx2>{tl(lang, 'After you pay: upload your slip')}</Tx2></div>
+          <div className="dev-sub" ref={upBtn}><Tx2>{tl(lang, 'After you pay: upload your slip')}</Tx2></div>
           <input ref={file} type="file" hidden accept="image/jpeg,image/png,application/pdf" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) pick(f); }} />
           {picked ? (
             <div className="col gap-8" data-testid="slip-preview">
@@ -178,7 +185,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
                 {!bankChoice && choice?.kind !== 'qr' && <Field label={tl(lang, 'Bank / channel')}><Input maxLength={60} value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} /></Field>}
                 <Field label={tl(lang, 'Reference on slip')}><Input maxLength={80} value={form.ref} onChange={(e) => setForm({ ...form, ref: e.target.value })} /></Field>
               </div>
-              <Button variant="primary" className="block" loading={busy === 'slip'} disabled={!!busy} onClick={() => void upload(picked.file)}><Upload size={15} /> {tl(lang, 'Submit this slip')}</Button>
+              <Button variant="primary" className="block" loading={busy === 'slip'} disabled={!!busy} onClick={() => void upload(picked.file)}><Upload size={15} /> {busy === 'slip' ? tr(lang, 'co.uploading') : tl(lang, 'Submit this slip')}</Button>
               <Button className="block" disabled={!!busy} onClick={() => file.current?.click()}>{tl(lang, 'Choose another picture')}</Button>
             </div>
           ) : <Button variant="primary" className="block" disabled={!!busy} onClick={() => file.current?.click()}><Upload size={15} /> {tl(lang, 'Upload payment slip')}</Button>}

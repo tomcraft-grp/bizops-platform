@@ -253,8 +253,9 @@ test.describe('pay first: the transfer slip comes with the order', () => {
     const fake = new FakeShop(); fake.decorate(); await open(page, fake); await toCheckout(page);
     await page.getByLabel(t('co.address')).fill(addr);
     await page.locator('[data-testid="slip-section"] input[type=file]').setInputFiles({ name: 'notes.png', mimeType: 'image/png', buffer: Buffer.from('this is plain text, not a picture') });
-    await placeClick(page).click(); await confirm(page).click();
-    await expect(page.getByText(t('err.slipBad'))).toBeVisible();
+    await expect(page.getByText(t('err.slipBad'))).toBeVisible();                                      // told the moment it is picked
+    await expect(page.getByTestId('slip-preview')).toHaveCount(0);
+    await placeClick(page).click(); await expect(page.locator('.sp-sheet')).toHaveCount(0);
     expect(fake.count('shop_place_order')).toBe(0); expect(fake.orders).toHaveLength(0);
   });
 

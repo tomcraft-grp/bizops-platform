@@ -201,6 +201,8 @@ function AccountPanel({ role }: { role: FinanceRole }) {
           <div className="row between"><div><b>{a.label}</b> {a.is_default && a.active && <Badge tone="good"><Tx>in use</Tx></Badge>}{!a.active && <Badge><Tx>stopped</Tx></Badge>}
             <div className="muted" style={{ fontSize: 12 }}><Tx>{TARGET_TYPE[a.target_type] ?? a.target_type}</Tx> · <span className="mono">{maskTarget(a.target)}</span>{a.merchant_name && ` · ${a.merchant_name}`}</div></div>
             {manage && a.active && <Button size="sm" variant="ghost" onClick={() => disable(a)}><Tx>Stop using</Tx></Button>}</div>
+          {a.is_default && a.active && !a.merchant_name && <div className="mt8"><Banner tone="warn"><Tx>This account has no recipient name. Customers cannot compare it with their banking app, and the slip check would flag every slip paid by this QR as paid to somebody else.</Tx></Banner></div>}
+          {manage && a.is_default && a.active && <AccountName key={`${a.id}:${a.merchant_name}:${a.slip_name_alt}`} account={a} onSaved={load} />}
         </div>
       ))}
       {manage ? (
@@ -219,6 +221,27 @@ function AccountPanel({ role }: { role: FinanceRole }) {
           )}
         </div>
       ) : <div className="muted" style={{ fontSize: 12 }}><Tx>Only a manager can change the payment account.</Tx></div>}
+    </div>
+  );
+}
+
+/** The name a customer sees in their banking app and on the slip: shown on the payment card and compared with every slip paid by this QR. */
+function AccountName({ account, onSaved }: { account: PaymentAccount; onSaved: () => void }) {
+  const lang = useLang();
+  const [name, setName] = useState(account.merchant_name ?? '');
+  const [alt, setAlt] = useState(account.slip_name_alt ?? '');
+  const [busy, setBusy] = useState(false);
+  const dirty = name.trim() !== (account.merchant_name ?? '') || alt.trim() !== (account.slip_name_alt ?? '');
+  const save = async () => {
+    setBusy(true);
+    try { await finance.setAccountName(account.id, name.trim(), alt.trim()); toast('success', tl(lang, 'Recipient name saved')); onSaved(); }
+    catch (e) { toast('error', /INVALID_NAME/.test((e as Error).message) ? tl(lang, 'Write the full name, at least 3 letters without the title') : (e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="col gap-6 mt8" data-testid="account-name">
+      <Field label="Recipient name as the banking app shows it"><Input maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></Field>
+      <Field label="The same name in English (optional)"><Input maxLength={120} value={alt} onChange={(e) => setAlt(e.target.value)} /></Field>
+      <div><Button size="sm" variant="primary" loading={busy} disabled={busy || !dirty || name.trim().length < 3} onClick={save}><Tx>Save recipient name</Tx></Button></div>
     </div>
   );
 }

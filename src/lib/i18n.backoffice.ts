@@ -903,6 +903,9 @@ export const TH_BACKOFFICE: Record<string, string> = {
   'Payment Rejected': 'ปฏิเสธการชำระ', 'More Evidence Requested': 'ขอหลักฐานเพิ่ม', 'More evidence requested': 'ขอหลักฐานเพิ่ม',
   // slip review dashboard (finance/SlipReview.tsx, RecordPayment.tsx, reviewUi.ts)
   'Slips to check': 'สลิปที่ต้องตรวจ',
+  'Recipient name as the banking app shows it': 'ชื่อผู้รับเงินตามที่แอปธนาคารแสดง', 'The same name in English (optional)': 'ชื่อเดียวกันเป็นภาษาอังกฤษ (ไม่บังคับ)', 'Save recipient name': 'บันทึกชื่อผู้รับเงิน', 'Recipient name saved': 'บันทึกชื่อผู้รับเงินแล้ว',
+  'Write the full name, at least 3 letters without the title': 'กรอกชื่อเต็มอย่างน้อย 3 ตัวอักษร ไม่นับคำนำหน้า',
+  'This account has no recipient name. Customers cannot compare it with their banking app, and the slip check would flag every slip paid by this QR as paid to somebody else.': 'บัญชีนี้ยังไม่มีชื่อผู้รับเงิน ลูกค้าจึงเทียบชื่อกับแอปธนาคารไม่ได้ และระบบตรวจสลิปจะแจ้งว่าผู้รับไม่ตรงกับร้านทุกสลิปที่จ่ายผ่าน QR นี้',
   'Payment review': 'ตรวจสอบการชำระเงิน',
   'Overpayments': 'ชำระเกิน',
   'Payment account': 'บัญชีรับชำระเงิน',

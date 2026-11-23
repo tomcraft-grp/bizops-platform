@@ -40,7 +40,7 @@ export interface InvoiceRow extends InvoiceState {
   customer_id?: string; customer_code?: string; source_ref?: string | null;
 }
 export interface QrRequest { ref: string; amount: number; qr_payload: string; expires_at: string; account_label: string; merchant_name: string | null }
-export interface PaymentAccount { id: string; label: string; kind: 'promptpay' | 'bill_payment'; target: string; target_type: string; merchant_name: string | null; is_default: boolean; active: boolean; created_at: string }
+export interface PaymentAccount { id: string; label: string; kind: 'promptpay' | 'bill_payment'; target: string; target_type: string; merchant_name: string | null; is_default: boolean; active: boolean; created_at: string; /** the recipient's name as slips print it in another language (migration 20261124100000) */ slip_name_alt?: string | null }
 export interface QrInfo { kind: 'promptpay' | 'bill_payment'; target: string; target_type: string; ref1: string | null; merchant_name: string | null; has_amount: boolean }
 /** One payment event: a customer's slip, or a payment a staff member recorded at the back office (then it may have no file). */
 export interface Evidence {
@@ -69,6 +69,11 @@ export interface CustomerEvidence {
   request_message?: string | null; source?: 'customer_slip' | 'staff_entry'; method?: 'transfer' | 'cash';
 }
 export interface Receipt { id: string; receipt_no: string; invoice_id: string; amount: number; bank_trans_ref: string | null; received_at: string; needs_review: boolean; status: 'posted' | 'reversed'; created_at: string }
+/** What the customer is told about their own newest slip (finance_my_slip_check): never a verdict, a confidence or a fraud signal. */
+export interface SlipCheckState {
+  state: 'none' | 'processing' | 'attention' | 'review'; code?: 'AMOUNT' | 'DATE_PAST' | 'DATE_FUTURE' | 'DUPLICATE' | 'NOT_A_SLIP' | 'UNREADABLE';
+  slip_amount?: number | null; expected_amount?: number | null; slip_date?: string | null; expected_date?: string | null;
+}
 export interface VerifyResult { result: 'fully_paid' | 'partially_paid' | 'overpaid_credited' | 'overpaid_review'; receipt_no: string; credited_to_wallet?: number; state: InvoiceState }
 
 export function must<T>(r: { data: T | null; error: { message: string } | null }, what: string): T {
@@ -95,6 +100,7 @@ export const finance = {
   // ---- customer
   async myInvoices(): Promise<InvoiceRow[]> { return must(await supabase.rpc('finance_my_invoices'), 'Load invoices') ?? []; },
   async requestPayment(invoiceId: string): Promise<QrRequest> { return must(await supabase.rpc('finance_request_payment', { p_invoice: invoiceId }), 'Create QR'); },
+  async mySlipCheck(invoiceId: string): Promise<SlipCheckState | null> { return must(await supabase.rpc('finance_my_slip_check', { p_invoice: invoiceId }), 'Check slip'); },
   async myReceipts(invoiceId: string): Promise<Receipt[]> {
     return must(await supabase.from('finance_receipts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: false }), 'Load receipts');
   },
@@ -157,5 +163,6 @@ export const finance = {
   async accounts(): Promise<PaymentAccount[]> { return must(await supabase.from('finance_payment_accounts').select('*').order('created_at', { ascending: false }), 'Load payment accounts'); },
   async describeQr(payload: string): Promise<QrInfo> { return must(await supabase.rpc('finance_qr_describe', { p: payload }), 'Check QR'); },
   async saveAccount(payload: string, label: string): Promise<PaymentAccount> { return must(await supabase.rpc('finance_save_payment_account', { p_payload: payload, p_label: label, p_make_default: true }), 'Save payment account'); },
+  async setAccountName(id: string, name: string, alt: string): Promise<PaymentAccount> { return must(await supabase.rpc('finance_set_payment_account_name', { p_account: id, p_name: name, p_name_alt: alt || null }), 'Save the recipient name'); },
   async disableAccount(id: string) { must(await supabase.rpc('finance_disable_payment_account', { p_account: id }), 'Disable payment account'); },
 };
