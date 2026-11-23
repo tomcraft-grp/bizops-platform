@@ -190,6 +190,7 @@ export class FakeReview {
       case 'finance_confirm_evidence': case 'finance_post_evidence': case 'finance_request_more_evidence': case 'finance_record_payment': case 'finance_request_analysis':
         if (!this.enabled) this.err(`Could not find the function public.${fn} in the schema cache`);
         break;
+      case 'finance_own_reader': case 'finance_set_own_reader': case 'finance_store_reading': if (this.ownReader === null) this.err(`Could not find the function public.${fn} in the schema cache`); break;
       case 'finance_reject_evidence': break;
       case 'finance_invoice_overview': break;
       default: return NOT_HANDLED;
@@ -206,6 +207,9 @@ export class FakeReview {
       case 'finance_request_more_evidence': return this.requestMore(a);
       case 'finance_record_payment': return this.record(a);
       case 'finance_request_analysis': return this.requestAnalysis(a);
+      case 'finance_own_reader': return this.readerStatus();
+      case 'finance_set_own_reader': { this.need('manage', 'change the review settings'); this.ownReader = !!a.p_on; return this.readerStatus(); }
+      case 'finance_store_reading': return this.storeReading(a);
       case 'finance_invoice_overview': {
         this.need('view', 'see invoices');
         return this.invoices.filter((i) => a.p_status == null || this.state(i).status_code === Number(a.p_status)).map((i) => ({ id: i.id, invoice_no: i.invoice_no, issue_date: i.issue_date, due_date: i.issue_date, description: i.order_no ? `Online order ${i.order_no}` : null,
@@ -369,6 +373,19 @@ export class FakeReview {
       confirmed_bank_ref: cash ? null : ref, confirmed_transfer_at: when, confirm_note: note, posted_by: null, posted_at: null, request_message: null, requested_by: null, requested_at: null });
     this.log(this.evidence.at(-1)!, 'evidence.record', { invoice: i.id, method, amount, trans_ref: cash ? null : ref, note });
     return { evidence_id: id, status: 'confirmed' };
+  }
+  /** migration 20261124110000 (the shop's own slip reader): null = a database without it */
+  ownReader: boolean | null = null;
+  private readerStatus() { const may = (n: 'verify' | 'manage') => !!this.shop.w.role && RANK[this.shop.w.role as keyof typeof RANK] >= NEED[n]; return { enabled: !!this.ownReader, can_read: may('verify'), can_manage: may('manage') }; }
+  /** what finance_store_reading answers about the amount only (the real rules are proved in the database) */
+  private storeReading(a: Record<string, unknown>) {
+    this.need('verify', 'read a payment slip');
+    if (!this.ownReader) this.err('READER_OFF: the slip reader is switched off');
+    const e = this.ev(a.p_evidence); const x = a.p_extracted as Record<string, unknown>; const inv = this.invoices.find((i) => i.id === e.invoice_id)!;
+    const result = x.amount === null ? 'manual_review' : r2(Number(x.amount)) !== r2(inv.amount) ? 'amount_mismatch' : 'match'; const last = this.newest(e);
+    this.analyses.push({ id: `an-${e.id}-own-${this.analyses.length}`, evidence_id: e.id, attempt: (last?.attempt ?? 0) + 1, status: 'done', engine: String(a.p_engine), prompt_version: 'own-v1', extracted: x, qr: a.p_qr as Record<string, unknown>, expected: { amount: inv.amount },
+      overall_confidence: Number(a.p_confidence), signals: [], result, reasons: result === 'amount_mismatch' ? [{ code: 'AMOUNT_OVER', severity: 'high', field: 'amount', expected: inv.amount, found: x.amount, message: 'x' }] : [], error: null, requested_by: 'me', created_at: new Date().toISOString(), started_at: null, finished_at: new Date().toISOString() });
+    return { result, receiver_found: true };
   }
   private requestAnalysis(a: Record<string, unknown>) {
     this.need('verify', 'ask for a new slip analysis');

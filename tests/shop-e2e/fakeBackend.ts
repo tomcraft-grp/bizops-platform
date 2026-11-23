@@ -83,6 +83,8 @@ export class FakeShop {
   noSlipCheck = false;
   /** the name a manager wrote for the QR account (null = not written yet) */
   merchantName: string | null = 'TEST SHOP';
+  /** the picture behind every signed slip link (a real picture for the slip reader) */
+  slipPicture: Buffer | null = null;
   /** the shop's payment accounts (staff screen) */
   paymentAccounts: Record<string, unknown>[] = [];
   /** every file the browser put into storage: bucket/path, its type and size */
@@ -433,6 +435,7 @@ export class FakeShop {
         return json(route, (inv?.receipts ?? []).map((r, i) => ({ id: `rc-${i}`, receipt_no: r.receipt_no, invoice_id: id, amount: r.amount, bank_trans_ref: null, received_at: r.received_at, needs_review: false, status: 'posted', created_at: r.received_at })));
       }
       if (p.startsWith('/storage/v1/object/sign/') && req.method() === 'POST') return json(route, { signedURL: `/object/sign/${p.slice('/storage/v1/object/sign/'.length)}?token=t` });   // staff open a slip
+      if (p.startsWith('/storage/v1/object/sign/') && this.slipPicture) return route.fulfill({ status: 200, contentType: 'image/jpeg', headers: cors, body: this.slipPicture });
       if (p.startsWith('/storage/v1/object/sign/')) return route.fulfill({ status: 200, contentType: 'image/png', headers: cors, body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') });
       if (p.startsWith('/storage/v1/')) {
         if (req.method() === 'POST' || req.method() === 'PUT') this.uploads.push({ path: p.replace('/storage/v1/object/', ''), type: req.headers()['content-type'] ?? null, size: req.postDataBuffer()?.length ?? 0, upsert: req.headers()['x-upsert'] ?? null });
