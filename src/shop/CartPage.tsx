@@ -21,7 +21,7 @@ import { CheckoutQrPanel, PayToBank } from '../wallet/PayTo';
 import { Choice, PayMethodPicker, useMethods } from '../wallet/ui';
 import { removeOrderSlip, slipFingerprint, slipProblem, uploadOrderSlip } from '../wallet/api';
 import { review } from '../finance/review';
-import { SlipHint } from '../slipReader/SlipHint';
+import { holdUp, IDLE, type LiveState, SlipLive } from '../slipReader/SlipLive';
 
 export function CartCore() {
   const t = useT();
@@ -141,6 +141,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
     const url = URL.createObjectURL(slip.file); setSlipUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [slip]);
+  const [live, setLive] = useState<LiveState>(IDLE);            // the check of the attached slip on this phone
   const [showPay, setShowPay] = useState(false);               // the transfer details again, after the slip is attached
   const methodPref = method?.kind === 'bank' ? (bank ? `bank:${bank.code}` : null) : method?.kind ?? null;
 
@@ -164,6 +165,8 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
     setTouched(true); setErr(null);
     if (needsSlip && !slip) { setErr(t('co.slipMissing')); slipSec.current?.scrollIntoView({ block: 'center' }); return; }
     if (!formOk) { setSec('contact'); setTimeout(() => document.querySelector<HTMLElement>('[data-fold="contact"] [aria-invalid="true"]')?.focus(), 0); return; }
+    const hold = needsSlip ? holdUp(live) : null;              // still being read (never longer than 20 s), or something to confirm first
+    if (hold) { setErr(t(hold)); document.querySelector('[data-testid="slip-live"]')?.scrollIntoView({ block: 'center' }); return; }
     setAsking(true);
   };
   const place = async () => {
@@ -266,7 +269,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
             {slip ? (
               <div className="col gap-8" data-testid="slip-preview">
                 {slip.total !== quote.total && !loading && <Banner tone="warn">{t('co.slipTotalChanged', { was: baht(slip.total), now: baht(quote.total) })}</Banner>}
-                <SlipHint file={slip.file} total={quote.total} />
+                <SlipLive file={slip.file} total={quote.total} onState={setLive} />
                 {slipUrl ? <img src={slipUrl} alt={t('co.slipPreview')} className="wl-slip" /> : <div className="muted wl-slip-file">{slip.file.name}</div>}
                 <label>{t('co.slipWhen')}<input type="datetime-local" value={slipWhen} onChange={(e) => patch({ slipWhen: e.target.value })} /></label>
                 <label>{t('co.slipRef')}<input value={slipRef} maxLength={80} onChange={(e) => patch({ slipRef: e.target.value })} /></label>

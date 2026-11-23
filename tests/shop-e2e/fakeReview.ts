@@ -190,7 +190,7 @@ export class FakeReview {
       case 'finance_confirm_evidence': case 'finance_post_evidence': case 'finance_request_more_evidence': case 'finance_record_payment': case 'finance_request_analysis':
         if (!this.enabled) this.err(`Could not find the function public.${fn} in the schema cache`);
         break;
-      case 'finance_own_reader': case 'finance_set_own_reader': case 'finance_store_reading': if (this.ownReader === null) this.err(`Could not find the function public.${fn} in the schema cache`); break;
+      case 'finance_set_checkout_check': case 'finance_own_reader': case 'finance_set_own_reader': case 'finance_store_reading': if (this.ownReader === null) this.err(`Could not find the function public.${fn} in the schema cache`); break;
       case 'finance_reject_evidence': break;
       case 'finance_invoice_overview': break;
       default: return NOT_HANDLED;
@@ -209,6 +209,7 @@ export class FakeReview {
       case 'finance_request_analysis': return this.requestAnalysis(a);
       case 'finance_own_reader': return this.readerStatus();
       case 'finance_set_own_reader': { this.need('manage', 'change the review settings'); this.ownReader = !!a.p_on; return this.readerStatus(); }
+      case 'finance_set_checkout_check': { this.need('manage', 'change the review settings'); this.checkout = !!a.p_on; return this.readerStatus(); }
       case 'finance_store_reading': return this.storeReading(a);
       case 'finance_invoice_overview': {
         this.need('view', 'see invoices');
@@ -376,7 +377,9 @@ export class FakeReview {
   }
   /** migration 20261124110000 (the shop's own slip reader): null = a database without it */
   ownReader: boolean | null = null;
-  private readerStatus() { const may = (n: 'verify' | 'manage') => !!this.shop.w.role && RANK[this.shop.w.role as keyof typeof RANK] >= NEED[n]; return { enabled: !!this.ownReader, can_read: may('verify'), can_manage: may('manage') }; }
+  /** migration 20261124120000 (the customer's own switch); undefined = a database without it */
+  checkout: boolean | undefined = undefined;
+  private readerStatus() { const may = (n: 'verify' | 'manage') => !!this.shop.w.role && RANK[this.shop.w.role as keyof typeof RANK] >= NEED[n]; return { enabled: !!this.ownReader, can_read: may('verify'), can_manage: may('manage'), ...(this.checkout === undefined ? {} : { checkout: this.checkout, before_min: 120, after_min: 10 }) }; }
   /** what finance_store_reading answers about the amount only (the real rules are proved in the database) */
   private storeReading(a: Record<string, unknown>) {
     this.need('verify', 'read a payment slip');

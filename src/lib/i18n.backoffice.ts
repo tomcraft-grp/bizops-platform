@@ -904,7 +904,9 @@ export const TH_BACKOFFICE: Record<string, string> = {
   // slip review dashboard (finance/SlipReview.tsx, RecordPayment.tsx, reviewUi.ts)
   'Slips to check': 'สลิปที่ต้องตรวจ',
   'Slip reader (no AI)': 'ตัวอ่านสลิปของร้าน (ไม่ใช้ AI)', 'Reads slips in this browser. The picture is not sent to anyone. The result is a hint: check the bank record before you confirm.': 'อ่านสลิปในเบราว์เซอร์นี้ ไม่ส่งรูปให้ใคร ผลเป็นเพียงตัวช่วย ต้องเทียบกับบัญชีธนาคารก่อนยืนยัน',
-  'Use the shop’s own slip reader': 'เปิดใช้ตัวอ่านสลิปของร้าน', 'The slip reader is on': 'เปิดตัวอ่านสลิปแล้ว', 'The slip reader is off': 'ปิดตัวอ่านสลิปแล้ว',
+  'Use the shop’s own slip reader': 'เปิดใช้ตัวอ่านสลิปของร้าน',
+  'Check the slip for the customer before they order': 'ตรวจสลิปให้ลูกค้าก่อนสั่งซื้อ', 'On their own phone: shows whether the amount and the date agree. If not, they must confirm before ordering.': 'ตรวจในมือถือลูกค้า แสดงว่ายอดและวันที่ตรงไหม ถ้าไม่ตรง ลูกค้าต้องติ๊กยืนยันก่อนสั่งซื้อ',
+  'Customers now see the slip check before ordering': 'เปิดการตรวจสลิปก่อนสั่งซื้อแล้ว', 'Customers no longer see the slip check': 'ปิดการตรวจสลิปก่อนสั่งซื้อแล้ว', 'The slip reader is on': 'เปิดตัวอ่านสลิปแล้ว', 'The slip reader is off': 'ปิดตัวอ่านสลิปแล้ว',
   'This browser cannot run the slip reader. Use Chrome or Edge on a computer.': 'เบราว์เซอร์นี้ใช้ตัวอ่านสลิปไม่ได้ กรุณาใช้ Chrome หรือ Edge บนคอมพิวเตอร์', 'Read all waiting slips ({n})': 'อ่านสลิปที่รอทั้งหมด ({n})',
   'Measure it on posted slips': 'วัดความแม่นกับสลิปที่ลงรายการแล้ว', 'Stop': 'หยุด', '{n} read, {f} could not be read (a person checks them)': 'อ่านได้ {n} ใบ อ่านไม่ได้ {f} ใบ (ให้คนตรวจ)',
   'Compared with the amount and time staff recorded from the bank. Nothing is stored.': 'เทียบกับยอดและเวลาที่เจ้าหน้าที่บันทึกจากบัญชีธนาคาร ไม่มีการบันทึกผล', '{n} slips': '{n} สลิป', 'Read correctly': 'อ่านถูก', 'Left empty': 'เว้นว่าง', 'Read wrongly': 'อ่านผิด',

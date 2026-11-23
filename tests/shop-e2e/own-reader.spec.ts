@@ -1,5 +1,6 @@
 // The shop's own slip reader with the REAL engine (public/ocr) reading REAL pictures of invented slips in the browser, against the fake backend. The rules that judge a reading are proved in the
 // database (supabase/tests/own_slip_reader.sql), the text parsing in tests/unit/slipParse.test.ts. Slow on purpose: an engine really runs.
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { tr, type K } from '../../src/shop/i18n';
@@ -71,30 +72,97 @@ test.describe('staff', () => {
   });
 });
 
-test.describe('the word of caution at checkout', () => {
-  async function toSlip(page: Page, fake: FakeShop, file: string, total?: number) {
-    fake.decorate(); if (total) fake.item('FG-000001').price = total - 50; await fake.install(page); await page.goto('/#/app'); await expect(page.locator('.phone-nav')).toBeVisible();
+test.describe('the slip check before ordering', () => {
+  // invented-430-th.jpg: 430.00 on 13 May 2026, 12:45 in Bangkok
+  const DAY = '2026-05-13T13:00:00+07:00';
+  async function toSlip(page: Page, fake: FakeShop, o: { total?: number; now?: string; file?: string } = {}) {
+    fake.decorate(); if (o.total) fake.item('FG-000001').price = o.total - 50; await fake.install(page); if (o.now) await page.clock.setFixedTime(new Date(o.now)); await page.goto('/#/app'); await expect(page.locator('.phone-nav')).toBeVisible();
     const tab = (l: string) => page.locator('.phone-nav').getByRole('button', { name: l });
     await tab(t('nav.shop')).click(); await page.locator('.sp-card[data-sku="FG-000001"]').getByRole('button', { name: t('p.add') }).click(); await tab(t('nav.cart')).click(); await page.getByRole('button', { name: t('cart.checkout') }).click();
-    await page.locator('[data-testid="slip-section"] input[type=file]').setInputFiles({ name: 's.jpg', mimeType: 'image/jpeg', buffer: pic(file) }); await expect(page.getByTestId('slip-preview')).toBeVisible();
+    await attach(page, o.file ?? 'invented-430-th.jpg');
   }
-  test('another amount: warned, but the order can still be placed, and nothing read is sent', async ({ page }) => {
-    const out = outside(page); const fake = new FakeShop(); fake.rv.ownReader = true; await toSlip(page, fake, 'invented-430-th.jpg');
-    await expect(page.getByTestId('slip-hint')).toContainText('฿430', { timeout: 90_000 }); await expect(page.getByTestId('slip-hint')).toContainText('฿370');
-    await page.getByRole('button', { name: new RegExp(t('co.place')) }).click(); await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click(); await expect(page.locator('.sp-order-detail')).toBeVisible();
-    expect(fake.orders).toHaveLength(1); expect(fake.count('finance_store_reading')).toBe(0); expect(JSON.stringify(fake.calls.find((c) => c.fn === 'shop_place_order')!.args)).not.toContain('430'); expect(out).toEqual([]);
+  const attach = async (page: Page, file: string, extra = '') => { await page.locator('[data-testid="slip-section"] input[type=file]').setInputFiles({ name: 's.jpg', mimeType: 'image/jpeg', buffer: Buffer.concat([pic(file), Buffer.from(extra)]) }); await expect(page.getByTestId('slip-preview')).toBeVisible(); };
+  const live = (page: Page) => page.getByTestId('slip-live');
+  const place = (page: Page) => page.getByRole('button', { name: new RegExp(t('co.place')) }).first();
+  const DONE = { timeout: 90_000 };
+  const on = () => { const f = new FakeShop(); f.rv.ownReader = false; f.rv.checkout = true; return f; };
+
+  test('the amount and the day agree: checking, then green, nothing to tick, ONE order', async ({ page }) => {
+    const errs = watch(page), out = outside(page); const fake = on(); await toSlip(page, fake, { total: 430, now: DAY });
+    await expect(live(page)).toHaveAttribute('data-state', 'reading'); await expect(live(page)).toContainText(t('sv.reading'));
+    await expect(live(page)).toHaveAttribute('data-state', 'ok', DONE); await expect(live(page)).toContainText('฿430 ตรงกัน'); await expect(live(page).locator('[data-row="date"]')).toHaveAttribute('data-row-state', 'ok'); await expect(live(page).getByRole('checkbox')).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/shop/slip-live-ok.png' });
+    await place(page).click(); await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click(); await expect(page.locator('.sp-order-detail')).toBeVisible();
+    expect(fake.orders).toHaveLength(1); expect(fake.count('finance_store_reading')).toBe(0); expect(out).toEqual([]); expect(errs).toEqual([]);
   });
-  test('the right amount: no word', async ({ page }) => {
-    const fake = new FakeShop(); fake.rv.ownReader = true; await toSlip(page, fake, 'invented-430-th.jpg', 430);
-    await page.waitForResponse((r) => /ocr\/tha\.traineddata/.test(r.url()), { timeout: 60_000 }); await page.waitForTimeout(25_000); await expect(page.getByTestId('slip-hint')).toHaveCount(0);
+
+  test('another amount: the order waits for the tick; the tick is for this slip and this total only; nothing read is sent', async ({ page }) => {
+    const fake = on(); await toSlip(page, fake, { now: DAY });
+    await expect(live(page)).toHaveAttribute('data-state', 'differs', DONE); await expect(live(page)).toContainText('บนสลีป ฿430 ต้องโอน ฿370'); await live(page).scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/shop/slip-live-differs.png' });
+    await place(page).click(); await expect(page.locator('.sp-sheet')).toHaveCount(0); await expect(page.getByTestId('checkout-error')).toContainText(t('sv.must')); expect(fake.orders).toHaveLength(0);
+    await live(page).getByRole('checkbox').check();
+    await page.getByRole('radio', { name: t('co.pickup') }).click(); await expect(live(page)).toContainText('ต้องโอน ฿320'); await expect(live(page).getByRole('checkbox')).not.toBeChecked();           // another total: asked again
+    await place(page).click(); await expect(page.locator('.sp-sheet')).toHaveCount(0);
+    await live(page).getByRole('checkbox').check(); await place(page).click(); await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click(); await expect(page.locator('.sp-order-detail')).toBeVisible();
+    expect(fake.orders).toHaveLength(1); expect(fake.orders[0].invoice.paid).toBe(0); const a = fake.calls.find((c) => c.fn === 'shop_place_order')!.args; expect(JSON.stringify(a)).not.toContain('430'); expect(fake.count('finance_store_reading')).toBe(0);
   });
-  test('switched off: the engine is not even downloaded', async ({ page }) => {
+
+  test('an earlier day: said with the date, and must be ticked', async ({ page }) => {
+    const fake = on(); await toSlip(page, fake, { total: 430, now: '2026-05-15T10:00:00+07:00' });
+    await expect(live(page)).toHaveAttribute('data-state', 'differs', DONE); await expect(live(page).locator('[data-row="date"]')).toContainText('เป็นวันก่อนหน้า'); await expect(live(page).locator('[data-row="amount"]')).toHaveAttribute('data-row-state', 'ok');
+    await place(page).click(); await expect(page.getByTestId('checkout-error')).toContainText(t('sv.must'));
+  });
+
+  test('going to the cart and back does not read the picture again, and the tick is asked again', async ({ page }) => {
+    const fake = on(); await toSlip(page, fake, { now: DAY }); await expect(live(page)).toHaveAttribute('data-state', 'differs', DONE); await live(page).getByRole('checkbox').check();
+    await page.getByRole('button', { name: t('co.back') }).click(); await page.getByRole('button', { name: t('cart.checkout') }).click(); await expect(live(page)).toHaveAttribute('data-state', 'differs', { timeout: 3000 }); await expect(live(page).getByRole('checkbox')).not.toBeChecked();
+  });
+
+  test('pressing "place order" while it reads asks to wait; a picture that cannot be read holds nothing up', async ({ page }) => {
+    const fake = on(); await toSlip(page, fake, { total: 430, now: DAY }); await place(page).click(); await expect(page.getByTestId('checkout-error')).toContainText(t('sv.wait')); await expect(page.locator('.sp-sheet')).toHaveCount(0);
+    await page.locator('[data-testid="slip-section"] input[type=file]').setInputFiles({ name: 's.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') });
+    await expect(live(page)).toHaveCount(0, { timeout: 20_000 }); await place(page).click(); await expect(page.locator('.sp-sheet')).toBeVisible();
+  });
+
+  test('sending a slip for an existing order: the same check; an older transfer of an older order is fine', async ({ page }) => {
+    const fake = on(); fake.decorate(); await fake.install(page); await page.goto('/#/app'); await expect(page.locator('.phone-nav')).toBeVisible(); const o = fake.seedOrder(430); o.invoice.created_at = '2026-05-13T02:00:00.000Z';
+    await page.locator('.phone-nav').getByRole('button', { name: t('nav.orders') }).click(); await page.locator('.sp-order').first().click();
+    await page.locator('input[type=file]').setInputFiles({ name: 's.jpg', mimeType: 'image/jpeg', buffer: pic('invented-430-th.jpg') });
+    await expect(live(page)).toHaveAttribute('data-state', 'ok', DONE);
+    await page.getByLabel(/Amount transferred|ยอดที่โอน/).fill('500'); await expect(live(page)).toHaveAttribute('data-state', 'differs');
+    await page.getByRole('button', { name: /ส่งสลิปนี้/ }).click(); expect(fake.count('finance_submit_evidence')).toBe(0);
+    await live(page).getByRole('checkbox').check(); await page.getByRole('button', { name: /ส่งสลิปนี้/ }).click(); await expect.poll(() => fake.count('finance_submit_evidence')).toBe(1);
+  });
+
+  test('switched off (also with the staff reader on): the engine is not even downloaded', async ({ page }) => {
     const got: string[] = []; page.on('request', (r) => { if (/\/ocr\//.test(r.url())) got.push(r.url()); });
-    const fake = new FakeShop(); fake.rv.ownReader = false; await toSlip(page, fake, 'invented-430-th.jpg'); await page.waitForTimeout(2500); expect(got).toEqual([]); await expect(page.getByTestId('slip-hint')).toHaveCount(0);
+    const fake = new FakeShop(); fake.rv.ownReader = true; fake.rv.checkout = false; await toSlip(page, fake); await page.waitForTimeout(2500); expect(got).toEqual([]); await expect(live(page)).toHaveCount(0); await place(page).click(); await expect(page.locator('.sp-sheet')).toBeVisible();
   });
+  test('a database without the separate switch: it follows the reader', async ({ page }) => {
+    const f2 = new FakeShop(); f2.rv.ownReader = true; await toSlip(page, f2); await expect(live(page)).toHaveAttribute('data-state', 'reading');
+  });
+
   test('an engine that cannot be loaded says nothing and blocks nothing', async ({ page }) => {
     const errs = watch(page); await page.route('**/ocr/**', (r) => r.fulfill({ status: 404, body: 'no' }));
-    const fake = new FakeShop(); fake.rv.ownReader = true; await toSlip(page, fake, 'invented-430-th.jpg'); await page.waitForTimeout(3000); await expect(page.getByTestId('slip-hint')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: new RegExp(t('co.place')) })).toBeEnabled(); expect(errs).toEqual([]);
+    const fake = on(); await toSlip(page, fake); await page.waitForTimeout(3000); await expect(live(page)).toHaveCount(0); await place(page).click(); await expect(page.locator('.sp-sheet')).toBeVisible(); expect(errs).toEqual([]);
+  });
+
+  test('fits a small phone and passes axe, light and dark', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 640 }); const fake = on(); await toSlip(page, fake, { now: DAY }); await expect(live(page)).toHaveAttribute('data-state', 'differs', DONE);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((x) => document.documentElement.setAttribute('data-theme', x), theme); await live(page).scrollIntoViewIfNeeded();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+      const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze(); const bad = r.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious').map((v) => v.id + ': ' + v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(' | ')); expect(bad, bad.join('\n')).toEqual([]);
+    }
+  });
+});
+
+test.describe('staff: the customer switch', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test('a manager switches it apart from the reader; a database without it shows no such switch', async ({ page }) => {
+    const go = async (p: Page, fake: FakeShop) => { fake.profile.role = 'SUPER_ADMIN'; fake.w.role = 'manager'; fake.rv.seed(); await fake.install(p); await p.addInitScript(() => { try { localStorage.setItem('bizops.lang', 'en'); } catch { /* ignore */ } }); await p.goto('/#/payment-review'); await expect(p.getByTestId('own-reader')).toBeVisible(); };
+    const fake = new FakeShop(); fake.rv.ownReader = false; fake.rv.checkout = false; await go(page, fake);
+    await page.getByTestId('own-reader').getByRole('switch').nth(1).click(); await expect.poll(() => fake.rv.checkout).toBe(true); expect(fake.rv.ownReader).toBe(false);
+    const p2 = await page.context().newPage(); const f2 = new FakeShop(); f2.rv.ownReader = true; await go(p2, f2); await expect(p2.getByTestId('own-reader').getByRole('switch')).toHaveCount(1);
   });
 });
