@@ -8,15 +8,17 @@ import { cx } from '../lib/util';
 import { useAuth } from '../auth/AuthProvider';
 import { toast } from '../domain/store';
 import { Fulfilment, Quote, shop, ShopError } from './api';
-import { attemptKey, forgetAttempt, MAX_QTY, toQuoteItems, useCart } from './cart';
+import { attemptKey, cartCount, forgetAttempt, MAX_QTY, toQuoteItems, useCart } from './cart';
+import { useCheckoutDraft } from './checkoutDraft';
 import { TimeoutError, withTimeout } from './timeout';
 import { baht, digits, packLabel, validPhone } from './format';
 import { useSettings, useQuote } from './hooks';
 import { K, useT } from './i18n';
 import { useShopHost, useShopNav } from './nav';
-import { ConfirmSheet, ErrorBox, errText, ProductImage, Stepper } from './ui';
+import { ConfirmSheet, ErrorBox, errText, Fold, ProductImage, Stepper } from './ui';
 import { RewardsPreview } from './Rewards';
-import { Choice, MethodCards, useMethods } from '../wallet/ui';
+import { CheckoutQrPanel, PayToBank } from '../wallet/PayTo';
+import { Choice, PayMethodPicker, useMethods } from '../wallet/ui';
 import { removeOrderSlip, slipFingerprint, uploadOrderSlip } from '../wallet/api';
 import { review } from '../finance/review';
 
@@ -27,11 +29,10 @@ export function CartCore() {
   const lines = useCart((s) => s.lines);
   const { setQty, remove, removeMany } = useCart.getState();
   const [step, setStep] = useState<'cart' | 'checkout'>('cart');
-  const [fulfilment, setFulfilment] = useState<Fulfilment>('delivery');
-  const picked = useRef(false);
-  useEffect(() => { // start on whichever way of getting the order the shop offers
-    if (settings && !picked.current) { picked.current = true; if (!settings.delivery_enabled && settings.pickup_enabled) setFulfilment('pickup'); }
-  }, [settings]);
+  // what the customer chose before (it survives going to the cart, to another tab and back), else whichever way of getting the order the shop offers
+  const chosen = useCheckoutDraft((s) => s.text.fulfilment);
+  const fulfilment: Fulfilment = chosen ?? (settings && !settings.delivery_enabled && settings.pickup_enabled ? 'pickup' : 'delivery');
+  const setFulfilment = (f: Fulfilment) => useCheckoutDraft.getState().patch({ fulfilment: f });
   const { quote, loading, error, refresh } = useQuote(lines, fulfilment);
 
   if (!lines.length) {
@@ -105,31 +106,41 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   const { session, profile } = useAuth();
   const uid = session?.user.id ?? '';
   const settings = useSettings();
-  const saved = loadContact(uid);
-  const [name, setName] = useState(saved.name ?? profile?.display_name ?? '');
-  const [phone, setPhone] = useState(saved.phone ?? profile?.phone ?? '');
-  const [address, setAddress] = useState(saved.address ?? '');
-  const [note, setNote] = useState('');
+  // every answer lives in the draft, so nothing is lost when a section closes or the customer goes back to the cart or to the bank app
+  const { text: draft, slip, patch, setSlip } = useCheckoutDraft();
+  const [saved] = useState(() => loadContact(uid));
+  const name = draft.name ?? saved.name ?? profile?.display_name ?? '';
+  const phone = draft.phone ?? saved.phone ?? profile?.phone ?? '';
+  const address = draft.address ?? saved.address ?? '';
+  const note = draft.note ?? '';
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
   const inflight = useRef(false);
   const lines = useCart((s) => s.lines);
-  // how the customer intends to pay: any active bank account, the wallet (only when it holds money) or the PromptPay QR. Chosen again, and changeable, on the payment screen.
-  const { methods } = useMethods();
-  const [pickedMethod, setPickedMethod] = useState<Choice>(null);
-  const method: Choice = pickedMethod ?? (methods && methods.banks.length ? { kind: 'bank', id: methods.banks[0].id } : null);
+  // how the customer intends to pay: any active bank account, the wallet (only when it holds money) or the PromptPay QR. Changeable here at any time; a choice that is no
+  // longer offered falls back to the first method.
+  const { methods, error: methodsError, reload: reloadMethods } = useMethods();
+  const hasWallet = !!methods && methods.wallet.balance > 0;
+  const want = draft.method ?? null;
+  const offered = !!methods && !!want && (want.kind === 'bank' ? methods.banks.some((b) => b.id === want.id) : want.kind === 'wallet' ? hasWallet : methods.promptpay);
+  const method: Choice = !methods ? null : offered ? want : methods.banks.length ? { kind: 'bank', id: methods.banks[0].id } : methods.promptpay ? { kind: 'qr' } : null;
+  const bank = method?.kind === 'bank' ? methods?.banks.find((b) => b.id === method.id) : undefined;
   // pay first: an order paid by transfer comes with its slip (the database refuses it otherwise); an order paid from the wallet needs none
   const needsSlip = settings?.require_payment_slip === true && method?.kind !== 'wallet';
-  const [slip, setSlip] = useState<{ file: File; url: string | null } | null>(null);
-  const [slipWhen, setSlipWhen] = useState('');
-  const [slipRef, setSlipRef] = useState('');
+  const slipWhen = draft.slipWhen ?? '';
+  const slipRef = draft.slipRef ?? '';
   const slipInput = useRef<HTMLInputElement>(null);
-  const slipUrl = useRef<string | null>(null);
-  useEffect(() => () => { if (slipUrl.current) URL.revokeObjectURL(slipUrl.current); }, []);
-  const pickSlip = (f: File | null) => { if (slipUrl.current) URL.revokeObjectURL(slipUrl.current); const url = f && f.type.startsWith('image/') ? URL.createObjectURL(f) : null; slipUrl.current = url; setSlip(f ? { file: f, url } : null); };
-  const methodPref = method?.kind === 'bank' ? (methods?.banks.find((b) => b.id === method.id)?.code ? `bank:${methods.banks.find((b) => b.id === method.id)!.code}` : null) : method?.kind ?? null;
+  const slipSec = useRef<HTMLElement>(null);
+  const [slipUrl, setSlipUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!slip || !slip.file.type.startsWith('image/')) { setSlipUrl(null); return; }
+    const url = URL.createObjectURL(slip.file); setSlipUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [slip]);
+  const [showPay, setShowPay] = useState(false);               // the transfer details again, after the slip is attached
+  const methodPref = method?.kind === 'bank' ? (bank ? `bank:${bank.code}` : null) : method?.kind ?? null;
 
   const nameOk = name.trim().length > 0 && name.trim().length <= 100;
   const phoneOk = validPhone(phone);
@@ -137,8 +148,19 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   const closed = !!settings && !settings.shop_open;
   const unavailable = settings && ((fulfilment === 'delivery' && !settings.delivery_enabled) || (fulfilment === 'pickup' && !settings.pickup_enabled));
   const formOk = nameOk && phoneOk && addrOk;
+  // one section open at a time; the contact form starts open only while there is something to fill in
+  const [sec, setSec] = useState<'contact' | 'items' | 'payment' | null>(() => (!nameOk || !phoneOk || (fulfilment === 'delivery' && !address.trim() && draft.address === undefined) ? 'contact' : null));
+  const toggle = (id: 'contact' | 'items' | 'payment') => setSec((s) => (s === id ? null : id));
+  const openPayment = () => { setSec('payment'); setTimeout(() => document.getElementById('fold-payment-h')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0); };
+  const contactDone = () => { setTouched(true); if (!formOk) return; patch({ name, phone, address }); setSec(null); };
+  const pickSlip = (f: File) => { setSlip({ file: f, total: quote.total }); setShowPay(false); setErr(null); if (formOk) { patch({ name, phone, address }); setSec(null); } };
 
-  const ask = () => { setTouched(true); setErr(null); if (needsSlip && !slip) { setErr(t('co.slipMissing')); slipInput.current?.scrollIntoView({ block: 'center' }); return; } if (!formOk) return; setAsking(true); };
+  const ask = () => {
+    setTouched(true); setErr(null);
+    if (needsSlip && !slip) { setErr(t('co.slipMissing')); slipSec.current?.scrollIntoView({ block: 'center' }); return; }
+    if (!formOk) { setSec('contact'); setTimeout(() => document.querySelector<HTMLElement>('[data-fold="contact"] [aria-invalid="true"]')?.focus(), 0); return; }
+    setAsking(true);
+  };
   const place = async () => {
     if (inflight.current) return;           // a second tap or a retry while one is running does nothing
     inflight.current = true; setBusy(true); setErr(null);
@@ -160,8 +182,9 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       const invoiceId = r.order.invoice?.id;
       if (fp && uploaded && invoiceId) void review.analyze({ invoiceId });
       useCart.getState().clear();
+      useCheckoutDraft.getState().clear();
       useShopNav.getState().openOrder(r.order.id);
-      toast('success', t('co.placed'));
+      toast('success', t(uploaded ? 'co.placedSlip' : 'co.placed'));
       host.goTab('pay');
     } catch (e) {
       setAsking(false);
@@ -177,7 +200,6 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       <button type="button" className="sp-back" onClick={onBack}><ArrowLeft size={18} /> {t('co.back')}</button>
       <h2 className="sp-h2">{t('co.title')}</h2>
       {closed && <Banner tone="warn">{settings?.closed_message || t('shop.closed')}</Banner>}
-      {err && <Banner tone="bad">{err}</Banner>}
 
       <section className="sp-sec"><h3>{t('co.fulfilment')}</h3>
         <div className="sp-seg" role="radiogroup" aria-label={t('co.fulfilment')}>
@@ -188,41 +210,60 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
         {fulfilment === 'pickup' && settings?.pickup_note && <div className="sp-note"><b>{t('co.pickupNote')}:</b> {settings.pickup_note}</div>}
       </section>
 
-      <section className="sp-sec"><h3>{t('co.contact')}</h3>
+      <Fold id="contact" title={t('co.contact')} open={sec === 'contact'} onToggle={() => toggle('contact')} action={t('pm.change')}
+        summary={nameOk && phoneOk
+          ? <span className="sp-fold-lines"><span>{name.trim()} · {phone}</span>{fulfilment === 'delivery' && <span>{address.trim() || t('co.noAddress')}</span>}{note.trim() && <span>{note.trim()}</span>}</span>
+          : <span className="bad">{t('co.contactMissing')}</span>}>
         <div className="sp-form">
-          <label>{t('co.name')}<input value={name} maxLength={100} autoComplete="name" aria-invalid={touched && !nameOk} onChange={(e) => setName(e.target.value)} /></label>
+          <label>{t('co.name')}<input value={name} maxLength={100} autoComplete="name" aria-invalid={touched && !nameOk} onChange={(e) => patch({ name: e.target.value })} /></label>
           {touched && !nameOk && <small className="bad">{t('err.name')}</small>}
-          <label>{t('co.phone')}<input value={phone} type="tel" inputMode="numeric" autoComplete="tel" maxLength={14} placeholder="08xxxxxxxx" aria-invalid={touched && !phoneOk} onChange={(e) => setPhone(e.target.value)} /></label>
+          <label>{t('co.phone')}<input value={phone} type="tel" inputMode="numeric" autoComplete="tel" maxLength={14} placeholder="08xxxxxxxx" aria-invalid={touched && !phoneOk} onChange={(e) => patch({ phone: e.target.value })} /></label>
           {touched && !phoneOk && <small className="bad">{t('err.phone')}</small>}
           {fulfilment === 'delivery' && (
             <>
-              <label>{t('co.address')} <small className="muted">({t('co.addressOptional')})</small><textarea value={address} rows={3} maxLength={400} autoComplete="street-address" placeholder={t('co.addressHint')} aria-invalid={touched && !addrOk} onChange={(e) => setAddress(e.target.value)} /></label>
+              <label>{t('co.address')} <small className="muted">({t('co.addressOptional')})</small><textarea value={address} rows={3} maxLength={400} autoComplete="street-address" placeholder={t('co.addressHint')} aria-invalid={touched && !addrOk} onChange={(e) => patch({ address: e.target.value })} /></label>
               {touched && !addrOk && <small className="bad">{t('err.address')}</small>}
             </>
           )}
-          <label>{t('co.note')}<textarea value={note} rows={2} maxLength={300} onChange={(e) => setNote(e.target.value)} /></label>
+          <label>{t('co.note')}<textarea value={note} rows={2} maxLength={300} onChange={(e) => patch({ note: e.target.value })} /></label>
+          <button type="button" className="btn block" onClick={contactDone}>{t('co.contactDone')}</button>
         </div>
-      </section>
+      </Fold>
 
-      <section className="sp-sec"><h3>{t('co.items')}</h3>
+      <Fold id="items" title={t('co.items')} open={sec === 'items'} onToggle={() => toggle('items')}
+        summary={<span className="sp-fold-row"><span className="sp-thumbs-row" aria-hidden>{quote.lines.filter((l) => l.ok).slice(0, 3).map((l) => <ProductImage key={l.sku_code} src={l.image_url} alt="" />)}</span><span>{t('ord.n', { n: cartCount(lines) })} · {baht(quote.subtotal)}</span></span>}>
         <ul className="sp-mini">{quote.lines.filter((l) => l.ok).map((l) => <li key={l.sku_code}><ProductImage src={l.image_url} alt={l.name ?? l.sku_code} /><span className="grow">{l.name}<small> × {l.qty}</small></span><b>{baht(l.line_total)}</b></li>)}</ul>
-      </section>
+      </Fold>
 
-      <section className="sp-sec"><h3>{t('co.payment')}</h3>
-        {methods ? <><MethodCards methods={methods} value={method} onChange={setPickedMethod} wallet={methods.wallet.balance > 0} /><div className="sp-note">{t('co.paymentHint')}</div></> : <div className="sp-note">{t('co.paymentLater')}</div>}
-      </section>
+      {methods && (method || hasWallet)
+        ? <PayMethodPicker title={t('co.payment')} methods={methods} value={method} onChange={(m) => { patch({ method: m }); setShowPay(true); }} open={sec === 'payment'} setOpen={(o) => setSec(o ? 'payment' : null)} wallet={hasWallet} hint={t('co.paymentHint')} />
+        : (
+          <section className="sp-sec"><h3>{t('co.payment')}</h3>
+            <div className="sp-note" aria-busy={!methods && !methodsError}>{methodsError ? (needsSlip ? t('pm.loadError') : t('co.paymentLater')) : methods ? t('pm.none') : t('pm.loading')}</div>
+            {methodsError && needsSlip && <button type="button" className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={reloadMethods}>{t('common.retry')}</button>}
+          </section>
+        )}
+      {!needsSlip && method?.kind === 'qr' && <div className="sp-note" data-testid="qr-later">{t('qr.afterOrder')}</div>}
+      {method?.kind === 'wallet' && <div className="sp-note">{t('co.walletAfter')}</div>}
 
       {needsSlip && (
-        <section className="sp-sec" data-testid="slip-section"><h3>{t('co.slipTitle')} <span className="bad" aria-hidden>*</span></h3>
-          <p className="sp-note">{t('co.slipHelp')}</p>
-          <div className="wl-amount"><span className="wl-k">{t('co.slipAmount')}</span><b data-testid="transfer-amount">{baht(quote.total)}</b></div>
+        <section ref={slipSec} className="sp-sec sp-paycard" data-testid="slip-section"><h3>{t('co.slipTitle')} <span className="bad" aria-hidden>*</span></h3>
+          {(method?.kind !== 'qr' || slip) && <div className="wl-amount"><span className="wl-k">{t('co.slipAmount')}</span><b data-testid="transfer-amount">{baht(quote.total)}</b></div>}
+          {/* where to pay: never inside a collapsible section. Hidden only once the slip is attached (the customer has paid), and one tap brings it back. */}
+          {slip && method && <button type="button" className="sp-link" aria-expanded={showPay} onClick={() => setShowPay(!showPay)}>{t(showPay ? 'co.payHide' : 'co.payShow')}</button>}
+          {(!slip || showPay) && (bank ? <PayToBank bank={bank} />
+            : method?.kind === 'qr' ? (quote.ok && quote.fulfilment === fulfilment && !unavailable && !closed
+              ? <CheckoutQrPanel items={toQuoteItems(lines)} fulfilment={fulfilment} total={quote.total} onStale={refresh} onOther={openPayment} /> : null)
+              : methods ? <p className="sp-note">{t('co.slipPickMethod')}</p> : null)}
+          {!slip && <p className="sp-note">{t(method?.kind === 'qr' ? 'co.slipHelpQr' : 'co.slipHelp')}</p>}
           <div className="sp-form">
-            <input ref={slipInput} type="file" hidden accept="image/jpeg,image/png,application/pdf" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) { pickSlip(f); setErr(null); } }} />
+            <input ref={slipInput} type="file" hidden accept="image/jpeg,image/png,application/pdf" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) pickSlip(f); }} />
             {slip ? (
               <div className="col gap-8" data-testid="slip-preview">
-                {slip.url ? <img src={slip.url} alt={t('co.slipPreview')} className="wl-slip" /> : <div className="muted wl-slip-file">{slip.file.name}</div>}
-                <label>{t('co.slipWhen')}<input type="datetime-local" value={slipWhen} onChange={(e) => setSlipWhen(e.target.value)} /></label>
-                <label>{t('co.slipRef')}<input value={slipRef} maxLength={80} onChange={(e) => setSlipRef(e.target.value)} /></label>
+                {slip.total !== quote.total && !loading && <Banner tone="warn">{t('co.slipTotalChanged', { was: baht(slip.total), now: baht(quote.total) })}</Banner>}
+                {slipUrl ? <img src={slipUrl} alt={t('co.slipPreview')} className="wl-slip" /> : <div className="muted wl-slip-file">{slip.file.name}</div>}
+                <label>{t('co.slipWhen')}<input type="datetime-local" value={slipWhen} onChange={(e) => patch({ slipWhen: e.target.value })} /></label>
+                <label>{t('co.slipRef')}<input value={slipRef} maxLength={80} onChange={(e) => patch({ slipRef: e.target.value })} /></label>
                 <button type="button" className="btn block" disabled={busy} onClick={() => slipInput.current?.click()}>{t('co.slipAnother')}</button>
               </div>
             ) : <button type="button" className="btn primary lg block" disabled={busy} onClick={() => slipInput.current?.click()}><Upload size={16} /> {t('co.slipChoose')}</button>}
@@ -236,6 +277,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
         <div className="row between"><span>{t('cart.shipping')}</span><span>{quote.shipping_fee > 0 ? baht(quote.shipping_fee) : t('cart.free')}</span></div>
         <div className="row between sp-total"><b>{t('cart.total')}</b><b>{baht(quote.total)}</b></div>
       </div>
+      {err && <div data-testid="checkout-error"><Banner tone="bad">{err}</Banner></div>}
       <button type="button" className="btn primary lg block" disabled={busy || loading || !quote.ok || closed || !!unavailable} onClick={ask}>{busy ? t('co.placing') : `${t('co.place')} · ${baht(quote.total)}`}</button>
 
       {asking && <ConfirmSheet title={t('co.confirmTitle')} body={t(needsSlip ? 'co.confirmBodySlip' : 'co.confirmBody', { total: baht(quote.total) })} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} onConfirm={place} onCancel={() => setAsking(false)} />}

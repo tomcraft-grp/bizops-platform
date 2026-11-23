@@ -21,7 +21,8 @@ export async function decodeQrFromImage(file: File): Promise<string> {
   throw new Error('No QR code was found in this picture. Use a sharp, straight-on picture with the whole QR inside.');
 }
 
-export interface QrCard { payload: string; amount: number; ref: string; merchant: string; invoiceNo: string; expiresAt: string; lang: 'th' | 'en' }
+/** `ref`, `invoiceNo` and `expiresAt` exist only for an invoice's QR; the QR at checkout has none of them yet. */
+export interface QrCard { payload: string; amount: number; ref?: string; merchant: string; invoiceNo?: string; expiresAt?: string; lang: 'th' | 'en' }
 
 /** A 1080px-wide PNG: QR with a white quiet zone, amount, reference, merchant and expiry, so the saved picture is self-explanatory. */
 export async function renderQrCard(c: QrCard): Promise<Blob> {
@@ -42,11 +43,11 @@ export async function renderQrCard(c: QrCard): Promise<Blob> {
   g.font = '600 46px "Noto Sans Thai", system-ui, sans-serif';
   g.fillStyle = '#333'; g.fillText(c.merchant, W / 2, 1180);
   g.font = '500 42px "Noto Sans Thai", system-ui, sans-serif';
-  g.fillText(`${c.lang === 'th' ? 'ใบแจ้งหนี้' : 'Invoice'} ${c.invoiceNo}`, W / 2, 1250);
-  g.fillText(`${c.lang === 'th' ? 'อ้างอิง' : 'Ref'} ${c.ref}`, W / 2, 1312);
+  if (c.invoiceNo) g.fillText(`${c.lang === 'th' ? 'ใบแจ้งหนี้' : 'Invoice'} ${c.invoiceNo}`, W / 2, 1250);
+  if (c.ref) g.fillText(`${c.lang === 'th' ? 'อ้างอิง' : 'Ref'} ${c.ref}`, W / 2, 1312);
   g.fillStyle = '#b42318';
   g.font = '500 36px "Noto Sans Thai", system-ui, sans-serif';
-  g.fillText(`${c.lang === 'th' ? 'ใช้ได้ถึง' : 'Valid until'} ${new Date(c.expiresAt).toLocaleString(c.lang === 'th' ? 'th-TH' : 'en-GB')}`, W / 2, 1375);
+  if (c.expiresAt) g.fillText(`${c.lang === 'th' ? 'ใช้ได้ถึง' : 'Valid until'} ${new Date(c.expiresAt).toLocaleString(c.lang === 'th' ? 'th-TH' : 'en-GB')}`, W / 2, 1375);
   g.fillStyle = '#666'; g.font = '400 32px "Noto Sans Thai", system-ui, sans-serif';
   g.fillText(c.lang === 'th' ? 'เปิดแอปธนาคารใดก็ได้ แล้วเลือกสแกนจากรูปในเครื่อง' : 'Open any banking app and scan from your photo gallery', W / 2, 1440);
   return await new Promise<Blob>((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('Could not draw the QR picture'))), 'image/png'));

@@ -77,6 +77,12 @@ export class FakeShop {
   failEvidenceReads = false;
   /** true = shop_place_order answers without the invoice object: the app must not depend on it once the order exists */
   placeWithoutInvoice = false;
+  /** true = a database WITHOUT the checkout QR migration */
+  noCheckoutQr = false;
+  /** true = the answer to shop_checkout_qr waits until `releaseCheckoutQr()` */
+  holdCheckoutQr = false;
+  releaseCheckoutQr: () => void = () => undefined;
+  private qrGate = new Promise<void>((resolve) => { this.releaseCheckoutQr = resolve; });
   failNext(fn: string, times = 1) { this.fail.set(fn, times); }
   /** the server handles the call, but the answer never reaches the phone (dropped connection) */
   dropResponseOnce(fn: string) { this.drop.add(fn); }
@@ -163,6 +169,13 @@ export class FakeShop {
           popular: [...sold].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([s]) => this.itemJson(this.item(s))) };
       }
       case 'shop_quote': return this.quote(a.p_items, String(a.p_fulfilment));
+      case 'shop_checkout_qr': {       // migration 20261123100000: the same pricing as the order, the shop's own account, nothing written
+        if (this.noCheckoutQr) this.err('Could not find the function public.shop_checkout_qr(p_fulfilment, p_items) in the schema cache');
+        if (!this.settings.shop_open) this.err('SHOP_CLOSED');
+        const q = this.quote(a.p_items, String(a.p_fulfilment)); if (!q.ok) this.err('CART_INVALID', JSON.stringify(q.problems));
+        if (!this.w.promptpay) this.err('NO_PAYMENT_ACCOUNT');
+        return { amount: q.total, qr_payload: promptPayPayload('0812345678', q.total), account_label: 'Test shop', merchant_name: 'TEST SHOP' };
+      }
       case 'shop_place_order': {
         const r = this.place(a, viaHttp);
         if (!(viaHttp && this.placeWithoutInvoice)) return r;
@@ -370,6 +383,7 @@ export class FakeShop {
         if (left > 0) { this.fail.set(fn, left - 1); return json(route, { code: 'P0001', message: 'boom', details: null, hint: null }, 500); }
         try {
           const out = this.rpc(fn, args, true);
+          if (fn === 'shop_checkout_qr' && this.holdCheckoutQr) await this.qrGate;
           if (this.drop.delete(fn)) return route.abort('connectionreset');   // handled by the server, never answered
           return json(route, out);
         } catch (e) { const er = e as Error & { details?: string }; return json(route, { code: 'P0001', message: er.message, details: er.details ?? null, hint: null }, 400); }

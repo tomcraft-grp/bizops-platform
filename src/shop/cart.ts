@@ -41,7 +41,7 @@ export function setLineQty(lines: CartLine[], sku: string, qty: number): CartLin
   return lines.map((l) => (l.sku === sku ? { ...l, qty: clampQty(qty, l.max) } : l));
 }
 export const removeLine = (lines: CartLine[], sku: string): CartLine[] => lines.filter((l) => l.sku !== sku);
-export const cartCount = (lines: CartLine[]): number => lines.reduce((s, l) => s + l.qty, 0);
+export const cartCount = (lines: Pick<CartLine, 'qty'>[]): number => lines.reduce((s, l) => s + l.qty, 0);
 export const toQuoteItems = (lines: CartLine[]) => lines.map((l) => ({ sku_code: l.sku, qty: l.qty }));
 
 /** Parse what localStorage holds. It is untrusted (another tab, an old build, hand-edited): anything odd is dropped. */

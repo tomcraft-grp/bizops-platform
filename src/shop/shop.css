@@ -145,6 +145,23 @@ body.customer-app .toast { max-width: 440px; }
 .sp-mini li { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
 .sp-mini .sp-pic { width: 44px; height: 44px; border-radius: 8px; flex: none; }
 .sp-mini small { color: var(--muted); }
+/* collapsible sections */
+.sp-fold { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); min-width: 0; }
+.sp-fold > h3 { margin: 0; font: inherit; }
+.sp-fold-h { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; min-height: 52px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; border-radius: var(--radius); }
+.sp-fold-h:focus-visible { outline: 3px solid var(--brand); outline-offset: 1px; }
+.sp-fold-t { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.sp-fold-title { font-size: 15px; font-weight: 750; }
+.sp-fold-sum { font-size: 13.5px; color: var(--text-2); min-width: 0; line-height: 1.4; }
+.sp-fold-lines { display: flex; flex-direction: column; gap: 1px; } .sp-fold-lines > span { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.sp-fold-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sp-fold-row .sp-thumbs-row .sp-pic { width: 36px; height: 36px; }
+.sp-fold-act { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 650; color: var(--brand-text, var(--brand)); }
+.sp-fold-act svg { transition: transform .15s; } .sp-fold.open .sp-fold-act svg { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .sp-fold-act svg { transition: none; } }
+.sp-fold-b { padding: 2px 14px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sp-paycard { padding: 14px; gap: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.sp-paycard .sp-link { align-self: flex-start; } .sp-paycard p { margin: 0; }
 .sp-pay { display: flex; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 
 /* ---- orders ---- */
@@ -237,6 +254,16 @@ div.wl-card .wl-no { user-select: all; }
 .wl-refbox { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border: 1px dashed var(--border-strong, var(--border)); border-radius: var(--radius); background: var(--surface); }
 .wl-refbox b { font-size: 16px; } .wl-refbox small { flex-basis: 100%; color: var(--muted); }
 .wl-pay { padding: 4px 0; }
+.wl-sum { display: flex; align-items: center; gap: 10px; min-width: 0; } .wl-sum .wl-logo { width: 36px; height: 36px; border-radius: 10px; font-size: 11px; }
+.wl-sum-t { display: flex; flex-direction: column; min-width: 0; } .wl-sum-t b { color: var(--text); font-size: 14px; } .wl-sum-t small { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.wl-payto { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.wl-payto .wl-no { user-select: all; }
+.wl-qr-panel { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); text-align: center; min-width: 0; }
+.wl-qrbox { width: min(260px, 100%); aspect-ratio: 1 / 1; background: #fff; border-radius: 8px; overflow: hidden; line-height: 0; }
+.wl-qrwait { display: grid; place-items: center; line-height: 1.4; background: var(--surface-3); color: var(--text-2); font-size: 13px; }
+.wl-qr-to { font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; } .wl-qr-amt { font-size: 24px; } .wl-qr-panel .btn { justify-content: center; }
+.wl-qr-saved { width: 100%; max-width: 300px; border: 1px solid var(--border); border-radius: 8px; }
+.wl-qr-err { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--radius); background: var(--warn-soft); color: var(--warn-text); font-size: 13.5px; }
 .wl-balance { display: flex; flex-direction: column; gap: 4px; padding: 16px; border-radius: var(--radius); color: #fff; background: linear-gradient(135deg, var(--ca-card-from, var(--brand)), var(--ca-card-to, var(--brand-hover))); }
 .wl-bal-k { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; opacity: .92; } .wl-bal-v { font-size: 34px; line-height: 1.1; letter-spacing: -.01em; }
 .wl-bal-pending { font-size: 12.5px; background: rgba(255, 255, 255, .2); border-radius: 8px; padding: 3px 8px; align-self: flex-start; }

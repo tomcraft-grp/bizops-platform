@@ -38,6 +38,8 @@ export interface Quote {
   lines: QuoteLine[]; subtotal: number; discount: number; shipping_fee: number; total: number; fulfilment: Fulfilment; free_shipping_min: number | null; ok: boolean;
   problems: { sku_code?: string; problem: string; max_qty?: number }[];
 }
+/** The PromptPay QR of the cart about to be ordered (migration 20261123100000): the amount is the database's own total of that cart. */
+export interface CheckoutQr { amount: number; qr_payload: string; account_label: string; merchant_name: string | null }
 export type OrderStatus = 'new' | 'confirmed' | 'preparing' | 'packed' | 'ready' | 'shipped' | 'completed' | 'cancelled' | 'returned';
 export interface OrderItem { line_no: number; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }
 export interface ShopOrder {
@@ -120,6 +122,7 @@ export const shop = {
   product: (sku: string) => rpc<ShopProduct | null>('shop_product', { p_sku: sku }),
   home: () => memo('home', 30_000, () => rpc<HomeData>('shop_home')),
   quote: (items: { sku_code: string; qty: number }[], fulfilment: Fulfilment) => rpc<Quote>('shop_quote', { p_items: items, p_fulfilment: fulfilment }),
+  checkoutQr: (items: { sku_code: string; qty: number }[], fulfilment: Fulfilment) => rpc<CheckoutQr>('shop_checkout_qr', { p_items: items, p_fulfilment: fulfilment }),
   async placeOrder(i: PlaceOrderInput): Promise<{ replay: boolean; order: ShopOrder }> {
     const r = await rpc<{ replay: boolean; order: ShopOrder }>('shop_place_order', {
       p_key: i.key, p_items: i.items, p_fulfilment: i.fulfilment, p_name: i.name, p_phone: i.phone, p_address: i.fulfilment === 'delivery' ? i.address : null,

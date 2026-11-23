@@ -2,7 +2,7 @@
 // error text. Text is always rendered as text (React escapes it); pictures come only from https URLs the server returns.
 import './shop.css';
 import { ReactNode, useEffect, useState } from 'react';
-import { AlertTriangle, Minus, Package, Plus, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Minus, Package, Plus, RefreshCw } from 'lucide-react';
 import { toast } from '../domain/store';
 import { cx } from '../lib/util';
 import type { InvoiceState, StatusCode } from '../finance/api';
@@ -168,6 +168,29 @@ export const orderSteps = (f: 'delivery' | 'pickup'): OrderStatus[] => (f === 'p
 export function Section({ title, action, children }: { title: ReactNode; action?: ReactNode; children: ReactNode }) {
   return <section className="sp-sec"><div className="sp-sec-h"><h3>{title}</h3>{action}</div>{children}</section>;
 }
+
+/**
+ * A collapsible card. Closed, it shows a one-line summary of what is inside; the header button opens and closes it. The content is only in the page while it is
+ * open, so anything the customer needs at all times (the QR, the account to pay) must live OUTSIDE a Fold; what they typed is kept by the parent.
+ */
+export function Fold({ id, title, summary, open, onToggle, action, children }: {
+  id: string; title: string; summary?: ReactNode; open: boolean; onToggle: () => void; action?: string; children: ReactNode;
+}) {
+  const t = useT();
+  return (
+    <section className={cx('sp-fold', open && 'open')} data-fold={id}>
+      <h3>
+        <button type="button" id={`fold-${id}-h`} className="sp-fold-h" aria-expanded={open} aria-controls={open ? `fold-${id}` : undefined} onClick={onToggle}>
+          <span className="sp-fold-t"><span id={`fold-${id}-t`} className="sp-fold-title">{title}</span>{!open && summary && <span className="sp-fold-sum">{summary}</span>}</span>
+          <span className="sp-fold-act">{open ? t('fold.hide') : action ?? t('fold.show')} <ChevronDown size={16} aria-hidden /></span>
+        </button>
+      </h3>
+      {open && <div id={`fold-${id}`} className="sp-fold-b" role="group" aria-labelledby={`fold-${id}-t`}>{children}</div>}
+    </section>
+  );
+}
+/** After a Fold closes itself its content (and the focus in it) is gone: put the focus on its header and make sure the header is on the screen. */
+export const focusFold = (id: string) => { setTimeout(() => { const h = document.getElementById(`fold-${id}-h`); h?.focus({ preventScroll: true }); h?.scrollIntoView({ block: 'nearest' }); }, 0); };
 
 /** A small confirmation sheet in the shop's own language and theme (the staff app's confirm dialog is bilingual by staff setting). */
 export function ConfirmSheet({ title, body, confirmLabel, cancelLabel, danger, busy, onConfirm, onCancel }: {
