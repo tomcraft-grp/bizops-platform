@@ -71,7 +71,7 @@ export class ReaderError extends Error { constructor(public code: 'NOT_AVAILABLE
 const within = <T,>(p: Promise<T>, ms: number): Promise<T> => { let h: ReturnType<typeof setTimeout>; return Promise.race([p, new Promise<never>((_, rej) => { h = setTimeout(() => rej(new ReaderError('TIMEOUT', 'The reader took too long')), ms); })]).finally(() => clearTimeout(h)); };
 
 /**
- * Reads one slip picture. `full` (staff): Thai and English, three readings that must agree. `quick` (a customer's phone, only to warn): Thai model only, two readings.
+ * Reads one slip picture. `full` (staff): Thai and English, three readings that must agree. `quick` (a customer's phone, only to warn): Thai model only.
  * A PDF is not read here. Throws ReaderError; never hangs.
  */
 export async function readPicture(file: Blob, mode: 'full' | 'quick' = 'full', now = new Date(), timeoutMs = 60_000): Promise<Reading & { qr: SlipQr }> {
@@ -81,7 +81,7 @@ export async function readPicture(file: Blob, mode: 'full' | 'quick' = 'full', n
   try {
     if (bmp.width * bmp.height > 40_000_000 || Math.min(bmp.width, bmp.height) < 40) throw new ReaderError('NOT_A_PICTURE', 'The picture has an unusable size');
     const qr = slipQr(bmp);
-    const passes: [number, string, boolean][] = mode === 'full' ? [[1200, '4', false], [1200, '6', true], [1000, '4', true]] : [[1100, '4', false], [1100, '6', true]];
+    const passes: [number, string, boolean][] = mode === 'full' ? [[1200, '4', false], [1200, '6', true], [1000, '4', true]] : [[1100, '4', false], [1100, '6', true], [800, '4', true]];
     const texts = await within((async () => {
       const w = await worker(mode === 'full' ? ['tha', 'eng'] : ['tha']); const out: string[] = [];
       for (const [width, psm, local] of passes) {

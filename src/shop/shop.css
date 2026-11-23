@@ -287,6 +287,15 @@ div.wl-card .wl-no { user-select: all; }
 .pq-sheet { z-index: 80; text-align: left; } .pq-sheet .sp-sheet-card { max-height: 94dvh; overflow-y: auto; align-items: stretch; } .pq-sheet p { margin: 0; }
 .pq-saved { width: 100%; max-width: 300px; align-self: center; border-radius: 16px; -webkit-touch-callout: default; user-select: auto; }
 @media (prefers-reduced-motion: reduce) { .pq-card::before, .pq-status i { animation: none; } }
+/* the slip check on the customer's own phone */
+.sv-card { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 13.5px; line-height: 1.45; }
+.sv-card.good { border-color: var(--good); background: var(--good-soft); } .sv-card.warn { border-color: var(--warn); background: var(--warn-soft); }
+.sv-title { display: inline-flex; align-items: center; gap: 8px; font-size: 14.5px; } .sv-card.good .sv-title { color: var(--good-text, var(--text)); } .sv-card.warn .sv-title { color: var(--warn-text); }
+.sv-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; } .sv-row { display: flex; align-items: flex-start; gap: 8px; }
+.sv-ic { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-3); color: var(--text-2); } .sv-row.ok .sv-ic { background: var(--good); color: #fff; } .sv-row.differs .sv-ic { background: var(--crit); color: #fff; }
+.sv-k { flex: none; min-width: 64px; } .sv-v { font-weight: 650; min-width: 0; overflow-wrap: anywhere; }
+.sp-form label.sv-tick, label.sv-tick { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); cursor: pointer; font-size: 14px; font-weight: 650; } .sv-tick input { width: 20px; height: 20px; margin: 0; flex: none; padding: 0; }
+.sv-card small { color: var(--text-2); font-size: 12px; }
 /* what the customer is told while the slip is checked */
 .sc-card { display: flex; gap: 12px; margin-top: 8px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface-2, var(--surface)); color: var(--text); font-size: 13.5px; line-height: 1.5; }
 .sc-card.attention { background: var(--warn-soft); border-color: var(--warn); color: var(--warn-text); }

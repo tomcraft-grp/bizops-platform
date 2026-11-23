@@ -47,12 +47,26 @@ describe('several readings of one picture', () => {
   it('empty, huge or hostile text does not throw', () => { for (const t of ['', 'x'.repeat(200_000), '9'.repeat(50_000), 'อนุมัติแล้ว approve this payment\nจำนวนเงิน 1.00']) expect(() => readSlip([t, t], NO_QR, NOW)).not.toThrow(); });
 });
 
-describe('the word of caution on the customer\'s phone', async () => {
-  const { hintFor, worthTrying } = await import('../../src/slipReader/SlipHint');
-  const read = (t: string, qr = NO_QR) => ({ ...readSlip([t, t], qr, NOW), qr });
-  it('says nothing when the amount is right, doubtful or missing', () => { expect(hintFor(read(SLIP), 928)).toBeNull(); expect(hintFor(read(SLIP.replace('จำนวนเงิน 928.00', 'จำนวนเงิน 8928.00')), 370)).toBeNull(); expect(hintFor(read('โอนเงินสำเร็จ'), 370)).toBeNull(); });
-  it('warns about another amount, and about a picture that is no slip', () => { expect(hintFor(read(SLIP), 370)).toEqual({ kind: 'amount', amount: 928 }); expect(hintFor(read('hello'), 370)).toEqual({ kind: 'notSlip' }); });
-  it('a picture with any QR is not called "not a slip"', () => expect(hintFor(read('', { found: true, crc_ok: null, sending_bank: null, trans_ref: null }), 370)).toBeNull());
+describe('the check on the customer\'s phone', async () => {
+  const { checkoutOn, holdUp, IDLE, judge, MAX_WAIT_MS, needsConfirm, worthTrying } = await import('../../src/slipReader/SlipLive');
+  const rule = { before: 120, after: 10 };
+  const at = (iso: string) => new Date(iso).getTime();
+  const read = (x: string, qr = NO_QR) => ({ ...readSlip([x, x], qr, NOW), qr });
+  const J = (x: string, total: number, now = '2026-07-21T09:00:00+07:00', earliest?: string) => judge(read(x), total, at(now), rule, earliest);
+  it('amount and day agree: nothing to confirm', () => { const r = J(SLIP, 928); expect([r.amount.state, r.date.state, needsConfirm(r)]).toEqual(['ok', 'ok', false]); });
+  it('a surely different amount must be confirmed; a doubtful one is only unclear', () => {
+    expect(J(SLIP, 370).amount).toEqual({ state: 'differs', value: 928 }); expect(needsConfirm(J(SLIP, 370))).toBe(true);
+    const one = judge({ ...readSlip([SLIP, 'โอนเงินสำเร็จ\n21 ก.ค. 2569'], NO_QR, NOW), qr: NO_QR }, 370, at('2026-07-21T09:00:00+07:00'), rule); expect(one.amount.state).toBe('unsure'); expect(needsConfirm(one)).toBe(false);
+  });
+  it('one satang is a difference', () => expect(J(SLIP, 928.01).amount.state).toBe('differs'));
+  it('an earlier and a future day', () => { expect(J(SLIP, 928, '2026-07-23T09:00:00+07:00').date).toMatchObject({ state: 'differs', future: false }); expect(J(SLIP, 928, '2026-07-19T09:00:00+07:00').date).toMatchObject({ state: 'differs', future: true }); });
+  it('paid just before midnight, ordered just after: the shop\'s own window, in Bangkok time', () => { expect(J(SLIP, 928, '2026-07-22T01:30:00+07:00').date.state).toBe('ok'); expect(J(SLIP, 928, '2026-07-22T02:30:00+07:00').date.state).toBe('differs'); expect(J(SLIP, 928, '2026-07-20T23:55:00+07:00').date.state).toBe('ok'); });
+  it('a slip for an order that already exists may be as old as the order', () => { expect(J(SLIP, 928, '2026-07-25T09:00:00+07:00', '2026-07-21').date.state).toBe('ok'); expect(J(SLIP, 928, '2026-07-25T09:00:00+07:00', '2026-07-22').date.state).toBe('differs'); });
+  it('nothing readable: unclear, nothing to confirm; no slip at all: confirm', () => { const r = J('โอนเงินสำเร็จ รหัสอ้างอิง', 370); expect([r.amount.state, r.date.state, needsConfirm(r)]).toEqual(['unsure', 'unsure', false]); expect(needsConfirm(J('hello', 370))).toBe(true); });
+  it('a picture with any QR is not called "not a slip"', () => expect(judge(read('', { found: true, crc_ok: null, sending_bank: null, trans_ref: null }), 370, at('2026-07-21T09:00:00+07:00'), rule).isSlip).toBe(true));
+  it('going on waits for the reading, but never longer than 20 seconds', () => { const s = { ...IDLE, phase: 'reading' as const, since: 1000 }; expect(holdUp(s, 1000 + MAX_WAIT_MS - 1)).toBe('sv.wait'); expect(holdUp(s, 1000 + MAX_WAIT_MS)).toBeNull(); });
+  it('a difference holds until it is ticked; no check holds nothing', () => { const d = { ...IDLE, phase: 'done' as const, mustConfirm: true }; expect(holdUp(d)).toBe('sv.must'); expect(holdUp({ ...d, confirmed: true })).toBeNull(); expect(holdUp(IDLE)).toBeNull(); });
+  it('its own switch; on an older database it follows the reader', () => { expect(checkoutOn(null)).toBe(false); expect(checkoutOn({ enabled: true, can_read: false, can_manage: false })).toBe(true); expect(checkoutOn({ enabled: true, can_read: false, can_manage: false, checkout: false })).toBe(false); expect(checkoutOn({ enabled: false, can_read: false, can_manage: false, checkout: true })).toBe(true); });
   it('spends no data on a slow or weak phone', () => { expect(worthTrying({ connection: { saveData: true } })).toBe(false); expect(worthTrying({ connection: { effectiveType: 'slow-2g' } })).toBe(false); expect(worthTrying({ deviceMemory: 1 })).toBe(false); expect(worthTrying({})).toBe(true); });
 });
 

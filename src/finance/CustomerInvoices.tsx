@@ -12,6 +12,7 @@ import { TransferAmount, WalletPayPanel } from '../wallet/PayInvoice';
 import { dateFmt, dateTimeFmt, money } from '../lib/util';
 import { CustomerEvidence, finance, InvoiceRow, QrRequest, Receipt, STATUS, StatusCode } from './api';
 import { review } from './review';
+import { holdUp, IDLE, type LiveState, SlipLive } from '../slipReader/SlipLive';
 import { SlipCheck } from './SlipCheck';
 import { payNotes } from '../shop/pay';
 import { withTimeout } from '../shop/timeout';
@@ -92,6 +93,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   const [form, setForm] = useState({ amount: '', when: '', bank: '', ref: '' });
   const file = useRef<HTMLInputElement>(null);
   const upBtn = useRef<HTMLDivElement>(null);
+  const [slipLive, setSlipLive] = useState<LiveState>(IDLE);                         // the check of the picked slip on this phone
   const [sent, setSent] = useState(0);                                       // slips sent from this card: look at the check again
   const st = STATUS[inv.status_code] ?? STATUS[0];
   const msg = MSG[inv.status_code] ?? MSG[0];   // a state this build does not know (a newer database) reads as "not paid yet" instead of crashing
@@ -121,6 +123,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
     if (!f) return;
     const amount = Number(form.amount);
     if (!(amount > 0)) return toast('error', tl(lang, 'Enter the amount you transferred'));
+    const hold = holdUp(slipLive); if (hold) return toast('error', tr(lang, hold));
     setBusy('slip');
     try {
       // a stalled upload gives up after 60 s so the button comes back instead of waiting for ever (FB-001019)
@@ -177,6 +180,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
           <input ref={file} type="file" hidden accept="image/jpeg,image/png,application/pdf" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) pick(f); }} />
           {picked ? (
             <div className="col gap-8" data-testid="slip-preview">
+              <SlipLive file={picked.file} total={Number(form.amount) || inv.outstanding} earliest={inv.issue_date} onState={setSlipLive} />
               {picked.url ? <img src={picked.url} alt={tl(lang, 'Slip preview')} style={{ width: '100%', maxHeight: 320, objectFit: 'contain', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }} />
                 : <div className="muted" style={{ padding: 12, border: '1px dashed var(--border)', borderRadius: 8 }}>{picked.file.name}</div>}
               <Field label={tl(lang, 'Amount transferred (฿)')}><Input type="number" inputMode="decimal" min={0} step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></Field>

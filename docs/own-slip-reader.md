@@ -24,7 +24,7 @@ Nothing is sent to anyone. A browser test fails if a single request leaves the s
 * The text that was read is not stored.
 * `match` still means "check the bank". Nothing is confirmed automatically.
 * The customer is told about an amount or a date only when the reader was sure of that value. "Unreadable" from OCR is never blamed on the customer.
-* On the customer's phone the reader only warns before ordering. It blocks, stores and sends nothing, and is skipped on slow or weak phones and data saver.
+* On the customer's phone see "The check before ordering".
 
 ## Accuracy
 
@@ -41,6 +41,21 @@ Measured in Chrome on 60 **invented** slips (5 layouts, 3 fonts, 3 sizes, JPEG 6
 posted slips again and compares with what staff recorded from the bank. It stores nothing. Real customer slips were not used to build this.
 
 It cannot: prove money arrived, see an edited picture whose QR is untouched, or read a PDF (a person does).
+
+## The check before ordering
+
+Its own switch on the same card: **Check the slip for the customer before they order** (`finance_settings.checkout_check_enabled`, migration `20261124120000`; it started with the reader's value).
+
+| The phone finds | The customer sees | Ordering |
+|---|---|---|
+| still reading | "Checking your slip" | asked to wait, never longer than 20 seconds |
+| amount and day agree | green, both values | goes on |
+| surely another amount or day, or no slip | what differs | must tick "I have checked it" (owner's choice, 2026-11-24) |
+| not clear | "our staff will check it" | goes on |
+| PDF, old browser, data saver, weak phone, engine missing | nothing | goes on |
+
+The tick counts for that picture and that total only. The same check runs when a slip is sent for an existing order; its date may be as old as the order. The date rule is the two numbers of the Review settings card.
+It runs on the customer's own phone and proves nothing: it stores and sends nothing, and staff check every slip against the bank.
 
 ## Switching it on
 
@@ -59,7 +74,7 @@ A finished own reading does not send the LINE alert of an AI reading: the person
 
 ## Files and tests
 
-`src/slipReader/` (`parse.ts` text to values, `engine.ts` the picture, `store.ts`, `ReaderCard.tsx`, `SlipHint.tsx`), `supabase/functions/slip-analyze/qrPayload.ts` (shared by browser and Edge Function).
+`src/slipReader/` (`parse.ts` text to values, `engine.ts` the picture, `store.ts`, `ReaderCard.tsx`, `SlipLive.tsx`), `supabase/functions/slip-analyze/qrPayload.ts` (shared by browser and Edge Function).
 `tests/unit/slipParse.test.ts`, `tests/shop-e2e/own-reader.spec.ts` (the real engine reads real pictures of invented slips), `supabase/tests/own_slip_reader.sql`:
 
 ```

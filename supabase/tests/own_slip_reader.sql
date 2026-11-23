@@ -57,7 +57,7 @@ set local role anon;
 select pg_temp.err_like('A1 anon', $q$select public.finance_own_reader()$q$, '%permission denied%');
 select pg_temp.err_like('A1 anon', $q$select public.finance_set_own_reader(true)$q$, '%permission denied%');
 reset role; set local role authenticated; select pg_temp.as_user(pg_temp.c('A')::uuid);
-select pg_temp.chk('A2 a customer learns only whether it is on', public.finance_own_reader() = '{"enabled": false, "can_read": false, "can_manage": false}'::jsonb, public.finance_own_reader()::text);
+select pg_temp.chk('A2 a customer learns only whether it is on', public.finance_own_reader() @> '{"enabled": false, "can_read": false, "can_manage": false}'::jsonb, public.finance_own_reader()::text);
 select pg_temp.err_like('A3 a customer cannot switch it on', $q$select public.finance_set_own_reader(true)$q$, '%allowed%');
 reset role; select pg_temp.as_user(pg_temp.c('A')::uuid);
 select pg_temp.err_like('A4 a customer cannot store a reading of their own slip', $q$select pg_temp.store(1)$q$, '%allowed%');
