@@ -14,9 +14,9 @@ import { Badge, Button, Card, ChannelChip, Check, DataTable, Drawer, Empty, Fiel
 import { LineChart } from '../ui/charts';
 import { MediaImg, ProductEmoji } from '../ui/shared';
 import { uploadMedia } from '../ui/upload';
-import { addShopPictures, isShopSku, MAX_PICTURES } from '../shop/productPictures';
-import { PicturesOnlyHere, ShopPictures } from '../shop/PicturePanel';
-import { toast } from '../domain/store';
+import { isShopSku, MAX_PICTURES, sendPictures } from '../shop/productPictures';
+import { LocalShopStatus, ShopPictures, useShopPictures } from '../shop/PicturePanel';
+import { toast, useStore } from '../domain/store';
 import { cx, dateFmt, money, money0, pct, qtyFmt, shortDay, dayKey } from '../lib/util';
 import type { DB, ID, Product, ProductKind } from '../domain/types';
 import { t as tl } from '../lib/i18n';
@@ -58,7 +58,6 @@ export default function Products() {
       <PageHead title="Products" desc="One catalog for resale goods, manufactured goods, menu items (recipes), raw materials and packaging — with channel prices, images and cost history."
         actions={<>{canEdit && <SkuCodesButton />}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>}</>} />
       {canEdit && !DEMO_SEED && <SyncBanner sync={sync} />}
-      {canEdit && !DEMO_SEED && <PicturesOnlyHere />}
       <div className="grid g4 mb16">
         <Kpi label="Products" value={db.products.length} sub={<Tx vars={{ n: db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).length }}>{'{n} sellable'}</Tx>} />
         <Kpi label="Menu items (recipes)" value={db.products.filter((p) => p.kind === 'menu').length} sub="stock deducted by BOM" />
@@ -264,11 +263,11 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [shopVersion, setShopVersion] = useState(0);
+  const onShop = !DEMO_SEED && isShopSku(p?.sku);
+  const pics = useShopPictures(onShop && tab === 'images' ? p!.sku : null);
   if (!p) return null;
   const cur = f ?? p;
   const set = (patch: Partial<Product>) => setF({ ...cur, ...patch });
-  const onShop = !DEMO_SEED && isShopSku(p.sku);
   const imgs = p.mediaIds.map((m) => db.media.find((x) => x.id === m)).filter(Boolean);
   const hist = priceHistory(db, p.id);
   const bom = bomForProduct(db, p.id);
@@ -283,7 +282,7 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
     if (!f || saving) return;
     setSaving(true);
     try {
-      const r = await saveProductEdit(p, f);
+      const r = await saveProductEdit(p, { ...f, mediaIds: p.mediaIds });      // pictures are saved on their own: an edit begun before one was added must not take it away again
       if (!r.ok) { toast('error', tl(lang, r.error)); return; }
       toast('success', tl(lang, 'Product saved'));
       if (f.active && !p.active && r.localActive === false) toast('info', tl(lang, 'Activated in the central database, but it has no price there, so it stays inactive on this device until a price is set.'));
@@ -325,21 +324,21 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
             const files = Array.from(e.target.files ?? []);
             e.target.value = '';
             setBusy(true);
+            const added: string[] = [];
             for (const file of files) {
-              try { const mid = await uploadMedia(file, 'product_image', { type: 'product', id: p.id }); run((d) => { d.products.find((x) => x.id === p.id)!.mediaIds.push(mid); }, { ok: `${file.name} uploaded — thumbnails generated` }); } catch (err) { toast('error', (err as Error).message); }
+              try { const mid = await uploadMedia(file, 'product_image', { type: 'product', id: p.id }); added.push(mid); run((d) => { d.products.find((x) => x.id === p.id)!.mediaIds.push(mid); }, { ok: `${file.name} uploaded — thumbnails generated` }); } catch (err) { toast('error', (err as Error).message); }
             }
             // customers see the pictures of the online shop, not the ones of this browser: put them there too, and say so when that did not work
-            if (onShop && files.length) {
+            if (onShop && added.length) {
               try {
-                const r = await addShopPictures(p.sku, files);
+                const r = await sendPictures(p.sku, useStore.getState().db.media.filter((m) => added.includes(m.id)));
                 if (r.added) toast('success', tl(lang, '{n} pictures are now in the online shop', { n: r.added }));
                 if (r.full) toast('error', tl(lang, 'The online shop keeps at most {n} pictures for a product: the rest stay in this browser', { n: MAX_PICTURES }));
               } catch (err) { toast('error', tl(lang, 'Saved in this browser only. The online shop did not take the picture: {e}', { e: (err as Error).message })); }
-              setShopVersion((x) => x + 1);
             }
             setBusy(false);
           }} />
-          {onShop ? <ShopPictures sku={p.sku} version={shopVersion} canEdit={canEdit} /> : !DEMO_SEED && <div className="muted" style={{ fontSize: 12.5 }}><Tx>This product has no finished-goods SKU code, so it is not in the online shop: pictures stay in this browser.</Tx></div>}
+          {onShop ? <ShopPictures sku={p.sku} pics={pics} canEdit={canEdit} /> : !DEMO_SEED && <div className="muted" style={{ fontSize: 12.5 }}><Tx>This product has no finished-goods SKU code, so it is not in the online shop: pictures stay in this browser.</Tx></div>}
           {canMedia && <div className="dropzone" onClick={() => fileRef.current?.click()}><ImagePlus size={26} /><div><b>{busy ? <Tx>{'Processing…'}</Tx> : <Tx>{'Add images'}</Tx>}</b></div><div className="muted" style={{ fontSize: 12 }}><Tx>JPEG / PNG / WebP · max 8 MB · content type is verified, thumbnails & optimised WebP are generated automatically</Tx></div></div>}
           {onShop && imgs.length > 0 && <b className="mt8"><Tx>Pictures in this browser (POS and back office)</Tx></b>}
           {imgs.length === 0 && !onShop && <Empty title="No images yet" hint="The product shows its emoji until a picture is uploaded." />}
@@ -348,6 +347,7 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
               <div key={m.id} className="card card-b">
                 <MediaImg m={m} variant="web" size={140} />
                 <div className="row between mt8"><span style={{ fontSize: 12 }}>{m.name}<div className="muted">{(m.size / 1024).toFixed(0)}{' '}<Tx>KB ·</Tx>{' '}{m.width}×{m.height} · <Badge tone={m.status === 'available' ? 'good' : m.status === 'scanning' ? 'warn' : 'bad'}>{m.status}</Badge></div></span></div>
+                {onShop && <LocalShopStatus m={m} pics={pics} canEdit={canEdit} />}
                 <div className="row mt8">{i === 0 ? <Badge tone="info"><Star size={11} />{' '}<Tx>main</Tx></Badge> : canEdit && <Button size="sm" onClick={() => run((d) => { const pr = d.products.find((x) => x.id === p.id)!; pr.mediaIds = [m.id, ...pr.mediaIds.filter((x) => x !== m.id)]; }, { ok: 'Main image changed' })}><Tx>Make main</Tx></Button>}
                   {canEdit && <Button size="sm" variant="ghost" onClick={async () => { const x = await confirm({ title: 'Remove image?', body: 'The file record is kept in Media & documents for audit; it is just unlinked from this product.', danger: true }); if (x.ok) run((d) => { const pr = d.products.find((y) => y.id === p.id)!; pr.mediaIds = pr.mediaIds.filter((y) => y !== m.id); }, { ok: 'Image unlinked' }); }}><Trash2 size={14} /></Button>}</div>
               </div>))}

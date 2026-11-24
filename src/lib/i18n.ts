@@ -108,7 +108,7 @@ export const TH: Record<string, string> = {
   'Optional — any extra context for the team.': 'ไม่บังคับ — ข้อมูลเพิ่มเติมสำหรับทีม',
   Cancel: 'ยกเลิก', Submit: 'ส่ง', Close: 'ปิด', 'Open page': 'เปิดหน้า', 'Add note': 'เพิ่มบันทึก',
   'Total submitted': 'ส่งทั้งหมด', Open: 'เปิดอยู่', 'Critical priority': 'ความสำคัญฉุกเฉิน', Completed: 'เสร็จสมบูรณ์',
-  Issue: 'ปัญหา', Page: 'หน้า', Status: 'สถานะ', Priority: 'ความสำคัญ', Submitted: 'ส่งเมื่อ',
+  Issue: 'ปัญหา', Page: 'หน้า', Status: 'สถานะ', Priority: 'ความสำคัญ', Submitted: 'ส่งแล้ว',
   'All statuses': 'ทุกสถานะ', 'All priorities': 'ทุกระดับความสำคัญ',
   New: 'ใหม่', Reviewing: 'กำลังตรวจสอบ', 'In progress': 'กำลังดำเนินการ', 'Need more information': 'ต้องการข้อมูลเพิ่ม',
   Rejected: 'ปฏิเสธ', Low: 'ต่ำ', Medium: 'กลาง', High: 'สูง', Critical: 'ฉุกเฉิน',

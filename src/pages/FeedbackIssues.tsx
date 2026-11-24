@@ -1,13 +1,14 @@
 // Back office: Feedback & Issue Management. One workspace for feedback from the customer app (LINE members) and
 // from staff (the Feedback button). Data is real (Supabase); every action is a server-side function that checks
 // the caller is support staff, enforces the status workflow and writes the audit trail (feedback_events).
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Archive, Bell, Download, GitBranch, Link2, MessageSquarePlus, RefreshCw, Send, StickyNote } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Archive, Bell, Download, GitBranch, Link2, MessageSquarePlus, RefreshCw, Send, StickyNote, X } from 'lucide-react';
 import {
-  DEV_LINK_KINDS, DevLinkKind, FEEDBACK_CATEGORIES, FEEDBACK_PRIORITIES, FEEDBACK_STATUSES, FeedbackCategory, FeedbackIssue, FeedbackNotification,
-  FeedbackPriority, FeedbackStatus, IssueThread, NEXT_STATUSES, OPEN_STATUSES, StaffMember, FEEDBACK_SLA_DAYS, closingNote, isOverdue,
+  DEV_LINK_KINDS, DevLinkKind, FEEDBACK_CATEGORIES, FEEDBACK_PRIORITIES, FeedbackCategory, FeedbackIssue, FeedbackNotification,
+  FeedbackPriority, FeedbackStatus, IssueThread, NEXT_STATUSES, StaffMember, FEEDBACK_SLA_DAYS, closingNote, isOverdue,
   addDevLink, archiveIssue, getThread, issuesToCsv, listFeedback, listNotifications, listStaff, markNotificationsRead, staffComment, staffUpdate, statusMeta,
 } from '../lib/feedbackApi';
+import { applyFilter, cardCounts, FEEDBACK_CARDS, FeedbackFilter, NO_FILTER, pressCard, STATUS_OPTIONS, StatusFilter, statusLabel } from '../lib/feedbackFilters';
 import { toast, useLang } from '../domain/store';
 import { Badge, Banner, Button, Card, DataTable, Drawer, Empty, Field, Input, KV, Kpi, PageHead, Popover, Select, Tabs, Textarea, Tx, useConfirm } from '../ui/kit';
 import { AttachmentList, AttachmentPicker, CategoryBadge, PriorityBadge, StatusBadge } from '../ui/feedbackParts';
@@ -27,11 +28,15 @@ export default function FeedbackIssues() {
   const [notes, setNotes] = useState<FeedbackNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [f, setF] = useState({ status: 'open', priority: '', category: '', assignee: '', source: '' });
+  const [f, setF] = useState<FeedbackFilter>({ ...NO_FILTER, status: 'open' });
+  const listRef = useRef<HTMLDivElement>(null);
+  const ready = !loading && !(err && !rows.length);
+  const seq = useRef(0);
   const [openId, setOpenId] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    listFeedback().then((r) => { setRows(r); setErr(null); }).catch((e) => setErr((e as Error).message)).finally(() => setLoading(false));
+    const id = ++seq.current;                          // an older answer that arrives late never replaces a newer one
+    listFeedback().then((r) => { if (id === seq.current) { setRows(r); setErr(null); } }).catch((e) => { if (id === seq.current) setErr((e as Error).message); }).finally(() => setLoading(false));
     listNotifications(40).then(setNotes).catch(() => undefined);
   }, []);
   useEffect(() => {
@@ -42,14 +47,13 @@ export default function FeedbackIssues() {
   }, [refresh]);
 
   const staffName = useCallback((id: string | null) => (id ? staff.find((s) => s.id === id)?.display_name || staff.find((s) => s.id === id)?.email || '—' : ''), [staff]);
-  const filtered = useMemo(() => rows.filter((r) =>
-    (f.status === '' || (f.status === 'open' ? OPEN_STATUSES.includes(r.status) : f.status === 'overdue' ? isOverdue(r) : f.status === 'unresolved' ? r.status !== 'closed' && r.status !== 'rejected' : r.status === f.status))
-    && (!f.priority || r.priority === f.priority) && (!f.category || r.category === f.category)
-    && (!f.source || (f.source === 'mine' ? !!myId && r.reporter_id === myId : r.source === f.source))
-    && (!f.assignee || (f.assignee === 'none' ? !r.assigned_to : f.assignee === 'me' ? !!myId && r.assigned_to === myId : r.assigned_to === f.assignee))), [rows, f, myId]);
-  const overdue = rows.filter((r) => isOverdue(r)).length;
-
-  const count = (s: FeedbackStatus) => rows.filter((r) => r.status === s).length;
+  const filtered = useMemo(() => applyFilter(rows, f, myId), [rows, f, myId]);
+  const counts = useMemo(() => cardCounts(rows, f, myId), [rows, f, myId]);
+  const others = !!(f.priority || f.category || f.assignee || f.source || f.q.trim());
+  const pickCard = (s: StatusFilter) => {
+    setF((x) => pressCard(x, s));
+    if (window.matchMedia('(max-width: 900px)').matches) setTimeout(() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);   // the cards fill a phone: show what was filtered
+  };
   const unread = notes.filter((n) => !n.read_at);
   const exportCsv = () => {
     const blob = new Blob([issuesToCsv(filtered, staffName)], { type: 'text/csv;charset=utf-8' });
@@ -86,25 +90,24 @@ export default function FeedbackIssues() {
           <Button onClick={refresh}><RefreshCw size={14} />{' '}<Tx>Refresh</Tx></Button>
         </>} />
       {err && <div className="mb16"><Banner tone="bad"><Tx>Could not load issues:</Tx>{' '}{err}</Banner></div>}
-      <div className="grid g4 mb16">
-        <Kpi label="Total feedback" value={rows.length} />
-        <Kpi label="New (submitted)" value={count('submitted')} tone={count('submitted') ? 'bad' : 'good'} />
-        <Kpi label="Under review" value={count('under_review')} />
-        <Kpi label="In progress" value={count('in_progress') + count('accepted')} />
-        <Kpi label="Waiting for information" value={count('waiting_info')} />
-        <Kpi label="Resolved / closed" value={count('resolved') + count('closed')} tone="good" />
-        <Kpi label="Critical (open)" value={rows.filter((r) => r.priority === 'critical' && OPEN_STATUSES.includes(r.status)).length} tone={rows.some((r) => r.priority === 'critical' && OPEN_STATUSES.includes(r.status)) ? 'bad' : 'good'} />
-        <Kpi label="Overdue (open)" value={overdue} tone={overdue ? 'bad' : 'good'} sub={t(lang, 'Critical {c} d · High {h} d · Medium {m} d · Low {l} d', { c: FEEDBACK_SLA_DAYS.critical, h: FEEDBACK_SLA_DAYS.high, m: FEEDBACK_SLA_DAYS.medium, l: FEEDBACK_SLA_DAYS.low })} />
+      <div className="grid g4 mb16" style={{ gridAutoRows: '1fr' }} role="group" aria-label={t(lang, 'Filter by summary card')} data-testid="feedback-cards">
+        {FEEDBACK_CARDS.map((c, i) => (
+          <Kpi key={c.label} label={c.label} value={ready ? counts[i] : '–'} tone={ready ? c.tone(counts[i]) : undefined} active={f.status === c.status} onClick={() => pickCard(c.status)}
+            sub={c.sla ? t(lang, 'Critical {c} d · High {h} d · Medium {m} d · Low {l} d', { c: FEEDBACK_SLA_DAYS.critical, h: FEEDBACK_SLA_DAYS.high, m: FEEDBACK_SLA_DAYS.medium, l: FEEDBACK_SLA_DAYS.low }) : undefined} />
+        ))}
+      </div>
+      <div ref={listRef} style={{ scrollMarginTop: 70 }}>
+      <div className="row between wrap mb8" style={{ gap: 8, minHeight: 30 }} role="status" data-testid="feedback-showing">
+        <span>{t(lang, 'Showing')}: <b>{t(lang, f.status === '' ? 'All feedback' : statusLabel(f.status))}</b>{ready && <> · {t(lang, '{n} of {m}', { n: filtered.length, m: counts[0] })}</>}{others && <span className="muted"> · {t(lang, 'with the other filters below')}</span>}</span>
+        {(f.status !== '' || others) && <Button size="sm" onClick={() => setF(NO_FILTER)}><X size={13} />{' '}<Tx>Show all feedback</Tx></Button>}
       </div>
       <Card flush>
         <DataTable
-          rows={filtered} rowKey={(r) => r.id} onRow={(r) => open(r.id)} pageSize={15}
-          search={(r) => `${r.id} ${r.title} ${r.description} ${r.submitter_label} ${r.page_name} ${r.module_name ?? ''}`}
+          rows={filtered} rowKey={(r) => r.id} onRow={(r) => open(r.id)} pageSize={15} query={f.q} onQuery={(q) => setF((x) => ({ ...x, q }))} resetKey={JSON.stringify(f)}
           toolbar={
             <div className="row gap-6 wrap">
-              <Select sm style={{ width: 'auto' }} value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} aria-label={t(lang, 'Status')}>
-                <option value="open">{t(lang, 'Open issues')}</option><option value="unresolved">{t(lang, 'Not closed yet')}</option><option value="overdue">{t(lang, 'Overdue')}</option><option value="">{t(lang, 'All statuses')}</option>
-                {FEEDBACK_STATUSES.map((s) => <option key={s.v} value={s.v}>{t(lang, s.label)}</option>)}
+              <Select sm style={{ width: 'auto' }} value={f.status} onChange={(e) => setF({ ...f, status: e.target.value as StatusFilter })} aria-label={t(lang, 'Status')}>
+                {STATUS_OPTIONS.map((s) => <option key={s.v} value={s.v}>{t(lang, s.label)}</option>)}
               </Select>
               <Select sm style={{ width: 'auto' }} value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })} aria-label={t(lang, 'Priority')}>
                 <option value="">{t(lang, 'All priorities')}</option>{FEEDBACK_PRIORITIES.map((p) => <option key={p.v} value={p.v}>{t(lang, p.label)}</option>)}
@@ -121,7 +124,7 @@ export default function FeedbackIssues() {
               </Select>
             </div>
           }
-          empty={<Empty icon={<MessageSquarePlus size={22} />} title={loading ? 'Loading…' : 'No issues match'} hint="Feedback from the customer app and the Feedback button shows up here." />}
+          empty={<Empty icon={<MessageSquarePlus size={22} />} title={loading ? 'Loading…' : err && !rows.length ? 'Could not load issues:' : 'No issues match'} hint={rows.length ? 'Change the filters, or show all feedback.' : 'Feedback from the customer app and the Feedback button shows up here.'} />}
           cols={[
             { key: 'id', header: 'Issue ID', render: (r) => <span className="mono">{r.id}</span>, sort: (r) => r.created_at },
             { key: 't', header: 'Subject', render: (r) => <div><b>{r.title}</b><div className="sub">{r.page_name}{r.module_name ? ` · ${r.module_name}` : ''}</div></div> },
@@ -136,6 +139,7 @@ export default function FeedbackIssues() {
           initialSort={{ key: 'u', dir: 'desc' }}
         />
       </Card>
+      </div>
       {openId && <IssueDrawer issueId={openId} issue={rows.find((r) => r.id === openId)} staff={staff} staffName={staffName} onClose={() => setOpenId(null)} onChanged={refresh} />}
     </>
   );

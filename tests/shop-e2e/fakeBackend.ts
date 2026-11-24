@@ -88,6 +88,8 @@ export class FakeShop {
   /** the stored picture paths of each SKU (shop_sku_content.image_paths) */
   shopPaths = new Map<string, string[]>();
   /** true = the staff list shows only stored pictures (not the catalogue's sample ones) */
+  /** the files of the bucket shop-products: path -> when; and the SKUs whose folder was listed */
+  stored = new Map<string, string>(); listed: string[] = [];
   shopPathsOnly = false;
   /** the shop's payment accounts (staff screen) */
   paymentAccounts: Record<string, unknown>[] = [];
@@ -445,6 +447,16 @@ export class FakeShop {
       if (p.startsWith('/storage/v1/object/sign/') && req.method() === 'POST') return json(route, { signedURL: `/object/sign/${p.slice('/storage/v1/object/sign/'.length)}?token=t` });   // staff open a slip
       if (p.startsWith('/storage/v1/object/sign/') && this.slipPicture) return route.fulfill({ status: 200, contentType: 'image/jpeg', headers: cors, body: this.slipPicture });
       if (p.startsWith('/storage/v1/object/sign/')) return route.fulfill({ status: 200, contentType: 'image/png', headers: cors, body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') });
+      if (p === '/storage/v1/object/list/shop-products') {          // what the bucket holds for one SKU, as storage.list answers
+        const sku = String((req.postDataJSON() as { prefix?: string })?.prefix ?? '').replace(/\/$/, '');
+        this.listed.push(sku);
+        return json(route, [...this.stored].filter(([k]) => k.startsWith(`${sku}/`)).map(([k, at]) => ({ name: k.slice(sku.length + 1), id: k, created_at: at, updated_at: at, last_accessed_at: at, metadata: {} })));
+      }
+      if (p.startsWith('/storage/v1/object/shop-products/') && req.method() === 'POST') {
+        const key = decodeURIComponent(p.slice('/storage/v1/object/shop-products/'.length));
+        if (this.stored.has(key)) return json(route, { statusCode: '409', error: 'Duplicate', message: 'The resource already exists' }, 400);      // upsert: false
+        this.stored.set(key, new Date().toISOString());
+      }
       if (p.startsWith('/storage/v1/')) {
         if (req.method() === 'POST' || req.method() === 'PUT') this.uploads.push({ path: p.replace('/storage/v1/object/', ''), type: req.headers()['content-type'] ?? null, size: req.postDataBuffer()?.length ?? 0, upsert: req.headers()['x-upsert'] ?? null });
         return json(route, { Key: 'payment-evidence/x', Id: 'x' });

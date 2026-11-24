@@ -489,3 +489,25 @@ details.acc > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
 .rv-h { margin: 0 0 6px; font-size: 13.5px; font-weight: 650; }
 .rv-list { margin: 8px 0 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .cmp td, .cmp th { vertical-align: top; } .cmp tr[data-differs="true"] td:nth-child(3) { background: var(--crit-soft); }
+
+/* summary cards that filter (Kpi with onClick) */
+.kpi-btn { font: inherit; color: inherit; text-align: left; width: 100%; cursor: pointer; transition: border-color .12s, box-shadow .12s, background .12s; }
+.kpi-btn:hover { border-color: var(--brand); background: color-mix(in srgb, var(--brand-soft) 45%, var(--surface)); }
+.kpi-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.kpi-btn.on { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); background: var(--brand-soft); }
+.kpi-btn.on .lbl { color: var(--brand-text); font-weight: 650; }
+
+/* product pictures with their X (shop/PicturePanel.tsx) */
+.pic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 14px 12px; }
+.pic-tile { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; font-size: 12px; }
+.pic-frame { position: relative; width: 104px; height: 104px; } .pic-frame > img, .pic-frame > .img-thumb { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); display: block; background: var(--surface-2); }
+.pic-frame.main > img { border: 2px solid var(--brand); } .pic-frame.dim > img { opacity: .55; filter: grayscale(.6); }
+.pic-x { position: absolute; top: -8px; right: -8px; width: 28px; height: 28px; padding: 0; border-radius: 50%; display: grid; place-items: center; cursor: pointer; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+.pic-x::after { content: ''; position: absolute; inset: -8px; }                     /* a finger needs more room than the drawing */
+.pic-x:hover:not(:disabled), .pic-x:focus-visible { background: var(--crit); border-color: var(--crit); color: #fff; outline-offset: 2px; } .pic-x:disabled { cursor: progress; }
+.pic-auto { position: fixed; left: calc(var(--sidebar-w) + 16px); bottom: 16px; z-index: 96; width: min(400px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; font-size: 13px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--shadow-lg); }
+.app.collapsed .pic-auto { left: calc(var(--sidebar-w-c) + 16px); }
+.pic-auto-h { display: flex; gap: 8px; align-items: center; } .pic-auto-h svg { flex: none; color: var(--brand); } .pic-auto-h.good svg { color: var(--good); } .pic-auto-h.bad { color: var(--crit-text); }
+.pic-auto-list { display: flex; flex-wrap: wrap; gap: 12px; max-height: 220px; overflow: auto; padding: 10px 10px 2px 2px; } .pic-auto .pic-frame { width: 72px; height: 72px; } .pic-sku { font-size: 11px; color: var(--text-2); }
+.spinner.sm { width: 16px; height: 16px; border-width: 2px; flex: none; }
+@media (max-width: 900px) { .pic-auto, .app.collapsed .pic-auto { left: 16px; right: 16px; width: auto; bottom: 128px; } }
