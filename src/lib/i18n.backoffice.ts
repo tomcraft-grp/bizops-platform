@@ -513,6 +513,8 @@ export const TH_BACKOFFICE: Record<string, string> = {
   'Partial production is supported — post several times until the order is complete. Costs use the BOM': 'รองรับการผลิตบางส่วน — บันทึกได้หลายครั้งจนกว่าใบสั่งจะเสร็จ ต้นทุนใช้ BOM',
   'snapshot v': 'สแนปช็อต v', 'taken when the order was created.': 'ที่บันทึกไว้ตอนสร้างใบสั่ง',
   // Products
+  'Active Products': 'สินค้าที่เปิดขาย', 'active and available for sale': 'เปิดใช้งานและพร้อมขาย', 'Active & on sale': 'เปิดใช้งานและเปิดขาย', '{n} of {m} products': '{n} จาก {m} รายการ',
+  'Filtered products': 'สินค้าตามตัวกรอง', 'Show all products': 'แสดงสินค้าทั้งหมด', 'Clear the search or choose another card.': 'ล้างคำค้นหา หรือเลือกการ์ดอื่น',
   'New product': 'สินค้าใหม่', 'Menu items (recipes)': 'เมนู (สูตร)', 'stock deducted by BOM': 'ตัดสต็อกตาม BOM', 'Raw & packaging': 'วัตถุดิบ & บรรจุภัณฑ์',
   'inventory-only items': 'สินค้าสำหรับคลังเท่านั้น', 'Inactive': 'ไม่ใช้งาน', 'hidden from POS': 'ซ่อนจาก POS', 'Avg cost': 'ต้นทุนเฉลี่ย',
   'recipe': 'สูตร', 'Product created': 'สร้างสินค้าแล้ว', 'SKU': 'SKU', 'Barcode': 'บาร์โค้ด', 'Unit': 'หน่วย', 'Selling price (฿, incl. VAT)': 'ราคาขาย (฿ รวม VAT)',
