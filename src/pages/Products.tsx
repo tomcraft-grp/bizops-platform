@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ImagePlus, Plus, Star, Trash2 } from 'lucide-react';
+import { Boxes, ChefHat, EyeOff, ImagePlus, Package, Plus, ShoppingBag, Star, Trash2, X } from 'lucide-react';
 import { useDB, useLang } from '../domain/store';
 import { saveProduct, setProductActive } from '../domain/master';
 import { newSkuDetails, pushSkuDetails, saveProductEdit, setSkuActive, syncAgeLabel, syncSkusIfStale, useSkuSync } from '../domain/skuSync';
@@ -8,6 +8,8 @@ import { rewardsAdmin } from '../rewards/api';
 import { DEMO_SEED } from '../domain/demo';
 import { PRODUCT_KIND_LABEL, CHANNEL_LIST } from '../domain/meta';
 import { globalAvgCost, lotsFor } from '../domain/inventory';
+import { sellable } from '../domain/orders';
+import { EMPTY_PRODUCT_FILTER, PRODUCT_CARDS, STATUS_LABEL, cardCounts, filterProducts, pressProductCard, selectedCard, type ProductCardId, type ProductFilter } from '../domain/productFilters';
 import { bomForProduct, rollup, versionAt } from '../domain/bom';
 import { priceHistory } from '../domain/purchasing';
 import { Badge, Button, Card, ChannelChip, Check, DataTable, Drawer, Empty, Field, Input, KV, Kpi, Modal, NumInput, PageHead, Select, Switch, Tabs, Textarea, useConfirm, useHas, useRun, Tx } from '../ui/kit';
@@ -35,16 +37,15 @@ export default function Products() {
   const canCreate = useHas('catalog:create');
   const canEdit = useHas('catalog:edit');
   const canCost = useHas('finance:cost');
-  const [kind, setKind] = useState<string>('');
-  const [status, setStatus] = useState<'' | 'active' | 'inactive' | 'unsynced'>('');
-  const [skuType, setSkuType] = useState<'' | SkuCategory>('');
+  const [f, setF] = useState<ProductFilter>(EMPTY_PRODUCT_FILTER);
+  const set = (patch: Partial<ProductFilter>) => setF((x) => ({ ...x, ...patch }));
+  const listRef = useRef<HTMLDivElement>(null);
   const [adding, setAdding] = useState(false);
   const sync = useSkuSync();
   const packs = usePackCodes();
   const cats = useCategories(!DEMO_SEED);
   const catsOn = cats.status === 'ready';
   const catById = useMemo(() => new Map(cats.items.map((c) => [c.id, c])), [cats.items]);
-  const [catF, setCatF] = useState('');
   const catLabel = (p: Product) => { const c = p.categoryId ? catById.get(p.categoryId) : undefined; return c ? categoryName(c, lang === 'en' ? 'en' : 'th') : p.category; };
   // Opening the page brings in what changed in the central registry (one small call when nothing did), unless that already happened within the last 5 minutes.
   useEffect(() => { if (canEdit && !DEMO_SEED) void syncSkusIfStale(); }, [canEdit]);
@@ -52,21 +53,36 @@ export default function Products() {
   const stock = useMemo(() => { const m: Record<ID, number> = {}; for (const k in db.balances) { const pid = k.split('|')[1]; m[pid] = (m[pid] || 0) + db.balances[k].qty; } return m; }, [db.balances]);
   // "Not synced yet": no registry code (the product exists only on this device), or its price and details are still waiting to be uploaded.
   const notSynced = (p: Product) => !isStandardSku(p.sku) || sync.waiting.includes(p.sku);
-  const rows = db.products.filter((p) => (!catF || (catF === '__none__' ? !p.categoryId : p.categoryId === catF || catById.get(p.categoryId ?? '')?.parent_id === catF)) && (!kind || p.kind === kind) && (!skuType || skuCategoryOf(p.kind) === skuType) && (!status || (status === 'unsynced' ? notSynced(p) : (status === 'active') === p.active)));
+  const inCategory = (p: Product, c: string) => (c === '__none__' ? !p.categoryId : p.categoryId === c || catById.get(p.categoryId ?? '')?.parent_id === c);
+  const text = (p: Product) => `${p.name} ${p.sku} ${p.legacySku ?? ''} ${p.barcode ?? ''} ${p.brand ?? ''} ${p.category} ${catLabel(p)} ${p.description ?? ''}`;
+  const rows = filterProducts(db.products, f, { notSynced, inCategory, text });
+  const counts = useMemo(() => cardCounts(db.products), [db.products]);
+  const card = selectedCard(f);
+  const key = JSON.stringify(f);
+  const pickCard = (id: ProductCardId) => {
+    setF((x) => pressProductCard(x, id));
+    if (window.matchMedia('(max-width: 900px)').matches) setTimeout(() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);   // the cards fill a phone: show what was filtered
+  };
   return (
     <>
       <PageHead title="Products" desc="One catalog for resale goods, manufactured goods, menu items (recipes), raw materials and packaging — with channel prices, images and cost history."
         actions={<>{canEdit && <SkuCodesButton />}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>}</>} />
       {canEdit && !DEMO_SEED && <SyncBanner sync={sync} />}
-      <div className="grid g4 mb16">
-        <Kpi label="Products" value={db.products.length} sub={<Tx vars={{ n: db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).length }}>{'{n} sellable'}</Tx>} />
-        <Kpi label="Menu items (recipes)" value={db.products.filter((p) => p.kind === 'menu').length} sub="stock deducted by BOM" />
-        <Kpi label="Raw & packaging" value={db.products.filter((p) => p.kind === 'material' || p.kind === 'packaging').length} sub="inventory-only items" />
-        <Kpi label="Inactive" value={db.products.filter((p) => !p.active).length} sub="hidden from POS" />
+      <div className="grid prod-cards mb16" role="group" aria-label={tl(lang, 'Filter by summary card')} data-testid="product-cards">
+        {PRODUCT_CARDS.map((c) => (
+          <Kpi key={c.id} label={c.label} icon={CARD_ICON[c.id]} value={counts[c.id]} active={card === c.id} onClick={() => pickCard(c.id)}
+            sub={c.id === 'all' ? <Tx vars={{ n: db.products.filter(sellable).length }}>{'{n} sellable'}</Tx> : c.sub} />
+        ))}
+      </div>
+      <div ref={listRef} style={{ scrollMarginTop: 70 }}>
+      <div className="row between wrap mb8" style={{ gap: 8, minHeight: 30 }} role="status" data-testid="products-showing">
+        <span>{tl(lang, 'Showing')}: <b>{tl(lang, !card ? 'Filtered products' : card === 'all' ? 'All products' : PRODUCT_CARDS.find((c) => c.id === card)!.label)}</b> · {tl(lang, '{n} of {m} products', { n: rows.length, m: db.products.length })}</span>
+        {key !== JSON.stringify(EMPTY_PRODUCT_FILTER) && <Button size="sm" onClick={() => setF(EMPTY_PRODUCT_FILTER)}><X size={13} />{' '}<Tx>Show all products</Tx></Button>}
       </div>
       <Card flush>
-        <DataTable rows={rows} rowKey={(p) => p.id} pageSize={14} onRow={(p) => setSp({ p: p.id })} search={(p) => `${p.name} ${p.sku} ${p.legacySku ?? ''} ${p.barcode ?? ''} ${p.brand ?? ''} ${p.category} ${catLabel(p)} ${p.description ?? ''}`}
-          toolbar={<><Select sm style={{ width: 'auto' }} value={skuType} onChange={(e) => setSkuType(e.target.value as typeof skuType)}><option value="">All SKU types</option>{SKU_CATEGORIES.map((c) => <option key={c} value={c}>{SKU_CATEGORY_LABEL[c]}</option>)}</Select><Select sm style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}><option value="">All types</option>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select><Select sm style={{ width: 'auto' }} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="unsynced">Not synced yet</option></Select>{catsOn && <Select sm style={{ width: 'auto' }} value={catF} onChange={(e) => setCatF(e.target.value)} aria-label={tl(lang, 'Category')}><option value="">{tl(lang, 'All categories')}</option>{cats.items.filter((c) => c.is_group || c.product_count > 0 || c.is_active).map((c) => <option key={c.id} value={c.id}>{c.is_group ? '▸ ' : c.parent_id ? '\u00a0\u00a0' : ''}{categoryName(c, lang === 'en' ? 'en' : 'th')}{c.is_active ? '' : ` (${tl(lang, 'inactive')})`}</option>)}<option value="__none__">{tl(lang, 'No category yet')}</option></Select>}</>}
+        <DataTable rows={rows} rowKey={(p) => p.id} pageSize={14} onRow={(p) => setSp({ p: p.id })} query={f.q} onQuery={(q) => set({ q })} resetKey={key}
+          empty={!db.products.length ? undefined : <Empty title="No products match" hint="Clear the search or choose another card." />}
+          toolbar={<><Select sm style={{ width: 'auto' }} value={f.skuType} onChange={(e) => set({ skuType: e.target.value as ProductFilter['skuType'] })} aria-label={tl(lang, 'SKU type')}><option value="">All SKU types</option>{SKU_CATEGORIES.map((c) => <option key={c} value={c}>{SKU_CATEGORY_LABEL[c]}</option>)}</Select><Select sm style={{ width: 'auto' }} value={f.kind} onChange={(e) => set({ kind: e.target.value as ProductFilter['kind'] })} aria-label={tl(lang, 'Type')}><option value="">All types</option>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}<option value="raw">Raw & packaging</option></Select><Select sm style={{ width: 'auto' }} value={f.status} onChange={(e) => set({ status: e.target.value as ProductFilter['status'] })} aria-label={tl(lang, 'Status')}><option value="">All statuses</option>{Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>{catsOn && <Select sm style={{ width: 'auto' }} value={f.category} onChange={(e) => set({ category: e.target.value })} aria-label={tl(lang, 'Category')}><option value="">{tl(lang, 'All categories')}</option>{cats.items.filter((c) => c.is_group || c.product_count > 0 || c.is_active).map((c) => <option key={c.id} value={c.id}>{c.is_group ? '▸ ' : c.parent_id ? '\u00a0\u00a0' : ''}{categoryName(c, lang === 'en' ? 'en' : 'th')}{c.is_active ? '' : ` (${tl(lang, 'inactive')})`}</option>)}<option value="__none__">{tl(lang, 'No category yet')}</option></Select>}</>}
           cols={[
             { key: 'n', header: 'Product', sort: (p) => p.name, render: (p) => <div className="row"><ProductEmoji p={p} size={36} /><div><b>{p.name}</b>{packs.has(p.sku) && <>{' '}<span title={tl(lang, 'Promotion pack')}><Badge tone="info">Pack</Badge></span></>}<div className="sub">{p.sku}{p.barcode ? ` · ${p.barcode}` : ''}</div></div></div> },
             { key: 'k', header: 'Type', hideSm: true, render: (p) => <Badge><Tx>{PRODUCT_KIND_LABEL[p.kind]}</Tx></Badge> },
@@ -77,11 +93,13 @@ export default function Products() {
             { key: 'a', header: 'Status', sort: (p) => (p.active ? 1 : 0), render: (p) => <ProductStatus p={p} /> },
           ]} />
       </Card>
+      </div>
       {adding && <NewProduct onClose={() => setAdding(false)} onCreated={(id) => { setAdding(false); setSp({ p: id }); }} />}
       {openId && <ProductDrawer id={openId} onClose={() => setSp({})} />}
     </>
   );
 }
+const CARD_ICON: Record<ProductCardId, ReactNode> = { all: <Package size={15} />, onsale: <ShoppingBag size={15} />, menu: <ChefHat size={15} />, raw: <Boxes size={15} />, inactive: <EyeOff size={15} /> };
 /** Products that are packs of the online shop's promotions (rewardsAdmin.packs). Failure-silent: without the list there is simply no badge. */
 function usePackCodes(): Set<string> {
   const [codes, setCodes] = useState<Set<string>>(() => new Set());
