@@ -90,7 +90,7 @@ test.describe('the slip check before ordering', () => {
   test('the amount and the day agree: checking, then green, nothing to tick, ONE order', async ({ page }) => {
     const errs = watch(page), out = outside(page); const fake = on(); await toSlip(page, fake, { total: 430, now: DAY });
     await expect(live(page)).toHaveAttribute('data-state', 'reading'); await expect(live(page)).toContainText(t('sv.reading'));
-    await expect(live(page)).toHaveAttribute('data-state', 'ok', DONE); await expect(live(page)).toContainText('฿430 ตรงกัน'); await expect(live(page).locator('[data-row="date"]')).toHaveAttribute('data-row-state', 'ok'); await expect(live(page).getByRole('checkbox')).toHaveCount(0);
+    await expect(live(page)).toHaveAttribute('data-state', 'ok', DONE); await expect(live(page)).toContainText(t('sv.amountOk', { a: '฿430' })); await expect(live(page).locator('[data-row="date"]')).toHaveAttribute('data-row-state', 'ok'); await expect(live(page).getByRole('checkbox')).toHaveCount(0);
     await page.screenshot({ path: 'test-results/shop/slip-live-ok.png' });
     await place(page).click(); await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click(); await expect(page.locator('.sp-order-detail')).toBeVisible();
     expect(fake.orders).toHaveLength(1); expect(fake.count('finance_store_reading')).toBe(0); expect(out).toEqual([]); expect(errs).toEqual([]);
@@ -98,10 +98,10 @@ test.describe('the slip check before ordering', () => {
 
   test('another amount: the order waits for the tick; the tick is for this slip and this total only; nothing read is sent', async ({ page }) => {
     const fake = on(); await toSlip(page, fake, { now: DAY });
-    await expect(live(page)).toHaveAttribute('data-state', 'differs', DONE); await expect(live(page)).toContainText('บนสลีป ฿430 ต้องโอน ฿370'); await live(page).scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/shop/slip-live-differs.png' });
+    await expect(live(page)).toHaveAttribute('data-state', 'differs', DONE); await expect(live(page)).toContainText(t('sv.amountDiff', { slip: '฿430', want: '฿370' })); await live(page).scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/shop/slip-live-differs.png' });
     await place(page).click(); await expect(page.locator('.sp-sheet')).toHaveCount(0); await expect(page.getByTestId('checkout-error')).toContainText(t('sv.must')); expect(fake.orders).toHaveLength(0);
     await live(page).getByRole('checkbox').check();
-    await page.getByRole('radio', { name: t('co.pickup') }).click(); await expect(live(page)).toContainText('ต้องโอน ฿320'); await expect(live(page).getByRole('checkbox')).not.toBeChecked();           // another total: asked again
+    await page.getByRole('radio', { name: t('co.pickup') }).click(); await expect(live(page)).toContainText(t('sv.amountDiff', { slip: '฿430', want: '฿320' })); await expect(live(page).getByRole('checkbox')).not.toBeChecked();           // another total: asked again
     await place(page).click(); await expect(page.locator('.sp-sheet')).toHaveCount(0);
     await live(page).getByRole('checkbox').check(); await place(page).click(); await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click(); await expect(page.locator('.sp-order-detail')).toBeVisible();
     expect(fake.orders).toHaveLength(1); expect(fake.orders[0].invoice.paid).toBe(0); const a = fake.calls.find((c) => c.fn === 'shop_place_order')!.args; expect(JSON.stringify(a)).not.toContain('430'); expect(fake.count('finance_store_reading')).toBe(0);

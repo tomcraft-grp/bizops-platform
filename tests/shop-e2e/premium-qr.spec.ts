@@ -165,13 +165,13 @@ test.describe('what the customer is told while the slip is checked', () => {
     const n = fake.count('finance_my_slip_check'); await page.waitForTimeout(5000); expect(fake.count('finance_my_slip_check')).toBe(n);
   });
   for (const c of [
-    { n: 'another amount', a: { state: 'attention', code: 'AMOUNT', slip_amount: 300, expected_amount: 320 }, text: 'ยอดบนสลีป ฿300 ไม่ตรงกับยอดที่ต้องชำระ ฿320' },
+    { n: 'another amount', a: { state: 'attention', code: 'AMOUNT', slip_amount: 300, expected_amount: 320 }, text: 'ยอดเงินในหลักฐาน ฿300 ไม่ตรงกับยอดที่ต้องชำระ ฿320' },
     { n: 'an earlier day', a: { state: 'attention', code: 'DATE_PAST', slip_date: '2026-11-20', expected_date: '2026-11-23' }, text: 'เป็นวันก่อนหน้าคำสั่งซื้อนี้' },
     { n: 'a future day', a: { state: 'attention', code: 'DATE_FUTURE', slip_date: '2026-12-25', expected_date: '2026-11-23' }, text: 'เป็นวันในอนาคต' },
     { n: 'a used slip', a: { state: 'attention', code: 'DUPLICATE' }, text: 'เคยใช้กับการชำระเงินรายการอื่นแล้ว' },
-    { n: 'not a slip', a: { state: 'attention', code: 'NOT_A_SLIP' }, text: 'ไม่ใช่สลีปการโอนเงิน' },
-    { n: 'unreadable', a: { state: 'attention', code: 'UNREADABLE' }, text: 'อ่านยอดเงินหรือวันที่บนสลีปไม่ชัดเจน' },
-    { n: 'a code this build does not know', a: { state: 'attention', code: 'NEW_THING' }, text: 'ข้อมูลบนสลีปไม่ตรงกับคำสั่งซื้อ' },
+    { n: 'not a slip', a: { state: 'attention', code: 'NOT_A_SLIP' }, text: 'ไม่ใช่หลักฐานการโอนเงิน' },
+    { n: 'unreadable', a: { state: 'attention', code: 'UNREADABLE' }, text: 'ไม่สามารถอ่านยอดเงินหรือวันที่ในหลักฐานได้อย่างชัดเจน' },
+    { n: 'a code this build does not know', a: { state: 'attention', code: 'NEW_THING' }, text: 'ข้อมูลในหลักฐานไม่ตรงกับคำสั่งซื้อ' },
   ]) {
     test(`${c.n}: said plainly, another slip can be attached for the SAME order, nothing is marked paid`, async ({ page }) => {
       const fake = new FakeShop(); fake.slipCheck = [c.a]; await openPending(page, fake);

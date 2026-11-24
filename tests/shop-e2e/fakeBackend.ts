@@ -85,6 +85,10 @@ export class FakeShop {
   merchantName: string | null = 'TEST SHOP';
   /** the picture behind every signed slip link (a real picture for the slip reader) */
   slipPicture: Buffer | null = null;
+  /** the stored picture paths of each SKU (shop_sku_content.image_paths) */
+  shopPaths = new Map<string, string[]>();
+  /** true = the staff list shows only stored pictures (not the catalogue's sample ones) */
+  shopPathsOnly = false;
   /** the shop's payment accounts (staff screen) */
   paymentAccounts: Record<string, unknown>[] = [];
   /** every file the browser put into storage: bucket/path, its type and size */
@@ -279,16 +283,20 @@ export class FakeShop {
       case 'shop_admin_products': {
         this.staff(); const q = String(a.p_search ?? '').toLowerCase();
         const rows = this.items.filter((i) => !q || [i.sku_code, i.name, i.brand ?? ''].some((f) => f.toLowerCase().includes(q))).map((i) => ({
-          sku_code: i.sku_code, name: i.name, brand: i.brand, status: 'active', category: i.category, price: i.price, description_th: i.description_th, description_en: i.description_en, image_paths: [], image_urls: i.image_urls,
+          sku_code: i.sku_code, name: i.name, brand: i.brand, status: 'active', category: i.category, price: i.price, description_th: i.description_th, description_en: i.description_en, image_paths: this.shopPaths.get(i.sku_code) ?? [], image_urls: this.shopPaths.has(i.sku_code) ? i.image_urls : this.shopPathsOnly ? [] : i.image_urls,
           specs: i.specs, family: i.family, badge: i.badge, featured: i.featured, visible: !this.hidden.has(i.sku_code), available: i.available, max_qty: i.max_qty, sort_order: 100,
           on_sale: !this.hidden.has(i.sku_code), why_hidden: this.hidden.has(i.sku_code) ? 'hidden_by_staff' : null }));
         const f = String(a.p_filter ?? 'all'); const xs = rows.filter((r) => (f === 'visible' ? r.on_sale : f === 'hidden' ? !r.on_sale : f === 'no_image' ? r.on_sale && !r.image_urls.length : true));
-        return { total: xs.length, items: xs.slice(0, Number(a.p_limit ?? 40)) };
+        return { total: xs.length, items: xs.slice(Number(a.p_offset ?? 0), Number(a.p_offset ?? 0) + Math.min(Number(a.p_limit ?? 40), 100)) };
       }
       case 'shop_admin_save_content': {
         this.staff(); const it = this.item(String(a.p_sku)); const p = a.p_patch as Record<string, unknown>;
         if (!it) this.err('Unknown product');
         for (const k of ['description_th', 'description_en', 'family', 'badge', 'featured', 'available', 'specs'] as const) if (k in p) (it as unknown as Record<string, unknown>)[k] = p[k] === '' ? null : p[k];
+        if ('image_paths' in p) {       // like shop_admin_save_content: only this SKU's own folder, at most six
+          const imgs = p.image_paths as string[]; if (imgs.length > 6) this.err('At most 6 pictures'); if (imgs.some((x) => !new RegExp(`^${it.sku_code}/[A-Za-z0-9._-]{1,80}[.](webp|jpg|jpeg|png)$`).test(x))) this.err('Invalid picture');
+          this.shopPaths.set(it.sku_code, imgs); it.image_urls = imgs.map((x) => `${IMG}/${x}`);
+        }
         if ('max_qty' in p) it.max_qty = p.max_qty === '' ? null : Number(p.max_qty);
         if ('visible' in p) { if (p.visible) this.hidden.delete(it.sku_code); else this.hidden.add(it.sku_code); }
         return null;

@@ -903,6 +903,13 @@ export const TH_BACKOFFICE: Record<string, string> = {
   'Payment Rejected': 'ปฏิเสธการชำระ', 'More Evidence Requested': 'ขอหลักฐานเพิ่ม', 'More evidence requested': 'ขอหลักฐานเพิ่ม',
   // slip review dashboard (finance/SlipReview.tsx, RecordPayment.tsx, reviewUi.ts)
   'Slips to check': 'สลิปที่ต้องตรวจ',
+  'Pictures in the online shop': 'รูปภาพที่แสดงในหน้าร้านออนไลน์', 'This SKU is not in the online shop, so customers do not see its pictures.': 'รหัสสินค้านี้ไม่อยู่ในร้านออนไลน์ ลูกค้าจึงไม่เห็นรูปภาพ',
+  'Customers do not see this product now (it is inactive, has no price or is hidden). The pictures are kept and appear when it is shown.': 'ขณะนี้ลูกค้ายังไม่เห็นสินค้านี้ (ปิดใช้งาน ไม่มีราคา หรือถูกซ่อน) ระบบเก็บรูปภาพไว้และจะแสดงเมื่อเปิดขาย',
+  'No picture in the online shop yet: customers see a grey box.': 'ยังไม่มีรูปภาพในร้านออนไลน์ ลูกค้าจะเห็นเป็นกรอบสีเทา', 'Remove from the shop': 'นำออกจากหน้าร้าน',
+  '{n} products have pictures only in this browser. Customers do not see them yet.': 'มีสินค้า {n} รายการที่รูปภาพอยู่ในเบราว์เซอร์นี้เท่านั้น ลูกค้ายังไม่เห็นรูปภาพ', 'Send them to the online shop': 'ส่งรูปภาพขึ้นหน้าร้าน', 'Sent {d} of {t}': 'ส่งแล้ว {d} จาก {t} รายการ',
+  '{n} products now have their pictures in the online shop': 'ส่งรูปภาพขึ้นหน้าร้านแล้ว {n} รายการ', 'no picture could be read': 'ไม่สามารถอ่านรูปภาพได้', '{n} pictures are now in the online shop': 'เพิ่มรูปภาพในหน้าร้านแล้ว {n} รูป',
+  'The online shop keeps at most {n} pictures for a product: the rest stay in this browser': 'หน้าร้านแสดงได้ไม่เกิน {n} รูปต่อสินค้า รูปที่เหลือเก็บไว้ในเบราว์เซอร์นี้', 'Saved in this browser only. The online shop did not take the picture: {e}': 'บันทึกไว้ในเบราว์เซอร์นี้เท่านั้น ไม่สามารถส่งรูปภาพขึ้นหน้าร้านได้: {e}',
+  'This product has no finished-goods SKU code, so it is not in the online shop: pictures stay in this browser.': 'สินค้านี้ไม่มีรหัสสินค้าสำเร็จรูป (FG) จึงไม่อยู่ในร้านออนไลน์ รูปภาพจะเก็บไว้ในเบราว์เซอร์นี้', 'Pictures in this browser (POS and back office)': 'รูปภาพในเบราว์เซอร์นี้ (จุดขายและหลังบ้าน)',
   'Slip reader (no AI)': 'ตัวอ่านสลิปของร้าน (ไม่ใช้ AI)', 'Reads slips in this browser. The picture is not sent to anyone. The result is a hint: check the bank record before you confirm.': 'อ่านสลิปในเบราว์เซอร์นี้ ไม่ส่งรูปให้ใคร ผลเป็นเพียงตัวช่วย ต้องเทียบกับบัญชีธนาคารก่อนยืนยัน',
   'Use the shop’s own slip reader': 'เปิดใช้ตัวอ่านสลิปของร้าน',
   'Check the slip for the customer before they order': 'ตรวจสลิปให้ลูกค้าก่อนสั่งซื้อ', 'On their own phone: shows whether the amount and the date agree. If not, they must confirm before ordering.': 'ตรวจในมือถือลูกค้า แสดงว่ายอดและวันที่ตรงไหม ถ้าไม่ตรง ลูกค้าต้องติ๊กยืนยันก่อนสั่งซื้อ',
