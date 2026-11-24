@@ -253,6 +253,8 @@ export interface MediaFile {
   name: string; mime: string; size: number; checksum: string; status: 'scanning' | 'available' | 'quarantined'; private: boolean;
   linkedType?: string; linkedId?: ID; uploadedBy: ID; createdAt: string; width?: number; height?: number;
   variants: { name: string; width: number; height: number; size: number }[]; dataUrl?: string; scanNote?: string; isMain?: boolean; sort?: number;
+  /** staff pressed X before it was sent: never send this picture to the online shop by itself */
+  shopHidden?: boolean;
 }
 export interface MediaAccess { id: ID; mediaId: ID; ts: string; userId: ID; action: 'view' | 'download' | 'signed_url'; }
 

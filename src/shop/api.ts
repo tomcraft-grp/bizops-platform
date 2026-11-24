@@ -154,15 +154,17 @@ export async function prepareImage(file: File, max = 1200): Promise<Blob> {
     return blob;
   } finally { bmp.close(); }
 }
-async function uploadPublic(folder: string, file: File): Promise<string> {
+/** `name`: a name made from the content, so sending the same picture again finds it there instead of storing it twice. */
+async function uploadPublic(folder: string, file: File, name?: string): Promise<string> {
   const blob = await prepareImage(file);
   const type = blob.type === 'image/png' || blob.type === 'image/jpeg' ? blob.type : 'image/webp';      // a browser that cannot make WebP (older Safari) answers with a PNG
-  const path = `${folder}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.${type === 'image/png' ? 'png' : type === 'image/jpeg' ? 'jpg' : 'webp'}`;
+  const path = `${folder}/${name ?? Date.now().toString(36) + Math.random().toString(36).slice(2, 6)}.${type === 'image/png' ? 'png' : type === 'image/jpeg' ? 'jpg' : 'webp'}`;
   const { error } = await supabase.storage.from('shop-products').upload(path, blob, { contentType: type, upsert: false, cacheControl: '31536000' });
-  if (error) throw new Error(error.message);
+  if (error && !(name && (String((error as { statusCode?: string }).statusCode) === '409' || /already exists/i.test(error.message)))) throw new Error(error.message);
   return path;
 }
 
+export interface StoredImage { path: string; at: string; url: string }
 export const shopAdmin = {
   orders: (p: { status?: string; search?: string; limit?: number; offset?: number }) =>
     rpc<AdminOrdersPage>('shop_admin_orders', { p_status: p.status || null, p_search: p.search || null, p_limit: p.limit ?? 30, p_offset: p.offset ?? 0 }),
@@ -176,6 +178,13 @@ export const shopAdmin = {
   products: (p: { search?: string; filter?: string; limit?: number; offset?: number }) =>
     rpc<{ total: number; items: AdminProduct[] }>('shop_admin_products', { p_search: p.search || null, p_filter: p.filter ?? 'all', p_limit: p.limit ?? 40, p_offset: p.offset ?? 0 }),
   saveContent: (sku: string, patch: ContentPatch) => rpc<void>('shop_admin_save_content', { p_sku: sku, p_patch: patch }),
-  uploadProductImage: (sku: string, file: File) => uploadPublic(sku, file),
+  uploadProductImage: (sku: string, file: File, name?: string) => uploadPublic(sku, file, name),
+  /** Every picture stored for a SKU, whether customers see it or not. */
+  storedImages: async (sku: string): Promise<StoredImage[]> => {
+    const b = supabase.storage.from('shop-products');
+    const { data, error } = await b.list(sku, { limit: 100, sortBy: { column: 'created_at', order: 'desc' } });
+    if (error) throw new Error(error.message);
+    return (data ?? []).filter((x) => x.id && /\.(webp|jpe?g|png)$/i.test(x.name)).map((x) => ({ path: `${sku}/${x.name}`, at: x.created_at ?? '', url: b.getPublicUrl(`${sku}/${x.name}`).data.publicUrl }));
+  },
   uploadCategoryImage: (file: File) => uploadPublic('categories', file),
 };

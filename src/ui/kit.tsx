@@ -65,18 +65,22 @@ export function Card({ title, sub, actions, children, className, flush, footer }
     </section>
   );
 }
-export function Kpi({ label, value, sub, icon, delta, tone }: { label: ReactNode; value: ReactNode; sub?: ReactNode; icon?: ReactNode; delta?: number | null; tone?: 'good' | 'bad' }) {
+/** With `onClick` the card is a button (a filter): `active` = its filter is on. */
+export function Kpi({ label, value, sub, icon, delta, tone, onClick, active }: { label: ReactNode; value: ReactNode; sub?: ReactNode; icon?: ReactNode; delta?: number | null; tone?: 'good' | 'bad'; onClick?: () => void; active?: boolean }) {
   const lang = useLang();
-  return (
-    <div className="card kpi">
+  const body = (
+    <>
       <div className="lbl">{icon && <span className="kpi-ico">{icon}</span>}{tr(lang, label)}</div>
       <div className={cx('val', tone)}>{value}</div>
       <div className="sub">
         {delta != null && isFinite(delta) && <span className={cx('delta', delta >= 0 ? 'up' : 'down')}>{delta >= 0 ? <ArrowUp size={12} style={{ verticalAlign: -1 }} /> : <ArrowDown size={12} style={{ verticalAlign: -1 }} />}{Math.abs(delta * 100).toFixed(1)}%</span>}
         {tr(lang, sub)}
       </div>
-    </div>
+    </>
   );
+  return onClick
+    ? <button type="button" className={cx('card kpi kpi-btn', active && 'on')} aria-pressed={!!active} onClick={onClick}>{body}</button>
+    : <div className="card kpi">{body}</div>;
 }
 export function PageHead({ title, desc, actions, crumb }: { title: ReactNode; desc?: ReactNode; actions?: ReactNode; crumb?: string }) {
   const lang = useLang();
@@ -281,30 +285,33 @@ export function Popover({ trigger, children, align = 'right', width }: { trigger
 
 // ---------- data table
 export interface Col<T> { key: string; header: ReactNode; render: (r: T) => ReactNode; num?: boolean; right?: boolean; sort?: (r: T) => string | number; width?: number | string; hideSm?: boolean }
-export function DataTable<T>({ rows, cols, rowKey, onRow, pageSize = 12, search, empty, toolbar, initialSort, compact, footerRow, max }: {
+export function DataTable<T>({ rows, cols, rowKey, onRow, pageSize = 12, search, empty, toolbar, initialSort, compact, footerRow, max, query, onQuery, resetKey }: {
   rows: T[]; cols: Col<T>[]; rowKey: (r: T) => string; onRow?: (r: T) => void; pageSize?: number; search?: (r: T) => string; empty?: ReactNode; toolbar?: ReactNode;
   initialSort?: { key: string; dir: 'asc' | 'desc' }; compact?: boolean; footerRow?: ReactNode; max?: boolean;
+  /** the page owns the search text (it filters `rows` itself): pass both; `resetKey` changing goes back to the first page */
+  query?: string; onQuery?: (q: string) => void; resetKey?: string;
 }) {
-  const [q, setQ] = useState('');
+  const [own, setOwn] = useState('');
+  const q = query ?? own, setQ = onQuery ?? setOwn;
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState(initialSort ?? null);
   const lang = useLang();
   const filtered = useMemo(() => {
     let r = rows;
-    if (q && search) { const s = q.toLowerCase(); r = r.filter((x) => search(x).toLowerCase().includes(s)); }
+    if (q && search && query === undefined) { const s = q.toLowerCase(); r = r.filter((x) => search(x).toLowerCase().includes(s)); }
     if (sort) {
       const c = cols.find((x) => x.key === sort.key);
       if (c?.sort) { const f = c.sort; r = [...r].sort((a, b) => { const x = f(a), y = f(b); return (x < y ? -1 : x > y ? 1 : 0) * (sort.dir === 'asc' ? 1 : -1); }); }
     }
     return r;
-  }, [rows, q, sort, cols, search]);
-  useEffect(() => setPage(0), [q, rows.length]);
+  }, [rows, q, query, sort, cols, search]);
+  useEffect(() => setPage(0), [q, resetKey === undefined ? rows.length : resetKey]);
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const cur = Math.min(page, pages - 1);
   const view = filtered.slice(cur * pageSize, cur * pageSize + pageSize);
   return (
     <div>
-      {(search || toolbar) && <div className="row wrap" style={{ padding: '12px 14px' }}>{search && <div style={{ width: 260, maxWidth: '100%' }}><SearchBox value={q} onChange={setQ} /></div>}<div className="grow" />{toolbar}</div>}
+      {(search || onQuery || toolbar) && <div className="row wrap" style={{ padding: '12px 14px' }}>{(search || onQuery) && <div style={{ width: 260, maxWidth: '100%' }}><SearchBox value={q} onChange={setQ} /></div>}<div className="grow" />{toolbar}</div>}
       <div className={cx('table-wrap', max && 'max')} role="region" aria-label={t(lang, 'Scrollable table')} tabIndex={0}>
         <table className={cx('t', compact && 'compact')}>
           <thead><tr>{cols.map((c) => (

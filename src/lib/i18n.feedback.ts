@@ -50,6 +50,8 @@ export const TH_FEEDBACK: Record<string, string> = {
   'Feedback from customers (LINE app) and staff, managed as trackable issues: triage, assign, reply, resolve.':
     'ความคิดเห็นจากลูกค้า (แอป LINE) และพนักงาน จัดการเป็นเรื่องที่ติดตามได้: คัดกรอง มอบหมาย ตอบกลับ แก้ไข',
   'Notifications': 'การแจ้งเตือน', 'Nothing yet.': 'ยังไม่มี', 'Export to Excel (CSV)': 'ส่งออก Excel (CSV)', 'Could not load issues:': 'โหลดรายการไม่ได้:',
+  'Filter by summary card': 'กรองตามการ์ดสรุป', 'Showing': 'กำลังแสดง', 'All feedback': 'ความคิดเห็นทั้งหมด', '{n} of {m}': '{n} จาก {m} เรื่อง', 'with the other filters below': 'ร่วมกับตัวกรองด้านล่าง',
+  'Show all feedback': 'แสดงทั้งหมด', 'Accepted or in progress': 'รับเรื่องแล้วหรือกำลังดำเนินการ', 'Change the filters, or show all feedback.': 'กรุณาเปลี่ยนตัวกรอง หรือกดแสดงทั้งหมด',
   'Total feedback': 'ทั้งหมด', 'New (submitted)': 'ใหม่ (ยังไม่ตรวจ)', 'Resolved / closed': 'แก้ไขแล้ว / ปิดแล้ว', 'Critical (open)': 'วิกฤต (ยังเปิดอยู่)', 'From customers': 'จากลูกค้า',
   'Open issues': 'เรื่องที่ยังเปิดอยู่', 'All statuses': 'ทุกสถานะ', 'Priority': 'ความสำคัญ', 'All priorities': 'ทุกระดับความสำคัญ', 'Category': 'ประเภท', 'All categories': 'ทุกประเภท',
   'Assigned to': 'ผู้รับผิดชอบ', 'Anyone': 'ทุกคน', 'Unassigned': 'ยังไม่มอบหมาย', 'Source': 'แหล่งที่มา', 'Customers and staff': 'ลูกค้าและพนักงาน', 'Customers only': 'เฉพาะลูกค้า', 'Staff only': 'เฉพาะพนักงาน',
