@@ -1,7 +1,7 @@
 // A table of expense claims loaded from the central database (RLS decides which ones this user may see).
 import { useEffect, useState, type ReactNode } from 'react';
 import { useLang } from '../domain/store';
-import { DataTable, Empty } from '../ui/kit';
+import { DataTable, Empty, ErrText } from '../ui/kit';
 import { dateFmt, money } from '../lib/util';
 import { catName, listClaims, useT, type Claim, type ClaimFilters } from './api';
 import { CatIcon, StatusBadge, useExpense } from './parts';
@@ -29,7 +29,7 @@ export function ClaimList({ filters, refreshKey = 0, onOpen, showEmployee, extra
   const shown = accountFilter ? rows.filter((c) => (c.account_override ?? catById[c.category_id]?.account_code) === accountFilter) : rows;
   return (
     <>
-      {err && <div className="card-b"><div className="exp-err" role="alert">{err}</div></div>}
+      {err && <div className="card-b"><div className="exp-err" role="alert"><ErrText>{err}</ErrText></div></div>}
       <DataTable rows={shown} rowKey={(c) => c.id} pageSize={12} onRow={onOpen} empty={empty ?? <Empty title={T('No expenses here yet', 'ยังไม่มีรายจ่าย')} />}
         cols={[
           { key: 'd', header: T('Date', 'วันที่'), sort: (c) => c.expense_date, render: (c) => dateFmt(c.expense_date) },

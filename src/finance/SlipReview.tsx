@@ -427,7 +427,7 @@ function Detail({ id, role, settings, reader, busy, run, postOne, rejectOne, onC
         try { await send(true); } catch (y) { toast('error', reviewErrorText(lang, y)); return false; }
       }
       if (!post) { toast('success', tl(lang, 'Payment confirmed. It is not posted yet: the invoice still owes the money until it is posted.')); return true; }
-      try { await review.post(e.id); toast('success', tl(lang, 'Confirmed and posted')); } catch (x) { toast('error', `${tl(lang, 'Confirmed, but not posted:')} ${reviewErrorLine(lang, x)}`); }
+      try { await review.post(e.id); toast('success', tl(lang, 'Confirmed and posted')); } catch (x) { toast('error', `Confirmed, but not posted: ${x instanceof Error ? x.message : String(x)}`); }
       return true;
     });
     if (ok) await done();

@@ -9,7 +9,7 @@ import {
 } from '../lib/feedbackApi';
 import { clipboardHasText, clipboardImages, prepareImage } from '../lib/feedbackImages';
 import { dateFmt } from '../lib/util';
-import { Badge } from './kit';
+import { Badge, ErrText } from './kit';
 
 export function StatusBadge({ status }: { status: string }) {
   const lang = useLang();
@@ -137,7 +137,7 @@ export function AttachmentPicker({ files, onChange, disabled }: { files: File[];
         <div style={{ fontSize: 11.5 }}>{t(lang, 'PNG, JPG, WebP or PDF · up to 10 MB each · max {n} files', { n: MAX_ATTACHMENTS })} · {t(lang, 'Large pictures are shrunk automatically before upload.')}</div>
       </div>
       <input ref={input} type="file" multiple accept={ATTACHMENT_ACCEPT} hidden data-testid="attachment-input" onChange={(e) => { setErr(null); void add(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
-      {err && <div role="alert" style={{ color: 'var(--bad-text, #b42318)', fontSize: 12 }}>{err}</div>}
+      {err && <div role="alert" style={{ color: 'var(--bad-text, #b42318)', fontSize: 12 }}><ErrText>{err}</ErrText></div>}
       {busy > 0 && <div className="muted" style={{ fontSize: 12 }}>{t(lang, 'Processing image…')}</div>}
       {files.length > 0 && (
         <>
