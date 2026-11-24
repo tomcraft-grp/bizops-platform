@@ -2,6 +2,7 @@
 // from the database, the comparison of what the order expected with what the AI read, de-duplicated reasons, and who may post. No JSX and nothing here changes a payment:
 // the screens only ever send identifiers and what a staff member typed.
 import { canFinance, type FinanceRole } from './api';
+import { thaiForError } from '../lib/errorText';
 import { t, type Lang } from '../lib/i18n';
 import { money } from '../lib/util';
 import { reasonValueText, type AiResult, type Bilingual, type Reason, type ReasonValue, type ReviewItem, type ReviewSettings, type SlipAnalysis } from './review';
@@ -221,11 +222,11 @@ export function reviewErrorText(lang: Lang, e: unknown): string {
   const other: Lang = lang === 'th' ? 'en' : 'th';
   return [t(lang, s.key, s.vars), t(other, s.key, s.vars), raw].join('\n');
 }
-/** One line for a result list: the sentence in the UI language when there is one, else the message without the name of the action in front. */
+/** One line for a result list: the sentence in the UI language when there is one (errorText.ts knows the rest of the messages in Thai), else the message as it is. */
 export function reviewErrorLine(lang: Lang, e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
   const s = serverSentence(raw);
-  return s ? t(lang, s.key, s.vars) : raw;
+  return s ? t(lang, s.key, s.vars) : lang === 'th' ? thaiForError(raw) ?? raw : raw;
 }
 /** True when the database does not have the review functions yet (the migration is not applied). */
 export const isMissingMigration = (message: string) => /schema cache|does not exist|Could not find the function/i.test(message);

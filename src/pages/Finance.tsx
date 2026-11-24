@@ -7,7 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Plus, QrCode, Upload } from 'lucide-react';
 import { toast, useLang } from '../domain/store';
 import { t as tl } from '../lib/i18n';
-import { Badge, Banner, Button, Card, Empty, Field, Input, Modal, PageHead, Select, Tabs, Tx, useConfirm } from '../ui/kit';
+import { Badge, Banner, Button, Card, Empty, ErrText, Field, Input, Modal, PageHead, Select, Tabs, Tx, useConfirm } from '../ui/kit';
 import { canFinance, finance, FinanceRole, InvoiceRow, PaymentAccount, QrInfo, Receipt, STATUS } from '../finance/api';
 import { review } from '../finance/review';
 import SlipReview from '../finance/SlipReview';
@@ -44,7 +44,7 @@ export default function Finance() {
   if (!role) return (
     <>
       <PageHead title="Payment review" desc="Verify customer payments and manage invoices." />
-      <Card><Empty title="No access to payment review" hint={err ?? 'Ask a manager to give you a finance role (Viewer, Clerk, Verifier or Manager).'} /></Card>
+      <Card><Empty title="No access to payment review" hint={err ? <ErrText>{err}</ErrText> : 'Ask a manager to give you a finance role (Viewer, Clerk, Verifier or Manager).'} /></Card>
     </>
   );
   return (

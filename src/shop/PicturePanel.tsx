@@ -5,7 +5,7 @@ import { CheckCircle2, CloudUpload, Eye, Star, X } from 'lucide-react';
 import { act, toast, useDB, useLang, useStore } from '../domain/store';
 import { t as tl } from '../lib/i18n';
 import type { MediaFile } from '../domain/types';
-import { Badge, Banner, Button, Tx } from '../ui/kit';
+import { Badge, Banner, Button, ErrText, Tx } from '../ui/kit';
 import { MediaImg } from '../ui/shared';
 import {
   isShopSku, type LocalState, localState, makeMain, MAX_PICTURES, notDisplayed, onPicturesChanged, picturesWaiting, removeFromShop, sendPictures, type ShopState, shopState, showInShop, type Waiting,
@@ -75,7 +75,7 @@ export function ShopPictures({ sku, pics, canEdit }: { sku: string; pics: ShopPi
     <div className="col gap-8" data-testid="shop-pictures">
       <div className="row between"><b><Tx>Pictures in the online shop</Tx></b>{s && <Badge tone={s.product.image_paths.length ? 'good' : 'warn'}>{s.product.image_paths.length}/{MAX_PICTURES}</Badge>}</div>
       {failed && <Banner tone="bad">{tl(lang, 'Not changed: {e}', { e: failed })}</Banner>}
-      {err && <Banner tone="bad"><div className="grow">{err}</div><Button size="sm" onClick={pics.reload}><Tx>Retry</Tx></Button></Banner>}
+      {err && <Banner tone="bad"><div className="grow"><ErrText>{err}</ErrText></div><Button size="sm" onClick={pics.reload}><Tx>Retry</Tx></Button></Banner>}
       {!s ? !err && <Banner tone="warn"><Tx>This SKU is not in the online shop, so customers do not see its pictures.</Tx></Banner> : <>
         {!s.product.on_sale && <Banner tone="warn"><Tx>Customers do not see this product now (it is inactive, has no price or is hidden). The pictures are kept and appear when it is shown.</Tx></Banner>}
         {s.product.image_paths.length === 0 ? <div className="muted"><Tx>No picture in the online shop yet: customers see a grey box.</Tx></div> : (

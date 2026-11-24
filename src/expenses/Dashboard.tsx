@@ -1,7 +1,7 @@
 // Spending at a glance for managers and accountants (employees see their own numbers): today, this month, what is waiting, and why.
 import { useEffect, useMemo, useState } from 'react';
 import { useLang } from '../domain/store';
-import { Card, Field, Input, Kpi, Select, SearchBox } from '../ui/kit';
+import { Card, ErrText, Field, Input, Kpi, Select, SearchBox } from '../ui/kit';
 import { HBars } from '../ui/charts';
 import { dayKey, money0 } from '../lib/util';
 import { METHOD_META, STATUS_META, catName, dashboard, useT, type Claim, type ClaimFilters, type DashboardData, type PayMethod, type Status } from './api';
@@ -58,7 +58,7 @@ export function Dashboard({ onOpen, refreshKey }: { onOpen: (c: Claim) => void; 
           <div className="exp-search"><SearchBox value={f.q ?? ''} onChange={(v) => set({ q: v })} placeholder={T('Search description, vendor, number…', 'ค้นหารายละเอียด ร้านค้า เลขที่…')} /></div>
         </div>
       </Card>
-      {err && <div className="exp-err" role="alert">{err}</div>}
+      {err && <div className="exp-err" role="alert"><ErrText>{err}</ErrText></div>}
 
       <div className="grid g2">
         <Card title={T('By category', 'แยกตามหมวดหมู่')}>

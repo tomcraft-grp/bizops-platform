@@ -10,7 +10,7 @@ import {
 } from '../lib/feedbackApi';
 import { applyFilter, cardCounts, FEEDBACK_CARDS, FeedbackFilter, NO_FILTER, pressCard, STATUS_OPTIONS, StatusFilter, statusLabel } from '../lib/feedbackFilters';
 import { toast, useLang } from '../domain/store';
-import { Badge, Banner, Button, Card, DataTable, Drawer, Empty, Field, Input, KV, Kpi, PageHead, Popover, Select, Tabs, Textarea, Tx, useConfirm } from '../ui/kit';
+import { Badge, Banner, Button, Card, DataTable, Drawer, Empty, ErrText, Field, Input, KV, Kpi, PageHead, Popover, Select, Tabs, Textarea, Tx, useConfirm } from '../ui/kit';
 import { AttachmentList, AttachmentPicker, CategoryBadge, PriorityBadge, StatusBadge } from '../ui/feedbackParts';
 import { EnglishContextCard, EvidenceCard, OriginalFeedbackCard } from '../ui/FeedbackContext';
 import { dateTimeFmt } from '../lib/util';
@@ -89,7 +89,7 @@ export default function FeedbackIssues() {
           <Button onClick={exportCsv} disabled={!filtered.length}><Download size={14} />{' '}<Tx>Export to Excel (CSV)</Tx></Button>
           <Button onClick={refresh}><RefreshCw size={14} />{' '}<Tx>Refresh</Tx></Button>
         </>} />
-      {err && <div className="mb16"><Banner tone="bad"><Tx>Could not load issues:</Tx>{' '}{err}</Banner></div>}
+      {err && <div className="mb16"><Banner tone="bad"><Tx>Could not load issues:</Tx>{' '}<ErrText>{err}</ErrText></Banner></div>}
       <div className="grid g4 mb16" style={{ gridAutoRows: '1fr' }} role="group" aria-label={t(lang, 'Filter by summary card')} data-testid="feedback-cards">
         {FEEDBACK_CARDS.map((c, i) => (
           <Kpi key={c.label} label={c.label} value={ready ? counts[i] : '–'} tone={ready ? c.tone(counts[i]) : undefined} active={f.status === c.status} onClick={() => pickCard(c.status)}

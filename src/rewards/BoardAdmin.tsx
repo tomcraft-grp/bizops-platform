@@ -7,7 +7,7 @@ import { Lock, Pencil, RotateCcw, Unlock } from 'lucide-react';
 import { toast, useLang } from '../domain/store';
 import { t as tl } from '../lib/i18n';
 import { cx } from '../lib/util';
-import { Badge, Banner, Button, Card, Check, DataTable, Empty, Field, Input, Modal, Tabs, Textarea } from '../ui/kit';
+import { Badge, Banner, Button, Card, Check, DataTable, Empty, ErrText, Field, Input, Modal, Tabs, Textarea } from '../ui/kit';
 import { rewardsAdmin, type AdminBoard, type Board, type BoardLogRow, type EventDoc, type Holder, type ResetRow, type ReviewItem } from './api';
 import {
   actionLabel, BOARD_COLORS, BOARD_NAME_MAX, boardPatch, buildCells, CELL_LABEL, detailText, isForbidden, latestUndoable, lockOperation, LOCK_LABEL, mayOperate, MODE_LABEL, modeEffect, opErrorText, OPERATIONS, otherMode,
@@ -57,7 +57,7 @@ export function ReasonForm({ confirmLabel, danger, busy, error, onSubmit, onCanc
   return (
     <form className="col gap-6" onSubmit={submit} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onCancel(); } }}>
       <Field label={T('Reason (required, recorded in the audit log)')}><Input autoFocus maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
-      {error && <div role="alert" className="bo-err">{error}</div>}
+      {error && <div role="alert" className="bo-err"><ErrText>{error}</ErrText></div>}
       <div className="row wrap">
         <Button type="submit" variant={danger ? 'danger' : 'primary'} disabled={!ok || busy}>{busy ? T('Working…') : confirmLabel}</Button>
         <Button onClick={onCancel} disabled={busy}>{T('Cancel')}</Button>
@@ -222,7 +222,7 @@ function BoardEditForm({ board, T, onCancel, onSaved }: { board: Board; T: TFn; 
           })}
         </div>
       </div>
-      {err && <div role="alert" className="bo-err">{err}</div>}
+      {err && <div role="alert" className="bo-err"><ErrText>{err}</ErrText></div>}
       <div className="row wrap">
         <Button type="submit" variant="primary" disabled={!changed || busy || Object.keys(errors).length > 0}>{busy ? T('Working…') : T('Save board')}</Button>
         <Button onClick={onCancel} disabled={busy}>{T('Cancel')}</Button>
@@ -290,7 +290,7 @@ function ResetPanel({ boardName, taken, busy, error, T, onCancel, onConfirm }: {
         <Field label={T('Reason (required, recorded in the audit log)')}><Textarea autoFocus value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} /></Field>
         <Check checked={returnPicks} onChange={setReturnPicks}>{T('Return picks to customers')}</Check>
         <Field label={T('Type {word} to confirm', { word: boardName })}><Input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" /></Field>
-        {error && <div role="alert" className="bo-err">{error}</div>}
+        {error && <div role="alert" className="bo-err"><ErrText>{error}</ErrText></div>}
       </div>
     </Modal>
   );
