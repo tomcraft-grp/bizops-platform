@@ -299,7 +299,7 @@ test.describe('checkout and payment', () => {
     await expect(page.locator('.sp-order-detail')).toContainText('฿1,010');
     const qrCall = fake.calls.find((c) => c.fn === 'finance_request_payment')!;
     expect(Object.keys(qrCall.args)).toEqual(['p_invoice']);                                  // the amount is not sent: the server owns it
-    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Save QR image|บันทึกรูป QR/ }).click()]);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: t('qr.save') }).click()]);
     expect(dl.suggestedFilename()).toBe(`payment-qr-${order.order_no}.png`);
     await page.screenshot({ path: `${SHOTS}/payment-mobile.png`, fullPage: true });
 

@@ -20,16 +20,16 @@ import { tr } from '../shop/i18n';
 import { slipProblem } from '../wallet/api';
 
 const MSG: Record<StatusCode, { th: string; en: string; tone: 'info' | 'warn' | 'bad' | 'good' }> = {
-  0: { th: 'ยังไม่ได้ชำระ เลือกช่องทางชำระเงินด้านล่าง', en: 'Not paid yet. Choose how to pay below.', tone: 'info' },
-  1: { th: 'รอชำระเงิน สแกน QR ด้วยแอปธนาคารใดก็ได้ แล้วอัปโหลดสลิป', en: 'Waiting for payment. Scan the QR with any banking app, then upload your slip.', tone: 'info' },
-  3: { th: 'ได้รับสลิปแล้ว กำลังรอทางร้านตรวจสอบ ยอดจะอัปเดตหลังตรวจสอบเสร็จ', en: 'Slip received. The shop is checking it; your balance updates once it is verified.', tone: 'warn' },
-  4: { th: 'ชำระบางส่วนแล้ว ยังมียอดค้าง เลือกช่องทางเพื่อจ่ายส่วนที่เหลือ', en: 'Partly paid. Choose how to pay the remaining balance.', tone: 'warn' },
-  5: { th: 'ตรวจสอบการชำระเงินสำเร็จ ชำระครบแล้ว ขอบคุณค่ะ', en: 'Payment verified. Fully paid. Thank you!', tone: 'good' },
-  6: { th: 'ยอดที่ชำระมากกว่ายอดค้าง ทางร้านกำลังตรวจสอบและจะติดต่อกลับ', en: 'You paid more than the balance. The shop is reviewing it and will contact you.', tone: 'warn' },
-  7: { th: 'ไม่สามารถยืนยันการชำระเงินได้ กรุณาตรวจสอบข้อมูลตามเหตุผลด้านล่าง แล้วแนบสลิปใหม่หรือเลือกช่องทางอื่น', en: 'Your payment evidence was rejected (see the reason below). Send a new slip or choose another way to pay.', tone: 'bad' },
+  0: { th: 'ยังไม่ได้ชำระเงิน กรุณาเลือกช่องทางการชำระเงินด้านล่าง', en: 'Not paid yet. Choose how to pay below.', tone: 'info' },
+  1: { th: 'รอการชำระเงิน กรุณาสแกน QR Code ผ่านแอปพลิเคชันธนาคาร และแนบหลักฐานการโอนเงิน', en: 'Waiting for payment. Scan the QR with any banking app, then upload your slip.', tone: 'info' },
+  3: { th: 'ได้รับหลักฐานการชำระเงินแล้ว อยู่ระหว่างการตรวจสอบ ยอดชำระจะปรับปรุงภายหลังการตรวจสอบ', en: 'Slip received. The shop is checking it; your balance updates once it is verified.', tone: 'warn' },
+  4: { th: 'ชำระเงินบางส่วนแล้ว กรุณาเลือกช่องทางเพื่อชำระยอดคงเหลือ', en: 'Partly paid. Choose how to pay the remaining balance.', tone: 'warn' },
+  5: { th: 'ตรวจสอบการชำระเงินสำเร็จ ชำระครบถ้วนแล้ว ขอขอบคุณ', en: 'Payment verified. Fully paid. Thank you!', tone: 'good' },
+  6: { th: 'ยอดที่ชำระสูงกว่ายอดค้างชำระ ทางร้านอยู่ระหว่างตรวจสอบและจะติดต่อกลับ', en: 'You paid more than the balance. The shop is reviewing it and will contact you.', tone: 'warn' },
+  7: { th: 'ไม่สามารถยืนยันการชำระเงินได้ กรุณาตรวจสอบข้อมูลตามเหตุผลด้านล่าง แล้วแนบหลักฐานใหม่หรือเลือกช่องทางอื่น', en: 'Your payment evidence was rejected (see the reason below). Send a new slip or choose another way to pay.', tone: 'bad' },
   8: { th: 'ใบแจ้งหนี้นี้ถูกยกเลิก', en: 'This invoice was cancelled.', tone: 'warn' },
-  9: { th: 'QR หมดอายุ กรุณาสร้างใหม่ หากโอนไปแล้วให้อัปโหลดสลิป', en: 'The QR expired. Create a new one. If you already paid, upload your slip.', tone: 'warn' },
-  10: { th: 'ทางร้านขอหลักฐานการชำระเพิ่มเติม กรุณาส่งสลิปใหม่', en: 'The shop asked for more evidence of your payment. Please send a new slip.', tone: 'warn' },
+  9: { th: 'QR Code หมดอายุ กรุณาสร้างใหม่ หากชำระเงินแล้ว กรุณาแนบหลักฐานการโอนเงิน', en: 'The QR expired. Create a new one. If you already paid, upload your slip.', tone: 'warn' },
+  10: { th: 'ทางร้านขอหลักฐานการชำระเงินเพิ่มเติม กรุณาแนบหลักฐานใหม่', en: 'The shop asked for more evidence of your payment. Please send a new slip.', tone: 'warn' },
 };
 
 /** The reason the database gives to a "more evidence" slip that the customer's newer slip closed (trigger finance_evidence_supersede_old): not a refusal, so the history does not call it one. */

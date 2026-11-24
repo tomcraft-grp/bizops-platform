@@ -147,7 +147,8 @@ export async function prepareImage(file: File, max = 1200): Promise<Blob> {
     const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
     const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
     const g = c.getContext('2d')!; g.drawImage(bmp, 0, 0, c.width, c.height);
-    const blob = await new Promise<Blob | null>((res) => c.toBlob(res, 'image/webp', 0.86));
+    let blob = await new Promise<Blob | null>((res) => c.toBlob(res, 'image/webp', 0.86));
+    if (blob && blob.type !== 'image/webp') { g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); blob = await new Promise<Blob | null>((res) => c.toBlob(res, 'image/jpeg', 0.86)); }   // a photo as PNG would be far too big
     if (!blob) throw new Error('Could not process this picture');
     if (blob.size > 2 * 1024 * 1024) throw new Error('The picture is still over 2 MB after shrinking: use a smaller one');
     return blob;
@@ -155,8 +156,9 @@ export async function prepareImage(file: File, max = 1200): Promise<Blob> {
 }
 async function uploadPublic(folder: string, file: File): Promise<string> {
   const blob = await prepareImage(file);
-  const path = `${folder}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.webp`;
-  const { error } = await supabase.storage.from('shop-products').upload(path, blob, { contentType: 'image/webp', upsert: false, cacheControl: '31536000' });
+  const type = blob.type === 'image/png' || blob.type === 'image/jpeg' ? blob.type : 'image/webp';      // a browser that cannot make WebP (older Safari) answers with a PNG
+  const path = `${folder}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.${type === 'image/png' ? 'png' : type === 'image/jpeg' ? 'jpg' : 'webp'}`;
+  const { error } = await supabase.storage.from('shop-products').upload(path, blob, { contentType: type, upsert: false, cacheControl: '31536000' });
   if (error) throw new Error(error.message);
   return path;
 }
