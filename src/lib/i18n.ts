@@ -120,6 +120,7 @@ export const TH: Record<string, string> = {
   'Your role cannot update issues — ask an Owner or Manager.': 'บทบาทของคุณไม่สามารถอัปเดตรายการได้ — กรุณาติดต่อ Owner หรือ Manager',
   'Thanks — your feedback was recorded.': 'ขอบคุณ — บันทึกความคิดเห็นของคุณแล้ว',
   'Status updated': 'อัปเดตสถานะแล้ว', 'Priority updated': 'อัปเดตความสำคัญแล้ว', 'Note added': 'เพิ่มบันทึกแล้ว',
+  'Dismiss message': 'ปิดข้อความ',
   Category: 'ประเภท', 'All categories': 'ทุกประเภท',
   'Feature request / requirement': 'ขอฟีเจอร์ / ความต้องการใหม่', 'Bug report': 'แจ้งบั๊ก',
   'UI/UX feedback': 'ความคิดเห็นเรื่อง UI/UX', 'Performance problem': 'ปัญหาประสิทธิภาพ',

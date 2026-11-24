@@ -4,10 +4,11 @@ import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronLeft, ChevronRi
 import type { ChannelCode, DB, OrderStatus } from '../domain/types';
 import { CHANNELS, STATUS_LABEL } from '../domain/meta';
 import { Ctx, can, hasPerm, userPerms, currentUser } from '../domain/core';
-import { act, toast, useDB, useLang, useStore } from '../domain/store';
+import { act, dismissToast, inCustomerApp, toast, useDB, useLang, useStore } from '../domain/store';
+import { errorLines } from '../lib/errorText';
 import { cx, money } from '../lib/util';
 import { reconciliationMatrix } from '../domain/setup';
-import { t, tr } from '../lib/i18n';
+import { t, t as tl, tr } from '../lib/i18n';
 
 // ---------- action runner (transaction + toast)
 export function useRun() {
@@ -95,10 +96,19 @@ export function Empty({ icon, title, hint, action }: { icon?: ReactNode; title: 
   const lang = useLang();
   return <div className="empty"><div className="ico">{icon ?? <Search size={22} />}</div><b>{tr(lang, title)}</b>{hint && <div className="muted" style={{ maxWidth: 380 }}>{tr(lang, hint)}</div>}{action}</div>;
 }
+/** The lines of an error in both languages: the UI language in full strength, the other one under it. */
+function ErrLines({ lines }: { lines: string[] }) {
+  return <>{lines.map((l, i) => <span key={i} className={i ? 'err-other' : 'err-main'}>{l}</span>)}</>;
+}
+/** An error message inside a page (FB-001004): the same two languages as an error toast. Text the customer app shows is left alone. */
+export function ErrText({ children }: { children: string }) {
+  const lang = useLang();
+  return inCustomerApp() ? <>{tr(lang, children)}</> : <ErrLines lines={errorLines(lang, children, { unknownNote: true })} />;
+}
 export function Banner({ tone = 'info', children, icon }: { tone?: 'info' | 'warn' | 'bad' | 'good'; children: ReactNode; icon?: ReactNode }) {
   const lang = useLang();
   const I = tone === 'bad' ? XCircle : tone === 'warn' ? AlertTriangle : tone === 'good' ? CheckCircle2 : Info;
-  return <div className={cx('banner', tone === 'info' ? '' : tone)}>{icon ?? <I size={16} />}<div>{tr(lang, children)}</div></div>;
+  return <div className={cx('banner', tone === 'info' ? '' : tone)}>{icon ?? <I size={16} />}<div>{tone === 'bad' && typeof children === 'string' ? <ErrText>{children}</ErrText> : tr(lang, children)}</div></div>;
 }
 const rgb = (hex: string): [number, number, number] => { const n = parseInt(hex.replace('#', ''), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 const lumOf = ([r, g, b]: [number, number, number]) => { const c = [r, g, b].map((v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
@@ -254,13 +264,14 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   );
 }
 export function Toasts() {
-  const toasts = useStore((s) => s.ui.toasts);
+  const toasts = useStore((s) => s.ui.toasts); const lang = useLang();
   return createPortal(
     <div className="toasts" aria-live="polite">
       {toasts.map((t) => (
-        <div key={t.id} className={cx('toast', t.kind)} role="status">
+        <div key={t.id} className={cx('toast', t.kind)} role={t.kind === 'error' ? 'alert' : 'status'}>
           {t.kind === 'success' ? <CheckCircle2 size={18} color="var(--good)" /> : t.kind === 'error' ? <XCircle size={18} color="var(--crit)" /> : <Info size={18} color="var(--brand)" />}
-          <div>{t.text}</div>
+          <div>{t.kind === 'error' ? <ErrLines lines={t.text.split('\n').filter((l) => l.trim())} /> : t.text}</div>
+          {t.kind === 'error' && <button type="button" className="toast-x" aria-label={tl(lang, 'Dismiss message')} onClick={() => dismissToast(t.id)}><X size={15} /></button>}
         </div>
       ))}
     </div>, document.body);

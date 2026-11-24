@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, Pencil, Plus } from 'lucide-react';
 import { toast, useDB, useLang } from '../domain/store';
 import { accountProblem, type Treatment } from '../domain/expenseLedger';
-import { Badge, Banner, Button, Card, DataTable, Field, Input, Modal, NumInput, Select } from '../ui/kit';
+import { Badge, Banner, Button, Card, DataTable, ErrText, Field, Input, Modal, NumInput, Select } from '../ui/kit';
 import { dayKey } from '../lib/util';
 import { TAX_META, catName, loadStaff, saveCategory, saveSettings, setRole, useT, type Category, type Settings, type StaffRow } from './api';
 import { CatIcon, useExpense } from './parts';
@@ -140,7 +140,7 @@ function Roles() {
   const roleName = useMemo(() => ({ '': T('No access', 'ไม่มีสิทธิ์'), employee: T('Employee — records expenses', 'พนักงาน — บันทึกรายจ่าย'), manager: T('Manager — approves', 'ผู้จัดการ — อนุมัติ'), accountant: T('Accountant — reviews tax and posts', 'นักบัญชี — ตรวจภาษีและลงบัญชี') }), [T]);
   return (
     <Card flush title={T('Who can do what', 'ใครทำอะไรได้บ้าง')} sub={T('A Super admin always has full access. Nobody can approve their own expense.', 'ผู้ดูแลสูงสุดมีสิทธิ์ทั้งหมด และไม่มีใครอนุมัติรายจ่ายของตัวเองได้')}>
-      {err && <div className="card-b exp-err">{err}</div>}
+      {err && <div className="card-b exp-err"><ErrText>{err}</ErrText></div>}
       <DataTable rows={rows ?? []} rowKey={(r) => r.user_id} pageSize={15}
         cols={[
           { key: 'u', header: T('User', 'ผู้ใช้'), render: (r) => <><b>{r.display_name || r.email.split('@')[0]}</b><div className="sub">{r.email}</div></> },

@@ -5,7 +5,7 @@ import { createContext, DragEvent, ReactNode, useCallback, useContext, useEffect
 import { ArrowDown, ArrowUp, Copy, Eye, GripVertical, Monitor, Redo2, Rocket, Save, Smartphone, Tablet, Trash2, Undo2, Upload, CheckCircle2, XCircle, History, ExternalLink, Plus, RotateCcw, Lock, FileText, Database, Table2 } from 'lucide-react';
 import { useDB, toast, useLang } from '../domain/store';
 import { t as tl } from '../lib/i18n';
-import { Badge, Banner, Button, Card, Empty, Field, Input, Modal, PageHead, Select, Tabs, Textarea, Tx, useConfirm } from '../ui/kit';
+import { Badge, Banner, Button, Card, Empty, ErrText, Field, Input, Modal, PageHead, Select, Tabs, Textarea, Tx, useConfirm } from '../ui/kit';
 import { AppRole, AvailableView, canDo, CustomerApp, dataSources, Deployment, devapp, LayoutVersion, StaffRow, Template, VersionStatus } from '../devapp/api';
 import { PhonePreview } from '../devapp/Preview';
 import {
@@ -301,7 +301,7 @@ export default function DevApp() {
   if (!role) return (
     <>
       <PageHead title="DEV APP Customer" desc="Design, preview and publish the customer app without code." />
-      <Card><Empty title="No access to DEV APP Customer" hint={err ?? 'Ask an administrator to give you a DEV APP role (Viewer, Designer, Approver, Publisher or Administrator).'} /></Card>
+      <Card><Empty title="No access to DEV APP Customer" hint={err ? <ErrText>{err}</ErrText> : 'Ask an administrator to give you a DEV APP role (Viewer, Designer, Approver, Publisher or Administrator).'} /></Card>
     </>
   );
   const st = open?.status ?? 'draft';

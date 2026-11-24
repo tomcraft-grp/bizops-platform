@@ -211,6 +211,10 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .toast { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--brand); border-radius: 10px; padding: 11px 14px; box-shadow: var(--shadow-lg); display: flex; gap: 10px; align-items: flex-start; animation: slide .18s; }
 .toast.success { border-left-color: var(--good); } .toast.error { border-left-color: var(--crit); }
 .toast > div { white-space: pre-line; overflow-wrap: anywhere; }   /* error toasts carry two lines: Thai and English */
+.err-main, .err-other { display: block; white-space: pre-line; overflow-wrap: anywhere; }
+.toast .err-main { font-weight: 600; } .err-other { margin-top: 3px; font-size: 12px; }
+.toast > div { flex: 1; min-width: 0; } .toast > svg { flex: none; margin-top: 2px; }
+.toast-x { flex: none; border: 0; background: none; color: inherit; padding: 4px; margin: -4px -6px -4px 0; border-radius: 6px; cursor: pointer; line-height: 0; } .toast-x:hover { background: var(--surface-2); }
 .popover { position: absolute; z-index: 60; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 6px; min-width: 220px; }
 .menu-item { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; padding: 8px 10px; border-radius: 8px; cursor: pointer; text-align: left; }
 .menu-item:hover { background: var(--surface-3); } .menu-item.on { background: var(--brand-soft); }
