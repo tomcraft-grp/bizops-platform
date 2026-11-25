@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { produce, setAutoFreeze } from 'immer';
 import type { DB } from './types';
 import { Ctx, AppError, currentUser, hasPerm, userPerms } from './core';
+import { ensureProductionAccounts } from './accounting';
 import { buildSeed } from './seed';
 import { buildLiveDB, LIVE_DB_VERSION } from './seedData';
 import { DEMO_SEED } from './demo';
@@ -65,7 +66,17 @@ export async function boot() {
     if (seedErrors.length) console.warn('[bizops] seed warnings', seedErrors.slice(0, 20));
     await kvSet(KEY, db);
   }
-  useStore.setState({ db, ready: true, seedErrors });
+  const ready = withNewAccounts(db);
+  useStore.setState({ db: ready, ready: true, seedErrors });
+  if (ready !== db) persist(ready);
+}
+/** A database saved by an earlier build opens as it is; only the accounts added since then are put beside the existing ones (see ensureProductionAccounts). */
+function withNewAccounts(db: DB): DB {
+  if (!db.accounts || !db.postingMap || !db.audit) return db; // a backup older than the accounting setup: left as it is
+  // copies of just the parts that can change, not produce(): that would deep-freeze the whole database at every start (and the loaded one is not in the store yet)
+  const next: DB = { ...db, accounts: [...db.accounts], postingMap: { ...db.postingMap }, audit: [...db.audit], meta: { ...db.meta, seq: { ...db.meta.seq } } };
+  ensureProductionAccounts(next);
+  return Object.keys(next.postingMap).some((k) => next.postingMap[k] !== db.postingMap[k]) ? next : db;
 }
 
 export async function resetDemoData() {
@@ -79,8 +90,9 @@ export function exportBackup(): string {
   return JSON.stringify(useStore.getState().db);
 }
 export async function importBackup(json: string) {
-  const db = JSON.parse(json) as DB;
-  if (!db.version || !db.orders || !db.journals) throw new Error('This is not a valid backup file');
+  const file = JSON.parse(json) as DB;
+  if (!file.version || !file.orders || !file.journals) throw new Error('This is not a valid backup file');
+  const db = withNewAccounts(file);
   useStore.setState({ db });
   await kvSet(KEY, db);
   // The SKU sync cursor belongs to the database that was just replaced: forget it (a dynamic import, because skuSync itself imports this store).

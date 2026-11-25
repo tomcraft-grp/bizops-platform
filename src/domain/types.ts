@@ -99,18 +99,53 @@ export interface SupplierReturn {
 }
 
 // ---------- BOM & production
-export interface BomComponent { productId: ID; qty: number; role: 'material' | 'packaging' | 'consumable' }
+export interface BomComponent {
+  productId: ID; qty: number; role: 'material' | 'packaging' | 'consumable'; // qty is always in the product's stock unit
+  wastePct?: number; entry?: { qty: number; unit: string; factor: number }; // entry: how it was typed in another unit (qty = entry.qty × factor)
+}
 export interface BomVersion {
   version: number; status: 'draft' | 'active' | 'retired'; effectiveFrom: string; effectiveTo?: string;
   yieldQty: number; components: BomComponent[]; laborCost: number; overheadCost: number; notes?: string; createdAt: string;
+  laborKnown?: boolean; overheadKnown?: boolean; // false = nobody knows the cost yet (it is not 0); absent = as entered
+  otherCosts?: { kind: 'utilities' | 'other'; label: string; amount: number }[];
 }
 export interface Bom {
   id: ID; productId: ID; name: string; type: 'manufacturing' | 'recipe' | 'packaging' | 'assembly'; versions: BomVersion[];
+  status?: 'active' | 'inactive' | 'archived'; // absent = active
 }
 export interface ProductionBatch { ts: string; outputQty: number; wasteQty: number; materialCost: number; conversionCost: number; wasteCost: number; unitCost: number; journalId?: ID }
+export interface CostElems { materials: number; labor: number; overhead: number }
+/** stockDiff: what today's average cost took out of stock less (+) or more (−) than the value received (posted to the material variance) */
+export interface ProductionReversal { ts: string; userId: ID; reason: string; journalId?: ID; stockDiff?: number }
+export interface MaterialIssue {
+  id: ID; no: string; ts: string; userId: ID; lines: { productId: ID; warehouseId: ID; qty: number; unitCost: number; value: number; movementId: ID; unknownCost?: boolean }[];
+  value: number; journalId?: ID; reversal?: ProductionReversal;
+}
+export interface MaterialReturn {
+  id: ID; no: string; ts: string; userId: ID; lines: { productId: ID; warehouseId: ID; qty: number; unitCost: number; value: number; movementId: ID }[];
+  value: number; reason: string; journalId?: ID; reversal?: ProductionReversal;
+}
+/** Material an entry took out of the order, in quantity and in actual cost */
+export interface ConsumedLine { productId: ID; qty: number; value: number }
+export interface ConversionEntry { id: ID; ts: string; userId: ID; kind: 'labor' | 'overhead' | 'utilities' | 'other'; amount: number; note?: string; journalId?: ID; reversal?: ProductionReversal }
+export interface LossEntry { id: ID; ts: string; userId: ID; amount: number; cost: CostElems; consumed?: ConsumedLine[]; note: string; journalId?: ID; reversal?: ProductionReversal }
+export interface GoodsProduced {
+  id: ID; no: string; ts: string; userId: ID; warehouseId: ID; good: number; rejected: number; cost: CostElems; goodValue: number; rejectedValue: number; unitCost: number;
+  consumed?: ConsumedLine[]; variance?: CostElems; // consumed: all the material it took; variance: the part of it (and of labour, overhead) that a final receipt posted as a variance
+  final: boolean; note?: string; movementId?: ID; journalId?: ID; reversal?: ProductionReversal;
+}
 export interface ProductionOrder {
-  id: ID; no: string; bomId: ID; productId: ID; warehouseId: ID; plannedQty: number; status: 'planned' | 'in_progress' | 'completed' | 'cancelled';
+  id: ID; no: string; bomId: ID; productId: ID; warehouseId: ID; plannedQty: number;
+  status: 'draft' | 'planned' | 'approved' | 'in_progress' | 'partially_completed' | 'completed' | 'cancelled';
   snapshot: BomVersion; createdAt: string; completedAt?: string; batches: ProductionBatch[]; note?: string; createdBy: ID;
+  // Orders made or approved by domain/production.ts (an order saved before it has none of these, and `batches` instead)
+  dueAt?: string; issues?: MaterialIssue[]; conversions?: ConversionEntry[]; losses?: LossEntry[]; receipts?: GoodsProduced[]; wip?: CostElems;
+  /** Cost expected per output unit when the order was created; lines keep the quantity and unit cost it was made of (null = unknown) */
+  estimate?: { materialsPerUnit: number | null; laborPerUnit: number | null; overheadPerUnit: number | null; lines?: { productId: ID; qty: number; unitCost: number | null }[] };
+  events?: { ts: string; userId: ID; from: string; to: string; note?: string }[];
+  approvedBy?: ID; returns?: MaterialReturn[]; closedBy?: 'close' | 'receipt';
+  /** Cost left when the order was closed or cancelled, one entry each time; reversed when it is opened again */
+  variances?: { id: ID; ts: string; userId: ID; why: 'closed' | 'cancelled'; cost: CostElems; consumed: ConsumedLine[]; journalId?: ID; reversal?: ProductionReversal }[];
 }
 
 // ---------- orders
@@ -212,7 +247,7 @@ export interface EventAdminAction { id: ID; eventId: ID; ts: string; by: ID; act
 // ---------- accounting
 export type FsLine = 'cash' | 'receivables' | 'inventory' | 'tax_asset' | 'other_assets' | 'fixed_assets' | 'payables' | 'tax_payable' | 'customer_liabilities' | 'loans' | 'equity'
   | 'revenue' | 'contra_revenue' | 'cogs' | 'channel_costs' | 'opex' | 'other_income' | 'other_expense';
-export type ControlKind = 'ar' | 'platform' | 'ap' | 'inventory' | 'cash_bank' | 'customer_credit' | 'tax' | 'supplier_deposit';
+export type ControlKind = 'ar' | 'platform' | 'ap' | 'inventory' | 'cash_bank' | 'customer_credit' | 'tax' | 'supplier_deposit' | 'wip';
 export interface Account {
   code: string; name: string; nameTh: string; type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'; normal: 'debit' | 'credit'; group: string; contra?: boolean;
   parent?: string; posting: boolean; system?: boolean; control?: ControlKind; fsLine: FsLine; cashFlow?: 'cash' | 'operating' | 'investing' | 'financing';

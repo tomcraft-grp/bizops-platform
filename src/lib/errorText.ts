@@ -13,7 +13,7 @@ const STATUS_TH: Record<string, string> = {
   pending: 'รอดำเนินการ', approved: 'อนุมัติแล้ว', expired: 'หมดอายุ', used: 'ใช้แล้ว', issued: 'ออกแล้ว', fulfilled: 'รับของแล้ว', completed: 'เสร็จสมบูรณ์', in_progress: 'กำลังดำเนินการ',
   partial: 'ดำเนินการบางส่วน', received: 'รับแล้ว', sent: 'ส่งออกแล้ว', failed: 'ล้มเหลว', active: 'เปิดใช้อยู่', inactive: 'ปิดใช้งาน', paused: 'หยุดชั่วคราว', reviewed: 'ตรวจทานแล้ว', retired: 'เลิกใช้แล้ว',
   released: 'ปล่อยแล้ว', reserved: 'จองไว้', queued: 'รอคิว', resolved: 'แก้ไขแล้ว', archived: 'เก็บเข้าคลังแล้ว', shipped: 'จัดส่งแล้ว', delivered: 'ส่งถึงแล้ว', closed_short: 'ปิดโดยรับไม่ครบ',
-  void: 'ยกเลิกแล้ว', voided: 'ยกเลิกแล้ว', reversed: 'กลับรายการแล้ว', closed: 'ปิดแล้ว', open: 'เปิดอยู่', draft: 'ฉบับร่าง', posted: 'ลงบัญชีแล้ว',
+  void: 'ยกเลิกแล้ว', voided: 'ยกเลิกแล้ว', reversed: 'กลับรายการแล้ว', closed: 'ปิดแล้ว', open: 'เปิดอยู่', planned: 'วางแผนแล้ว', partially_completed: 'เสร็จบางส่วน', draft: 'ฉบับร่าง', posted: 'ลงบัญชีแล้ว',
 };
 const st = (s: string) => STATUS_TH[s.toLowerCase()] ?? s;
 const SUBJECT_TH: Record<string, string> = { 'this slip': 'สลิปนี้', 'this deposit': 'รายการเติมเงินนี้', receipt: 'ใบเสร็จ', invoice: 'ใบแจ้งหนี้' };

@@ -1,6 +1,6 @@
 import type { ChannelCode, DB, ID, Order } from './types';
 import type { Account } from './types';
-import { balancesBetween, netDebit, roleCode, sumNetDebit } from './accounting';
+import { ROLE_DEFS, balancesBetween, netDebit, roleCode, sumNetDebit } from './accounting';
 import { dayKey, r2 } from '../lib/util';
 
 export interface OrderEcon {
@@ -93,6 +93,32 @@ export function groupLines(list: LineEcon[], key: (e: LineEcon) => string): Reco
   return m;
 }
 
+const VARIANCE_ROLES = ['prod_var_material', 'prod_var_labor', 'prod_var_overhead'];
+/**
+ * Production variances in the ledger (a loss is positive, a gain negative), wherever the roles are or were mapped, each account once. An account already counted as waste
+ * or adjustments is left to that figure; on an account that also serves something else (cost of goods sold) only the entries of production orders count.
+ */
+function productionVariance(d: DB, b: ReturnType<typeof balancesBetween>, from?: string, to?: string): number {
+  const own = new Set(VARIANCE_ROLES.flatMap((r) => (d.postingMap[r] ?? []).map((m) => m.code))), codes = new Set([...own, ...ROLE_DEFS.filter((r) => VARIANCE_ROLES.includes(r.key)).map((r) => r.def)]);
+  const others = new Map<string, string[]>();
+  for (const r of ROLE_DEFS) { const c = roleCode(d, r.key); if (c && !VARIANCE_ROLES.includes(r.key)) others.set(c, [...(others.get(c) ?? []), r.key]); }
+  let v = 0, prod: ReturnType<typeof balancesBetween> | undefined;
+  for (const c of codes) {
+    const use = others.get(c) ?? [];
+    if (own.has(c) && !use.length) { v += netDebit(b[c]); continue; }
+    if (use.some((k) => ['waste', 'inv_adjust', 'conversion_absorbed', 'wip', 'inv_materials', 'inv_goods'].includes(k))) continue;
+    prod ??= balancesBetween(d.journals.filter((j) => j.refType === 'production'), from, to);
+    v += netDebit(prod[c]);
+  }
+  return r2(v) + 0;
+}
+/** Labour and overhead absorbed into the cost of goods (a credit in the ledger, shown as a positive figure). Their wages are in the operating expenses, so without it they would count twice. */
+function absorbedCost(d: DB, b: ReturnType<typeof balancesBetween>): number {
+  const others = new Set(ROLE_DEFS.filter((r) => r.key !== 'conversion_absorbed').map((r) => roleCode(d, r.key)));
+  let v = 0;
+  for (const c of new Set((d.postingMap.conversion_absorbed ?? []).map((m) => m.code))) if (!others.has(c)) v -= netDebit(b[c]); // on a shared account it is in that account's figure
+  return r2(v) + 0;
+}
 /** Business-level costs that are not attributable to a single order, from the GL (classified by financial-statement line, not by hard-coded codes) */
 export function businessCosts(d: DB, from?: string, to?: string) {
   const b = balancesBetween(d.journals, from, to);
@@ -101,10 +127,13 @@ export function businessCosts(d: DB, from?: string, to?: string) {
   const waste = roleCode(d, 'waste'), adj = roleCode(d, 'inv_adjust');
   const opexAccts = (a: Account) => a.fsLine === 'opex' || a.fsLine === 'other_expense';
   return {
-    waste: waste ? bySub(waste) : 0, adjustments: adj ? bySub(adj) : 0, opex: sum(opexAccts),
+    waste: waste ? bySub(waste) : 0, adjustments: adj ? bySub(adj) : 0, productionVariance: productionVariance(d, b, from, to), absorbed: absorbedCost(d, b), opex: sum(opexAccts),
     marketing: bySub('6130'), rent: bySub('6200'), utilities: bySub('6210'), staff: bySub('6220'), other: bySub('6300'), bank: bySub('6400'),
   };
 }
+
+/** All that comes off the contribution to reach the net profit of the business; what was absorbed into cost comes back. */
+export const businessDeductions = (c: ReturnType<typeof businessCosts>) => r2(c.waste + c.adjustments + c.productionVariance + c.opex - c.absorbed);
 
 export interface Completeness { label: 'Final' | 'Provisional'; reasons: string[]; pctFinal: number }
 export function completeness(d: DB, t: EconTotals): Completeness {
