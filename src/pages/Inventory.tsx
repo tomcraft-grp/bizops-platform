@@ -11,6 +11,7 @@ import { lowStock } from '../ui/data';
 import { StockFilterBar } from '../ui/StockFilterBar';
 import { EMPTY_STOCK_FILTERS, activeFilterCount, buildStockRows, filterOptions, matchingProducts, type StockFilters } from '../domain/stockFilters';
 import { t as tl } from '../lib/i18n';
+import { engineText } from '../production/forms';
 
 type Tab = 'stock' | 'movements' | 'transfers' | 'counts' | 'lots' | 'valuation';
 const MOVE_TONE: Record<string, 'good' | 'bad' | 'info' | 'warn' | ''> = { receipt: 'good', sale: '', backflush: '', adjust: 'warn', count: 'warn', transfer_out: 'info', transfer_in: 'info', prod_issue: '', prod_output: 'good', waste: 'bad', return_in: 'good', return_out: 'bad', opening: '' };
@@ -90,18 +91,23 @@ function Movements() {
   const [pid, setPid] = useState('');
   const canCost = useHas('finance:cost');
   const rows = useMemo(() => db.movements.filter((m) => (!type || m.type === type) && (!pid || m.productId === pid)).slice().reverse(), [db.movements, type, pid]);
+  const lang = useLang(), T = (s: string, v?: Record<string, string | number>) => tl(lang, s, v);
+  // a production movement names its order: by number, so that it can be searched and followed
+  const orderNo = (m: (typeof rows)[number]) => (m.refType === 'production' ? db.productionOrders.find((o) => o.id === m.refId)?.no : undefined);
+  const who = (id: ID) => db.users.find((u) => u.id === id)?.name ?? '';
   const types = Array.from(new Set(db.movements.map((m) => m.type)));
   return (
     <Card flush>
-      <DataTable rows={rows} rowKey={(m) => m.id} pageSize={16}
+      <DataTable rows={rows} rowKey={(m) => m.id} pageSize={16} search={(m) => `${db.products.find((p) => p.id === m.productId)?.name ?? ''} ${db.products.find((p) => p.id === m.productId)?.sku ?? ''} ${orderNo(m) ?? ''} ${m.refType} ${m.note ?? ''} ${who(m.userId)}`}
         toolbar={<><Select sm style={{ width: 'auto' }} value={pid} onChange={(e) => setPid(e.target.value)}><option value="">All products</option>{db.products.filter((p) => p.kind !== 'menu').map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select><Select sm style={{ width: 'auto' }} value={type} onChange={(e) => setType(e.target.value)}><option value="">All types</option>{types.map((t) => <option key={t} value={t}>{t}</option>)}</Select></>}
         cols={[
           { key: 'd', header: 'Time', render: (m) => dateTimeFmt(m.ts) },
           { key: 'p', header: 'Item', render: (m) => <><b>{db.products.find((p) => p.id === m.productId)?.name}</b><div className="sub">{db.warehouses.find((w) => w.id === m.warehouseId)?.name}</div></> },
           { key: 't', header: 'Type', render: (m) => <Badge tone={MOVE_TONE[m.type as MoveType]}>{m.type.replace('_', ' ')}</Badge> },
-          { key: 'q', header: 'Qty', num: true, render: (m) => <b className={m.qty > 0 ? 'good' : 'bad'}>{m.qty > 0 ? '+' : ''}{qtyFmt(m.qty)}</b> },
+          { key: 'q', header: 'Qty', num: true, render: (m) => <b className={m.qty > 0 ? 'good' : 'bad'}>{m.qty > 0 ? '+' : ''}{qtyFmt(m.qty)} {db.products.find((p) => p.id === m.productId)?.unit ?? ''}</b> },
           ...(canCost ? [{ key: 'v', header: 'Value', num: true, render: (m: { value: number }) => money(m.value) }] : []),
-          { key: 'r', header: 'Reference', hideSm: true, render: (m) => <span className="muted">{m.refType} {m.note ?? ''}{m.lot ? <> · <Tx vars={{ lot: m.lot }}>{'lot {lot}'}</Tx></> : ''}</span> },
+          { key: 'r', header: 'Reference', hideSm: true, render: (m) => <span className="muted">{orderNo(m) ? <b>{orderNo(m)}</b> : m.refType} {m.note ? engineText(T, m.note) : ''}{m.lot ? <> · <Tx vars={{ lot: m.lot }}>{'lot {lot}'}</Tx></> : ''}</span> },
+          { key: 'u', header: 'By', hideSm: true, render: (m) => who(m.userId) },
         ]} />
     </Card>
   );

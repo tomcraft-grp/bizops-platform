@@ -23,6 +23,7 @@ import * as M_master from '../../src/domain/master';
 import * as M_orders from '../../src/domain/orders';
 import * as M_payments from '../../src/domain/payments';
 import * as M_printing from '../../src/domain/printing';
+import * as M_production from '../../src/domain/production';
 import * as M_purchasing from '../../src/domain/purchasing';
 import * as M_setup from '../../src/domain/setup';
 
@@ -52,6 +53,13 @@ const GUARDED: [string, Fn, string][] = [
   ['activateVersion', (M_bom as unknown as Record<string, Fn>).activateVersion, 'production:approve'],
   ['createProductionOrder', (M_bom as unknown as Record<string, Fn>).createProductionOrder, 'production:create'],
   ['recordProduction', (M_bom as unknown as Record<string, Fn>).recordProduction, 'production:create'],
+  ['discardDraft', (M_bom as unknown as Record<string, Fn>).discardDraft, 'production:edit'],
+  ['duplicateBom', (M_bom as unknown as Record<string, Fn>).duplicateBom, 'production:edit'],
+  ['setBomStatus', (M_bom as unknown as Record<string, Fn>).setBomStatus, 'production:edit'],
+  ...([
+    ['createOrder', 'create'], ['updateDraftOrder', 'create'], ['planOrder', 'create'], ['issueMaterials', 'create'], ['addConversion', 'create'], ['recordLoss', 'create'], ['receiveGoods', 'create'], ['runProduction', 'create'],
+    ['approveOrder', 'approve'], ['closeOrder', 'approve'], ['cancelOrder', 'approve'], ['reverseIssue', 'approve'], ['reverseConversion', 'approve'], ['reverseLoss', 'approve'], ['reverseReturn', 'approve'], ['reopenOrder', 'approve'], ['returnMaterials', 'create'], ['reverseReceipt', 'approve'],
+  ] as const).map(([n, p]) => [`production.${n}`, (M_production as unknown as Record<string, Fn>)[n], `production:${p}`] as [string, Fn, string]),
   ['mapSku', (M_channels as unknown as Record<string, Fn>).mapSku, 'channels:edit'],
   ['retryExternal', (M_channels as unknown as Record<string, Fn>).retryExternal, 'channels:edit'],
   ['importCSVRows', (M_channels as unknown as Record<string, Fn>).importCSVRows, 'channels:edit'],

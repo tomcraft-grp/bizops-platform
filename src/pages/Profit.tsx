@@ -4,7 +4,7 @@ import { useDB } from '../domain/store';
 import { RANGES, Range, rangeOf, useBranchIds, useEcon } from '../ui/data';
 import { Badge, Banner, Button, Card, ChannelChip, DataTable, Kpi, PageHead, Select, Seg, useHas, Tx } from '../ui/kit';
 import { Waterfall, HBars } from '../ui/charts';
-import { businessCosts, completeness, groupEcon, groupLines, totalsOf } from '../domain/economics';
+import { businessCosts, businessDeductions, completeness, groupEcon, groupLines, totalsOf } from '../domain/economics';
 import { CHANNEL_LIST } from '../domain/meta';
 import { download, money, money0, pct, shortDay, toCSV } from '../lib/util';
 import { Gate } from '../ui/Shell';
@@ -24,8 +24,9 @@ function Inner() {
   const { orders, lines } = useEcon({ ...r, branchIds });
   const t = useMemo(() => totalsOf(orders), [orders]);
   const comp = completeness(db, t);
-  const biz = useMemo(() => businessCosts(db, r.from, r.to), [db.journals, r.from, r.to]);
-  const netProfit = t.contribution - biz.waste - biz.adjustments - biz.opex;
+  const biz = useMemo(() => businessCosts(db, r.from, r.to), [db.journals, db.postingMap, r.from, r.to]);
+  const deductions = businessDeductions(biz), pv = biz.productionVariance, ab = biz.absorbed;
+  const netProfit = t.contribution - deductions;
   const rows = useMemo(() => {
     if (dim === 'product' || dim === 'category') {
       const g = groupLines(lines, (l) => (dim === 'product' ? l.productId : l.category));
@@ -36,7 +37,7 @@ function Inner() {
     const nm = (k: string) => (dim === 'channel' ? CHANNEL_LIST.find((c) => c.code === k)?.label ?? k : dim === 'branch' ? db.branches.find((b) => b.id === k)?.name ?? k : dim === 'day' ? shortDay(k) : k === 'walk-in' ? 'Walk-in / no customer' : db.customers.find((c) => c.id === k)?.name ?? k);
     return Object.entries(g).map(([k, v]) => ({ key: k, label: nm(k), orders: v.orders, qty: v.units, net: v.net, cogs: v.cogs, gp: v.grossProfit, fees: v.channelCosts, contrib: v.contribution }));
   }, [orders, lines, dim, db.branches, db.customers]);
-  const opexShare = (net: number) => (alloc === 'revenue' && t.net ? ((biz.opex + biz.waste + biz.adjustments) * net) / t.net : 0);
+  const opexShare = (net: number) => (alloc === 'revenue' && t.net ? (deductions * net) / t.net : 0);
   const wf = [
     { label: 'Gross sales (ex VAT)', value: t.gross, kind: 'total' as const },
     { label: 'Discounts (business-funded)', value: t.discount, kind: 'minus' as const },
@@ -49,7 +50,9 @@ function Inner() {
     { label: `Shipping subsidy${t.provisionalOrders ? ' *' : ''}`, value: t.shipping, kind: 'minus' as const },
     { label: 'Net contribution', value: t.contribution, kind: 'total' as const },
     { label: 'Waste, spoilage & shrinkage', value: biz.waste + biz.adjustments, kind: 'minus' as const },
+    ...(pv ? [{ label: pv > 0 ? 'Production variances' : 'Production variances (gain)', value: Math.abs(pv), kind: pv > 0 ? 'minus' as const : 'plus' as const, note: 'Cost left in closed production orders' }] : []),
     { label: 'Operating expenses', value: biz.opex, kind: 'minus' as const },
+    ...(ab ? [{ label: 'Labour and overhead in product cost', value: Math.abs(ab), kind: ab > 0 ? 'plus' as const : 'minus' as const, note: 'Already counted in the cost of goods, so it is not deducted again' }] : []),
     { label: 'Net profit (business level)', value: Math.max(0, netProfit), kind: 'total' as const },
   ];
   return (
@@ -59,19 +62,19 @@ function Inner() {
       <div className="mb16">
         <Banner tone={comp.label === 'Final' ? 'good' : 'warn'} icon={<Info size={16} />}>
           <b><Tx>Data completeness:</Tx>{' '}<Tx>{comp.label}</Tx>.</b> {comp.reasons.length ? comp.reasons.join('. ') + '. ' : <Tx>{'All costs and fees are final. '}</Tx>}
-          <b><Tx>Method:</Tx></b>{' '}<Tx>costs are weighted-average snapshots taken when each order shipped (recipe items use the BOM version effective that day); net sales exclude VAT; “contribution” = gross profit − channel fees; “net profit” also deducts waste, shrinkage and operating expenses from the ledger.</Tx>{' '}{comp.label === 'Provisional' && <><Tx>Figures marked * use</Tx>{' '}<b><Tx>estimated</Tx></b>{' '}<Tx>fees and are not “actual net profit” until settlements are received.</Tx></>}
+          <b><Tx>Method:</Tx></b>{' '}<Tx>costs are weighted-average snapshots taken when each order shipped (recipe items use the BOM version effective that day); net sales exclude VAT; “contribution” = gross profit − channel fees; “net profit” also deducts waste, shrinkage and operating expenses from the ledger.</Tx>{' '}{pv !== 0 && <><Tx>Production variances are part of it as well.</Tx>{' '}</>}{ab !== 0 && <><Tx>Labour and overhead that are in the cost of products are not deducted a second time.</Tx>{' '}</>}{comp.label === 'Provisional' && <><Tx>Figures marked * use</Tx>{' '}<b><Tx>estimated</Tx></b>{' '}<Tx>fees and are not “actual net profit” until settlements are received.</Tx></>}
         </Banner>
       </div>
       <div className="grid g4 mb16">
         <Kpi label="Net sales" value={money0(t.net)} sub={<Tx vars={{ o: t.orders, u: t.units.toLocaleString() }}>{'{o} orders · {u} units'}</Tx>} />
         <Kpi label="Gross profit" value={money0(t.grossProfit)} sub={`${pct(t.net ? t.grossProfit / t.net : 0)} margin`} />
         <Kpi label={<><Tx>Net contribution</Tx>{' '}<Badge tone={comp.label === 'Final' ? 'good' : 'warn'}><Tx>{comp.label}</Tx></Badge></>} value={money0(t.contribution)} sub={<Tx vars={{ p: pct(t.net ? t.contribution / t.net : 0) }}>{'{p} of net sales'}</Tx>} />
-        <Kpi label="Net profit (business)" value={money0(netProfit)} tone={netProfit < 0 ? 'bad' : undefined} sub={`after ${money0(biz.opex)} opex + ${money0(biz.waste + biz.adjustments)} waste/shrink`} />
+        <Kpi label="Net profit (business)" value={money0(netProfit)} tone={netProfit < 0 ? 'bad' : undefined} sub={`after ${money0(biz.opex)} opex + ${money0(biz.waste + biz.adjustments)} waste/shrink${pv ? ` ${pv < 0 ? '−' : '+'} ${money0(Math.abs(pv))} production variance` : ''}${ab ? ` ${ab > 0 ? '−' : '+'} ${money0(Math.abs(ab))} absorbed in product cost` : ''}`} />
       </div>
       <div className="grid g-main mb16">
         <Card title="From gross sales to net profit"><Waterfall rows={wf} fmt={money0} /></Card>
         <Card title="Where the money goes" sub="share of net sales">
-          <HBars color="var(--s2)" items={[{ label: 'Cost of goods', value: t.cogs }, { label: 'Channel fees', value: t.channelCosts }, { label: 'Operating expenses', value: biz.opex }, { label: 'Waste & shrinkage', value: biz.waste + biz.adjustments }, { label: 'Net profit', value: Math.max(0, netProfit), color: 'var(--s3)' }].map((x) => ({ ...x, sub: pct(t.net ? x.value / t.net : 0, 0) }))} fmt={money0} />
+          <HBars color="var(--s2)" items={[{ label: 'Cost of goods', value: t.cogs }, { label: 'Channel fees', value: t.channelCosts }, { label: 'Operating expenses', value: biz.opex }, { label: 'Waste & shrinkage', value: biz.waste + biz.adjustments }, ...(pv > 0 ? [{ label: 'Production variances', value: pv }] : []), { label: 'Net profit', value: Math.max(0, netProfit), color: 'var(--s3)' }].map((x) => ({ ...x, sub: pct(t.net ? x.value / t.net : 0, 0) }))} fmt={money0} />
         </Card>
       </div>
       <Card flush title="Profit by dimension" actions={<><Select sm style={{ width: 'auto' }} value={alloc} onChange={(e) => setAlloc(e.target.value as 'none' | 'revenue')}><option value="none">Do not allocate opex</option><option value="revenue">Allocate opex & waste by revenue share</option></Select><Seg value={dim} onChange={setDim} options={[{ v: 'channel', label: 'Channel' }, { v: 'branch', label: 'Branch' }, { v: 'product', label: 'Product' }, { v: 'category', label: 'Category' }, { v: 'day', label: 'Day' }, { v: 'customer', label: 'Customer' }]} /></>}>

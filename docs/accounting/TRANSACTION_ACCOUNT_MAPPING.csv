@@ -7,6 +7,7 @@ supplier_deposit,Supplier deposit / advance,1140,1140,Supplier deposits / prepay
 inv_materials,Inventory – raw & packaging,1200,1200,Inventory – raw materials & packaging,2020-01-01,inventory,"Purchases of materials, consumption"
 inv_goods,Inventory – goods & finished,1210,1210,Inventory – merchandise & finished goods,2020-01-01,inventory,"Purchases for resale, production output, sales"
 inv_transit,Inventory in transit,1250,1250,Inventory in transit,2020-01-01,inventory,Warehouse transfers
+wip,Work in progress,1220,1220,Work in progress,2020-01-01,inventory,"Materials, labour and overhead of production orders until the goods are received"
 input_vat,Input VAT,1300,1300,Input VAT,2020-01-01,tax_asset,"Purchases, expenses"
 ap,Accounts payable,2100,2100,Accounts payable – suppliers,2020-01-01,payables,"Goods receipts, supplier payments, supplier returns"
 output_vat,Output VAT,2200,2200,Output VAT,2020-01-01,tax_payable,"Sales, returns"
@@ -21,6 +22,9 @@ cogs,Cost of goods sold,5010,5010,Cost of goods sold,2020-01-01,cogs,Recognition
 waste,Waste & spoilage,5100,5100,Production waste & spoilage,2020-01-01,cogs,"Production waste, wasted stock"
 inv_adjust,Inventory adjustments / shrinkage,5200,5200,Inventory adjustments & shrinkage,2020-01-01,cogs,"Counts, corrections, transfer losses"
 conversion_absorbed,Labor & overhead absorbed,5400,5400,Labor & overhead absorbed (contra),2020-01-01,cogs,Production & recipe conversion cost
+prod_var_material,Production variance: material,5310,5310,Production variance: material,2020-01-01,cogs,"Material cost left in an order at its last receipt or when it is closed; reversed receipts and returns"
+prod_var_labor,Production variance: labour,5320,5320,Production variance: labour,2020-01-01,cogs,Labour cost left in an order at its last receipt or when it is closed
+prod_var_overhead,Production variance: overhead,5330,5330,Production variance: overhead,2020-01-01,cogs,Overhead left in an order at its last receipt or when it is closed
 fee_commission,Marketplace commission,6100,6100,Marketplace commission,2020-01-01,channel_costs,Settlements
 fee_payment,Payment processing fees,6110,6110,Payment processing fees,2020-01-01,channel_costs,Settlements
 fee_shipping,Shipping subsidy,6120,6120,Shipping subsidy (seller-paid),2020-01-01,channel_costs,Settlements

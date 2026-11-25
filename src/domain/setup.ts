@@ -1,4 +1,4 @@
-import type { Account, DB, FsLine, ID, JournalDraft, OpeningSet, TaxCode } from './types';
+import type { Account, DB, FsLine, ID, JournalDraft, OpeningSet, ProductionOrder, TaxCode } from './types';
 import { Ctx, audit, docNo, fail, nid, guard } from './core';
 import {
   ROLE_DEFS, ROLE_KEYS, balancesBetween, cr, dr, findAcct, isControl, natBal, netDebit, post, postManualJournal, roleCode, roleLabel, sumAccounts, sumNetDebit,
@@ -37,6 +37,7 @@ export function validateCoa(d: DB): CoaIssue[] {
     else {
       if (!a.posting || !a.active) out.push({ code: c, level: 'error', msg: `Role “${r.label}” maps to ${c}, which is not an active posting account` });
       if (!r.expect.includes(a.fsLine)) out.push({ code: c, level: 'error', msg: `Role “${r.label}” maps to ${c} (${a.fsLine}); expected ${r.expect.join(' / ')}` });
+      if (r.key === 'wip' && a.control !== 'wip') out.push({ code: c, level: 'error', msg: `Role “${r.label}” maps to ${c}, which is not a work in progress control account` });
     }
   }
   return out;
@@ -71,7 +72,9 @@ export function saveAccount(d: DB, ctx: Ctx, p: Partial<Account> & { code: strin
     if (p.type && p.type !== a.type) fail('IN_USE', 'The account type cannot change after postings exist');
     if (p.normal && p.normal !== a.normal) fail('IN_USE', 'The normal balance cannot change after postings exist');
     if (p.posting === false && a.posting) fail('IN_USE', 'An account with postings cannot become a header account');
+    if ('control' in p && (p.control === 'wip') !== (a.control === 'wip')) fail('IN_USE', 'An account with postings cannot become, or stop being, a work in progress account');
   }
+  if ('control' in p && p.control !== 'wip' && a.control === 'wip' && (d.postingMap.wip ?? []).some((m) => m.code === code)) fail('IN_USE', 'The work in progress posting role uses this account, so it must stay a work in progress account. Map the role to another account first');
   if (p.posting === false && a.posting && d.accounts.some((x) => x.parent === code)) { /* header with children is fine */ }
   if (p.posting === true && !a.posting && d.accounts.some((x) => x.parent === code)) fail('INVALID', 'A header account with children cannot become a posting account');
   Object.assign(a, { ...p, code: a.code });
@@ -151,6 +154,7 @@ function checkRoleTarget(d: DB, role: string, toCode: string) {
   const a = findAcct(d, toCode) || fail('NOT_FOUND', `Account ${toCode} does not exist`);
   if (!a!.posting || !a!.active) fail('INVALID', `${toCode} is not an active posting account`);
   if (!r!.expect.includes(a!.fsLine)) fail('INVALID', `“${r!.label}” must map to a ${r!.expect.join(' / ')} account, but ${toCode} is ${a!.fsLine}`);
+  if (role === 'wip' && a!.control !== 'wip') fail('INVALID', `${toCode} is not a work in progress control account. Set its control to work in progress in the chart of accounts first`);
 }
 
 export function setMappingDirect(d: DB, ctx: Ctx, role: string, toCode: string) {
@@ -283,7 +287,7 @@ export function postMovement(d: DB, ctx: Ctx, p: { kind: MovementKind; amount: n
 // ======================================================================================
 // Opening balances (non-control accounts here; subledger balances load through their own documents)
 // ======================================================================================
-const SUBLEDGER_CONTROLS = ['ar', 'platform', 'ap', 'inventory', 'customer_credit', 'supplier_deposit'];
+const SUBLEDGER_CONTROLS = ['ar', 'platform', 'ap', 'inventory', 'customer_credit', 'supplier_deposit', 'wip'];
 export function saveOpeningSet(d: DB, ctx: Ctx, p: { id?: ID; asOf: string; source: string; lines: OpeningSet['lines']; note?: string }): ID {
   guard(d, ctx, 'accounting:create');
   if (!p.source.trim()) fail('INVALID', 'A source document / reference is required');
@@ -340,6 +344,7 @@ export function approveOpening(d: DB, ctx: Ctx, id: ID): ID {
 // ======================================================================================
 // Reconciliation: subledger ↔ general-ledger control accounts (§23.7)
 // ======================================================================================
+const orderWip = (o: ProductionOrder) => (o.wip ? r2(o.wip.materials + o.wip.labor + o.wip.overhead) : 0);
 export interface ReconRow { key: string; title: string; accounts: string; gl: number; sub: number; diff: number; status: 'ok' | 'diff' | 'pending'; subLabel: string; note?: string }
 export function reconciliationMatrix(d: DB): ReconRow[] {
   const bal = balancesBetween(d.journals);
@@ -360,6 +365,8 @@ export function reconciliationMatrix(d: DB): ReconRow[] {
   add('platform', 'Platform (marketplace / delivery) receivables', codes('platform'), gl('platform'), r2(plat), 'Σ unsettled platform orders');
   add('ap', 'Supplier payables', codes('ap'), gl('ap'), r2(d.apInvoices.reduce((s, i) => s + apOpen(i), 0)), 'Σ open supplier invoices');
   add('inventory', 'Inventory', codes('inventory'), gl('inventory'), r2(stockValue(d) + inTransitValue(d)), 'Stock ledger value + in transit');
+  const wip = r2(d.productionOrders.reduce((s, o) => s + orderWip(o), 0));
+  if (Math.abs(gl('wip')) > 0.004 || Math.abs(wip) > 0.004) add('wip', 'Work in progress', codes('wip'), gl('wip'), wip, 'Σ cost in open production orders');
   add('customer_credit', 'Customer credit / unapplied receipts', codes('customer_credit'), gl('customer_credit'), r2(d.receipts.reduce((s, r) => s + receiptUnapplied(d, r), 0)), 'Σ unapplied receipts');
   add('supplier_deposit', 'Supplier deposits', codes('supplier_deposit'), gl('supplier_deposit'), r2(d.suppliers.reduce((s, x) => s + supplierDeposit(d, x.id), 0)), 'Σ deposit balances');
   // tax: net VAT payable per GL vs per source documents
@@ -391,6 +398,8 @@ export function reconDrill(d: DB, key: string): { label: string; amount: number;
   } else if (key === 'inventory') {
     for (const k in d.balances) add(d.warehouses.find((w) => w.id === k.split('|')[0])?.name ?? k, d.balances[k].value);
     add('In transit', inTransitValue(d));
+  } else if (key === 'wip') {
+    for (const o of d.productionOrders) add(o.no, orderWip(o));
   } else if (key === 'customer_credit') {
     for (const r of d.receipts) { const u = receiptUnapplied(d, r); if (u) add(d.customers.find((c) => c.id === r.customerId)?.name ?? 'Unknown', u); }
   } else if (key === 'supplier_deposit') {
