@@ -1,6 +1,6 @@
 # Giving a LINE member back-office access
 
-**Status: built and tested, NOT applied or published** (2026-11-28). Migration `supabase/migrations/20261128110000_backoffice_access.sql`, rollback `supabase/rollbacks/20261128110000_backoffice_access_down.sql`, code `src/pages/LineMembers.tsx` and `src/lib/lineMemberAccess.ts`.
+**Status (2026-11-28, about 01:25 Bangkok): LIVE.** Migration `20261128110000` applied to the live project (after a rolled-back rehearsal of the same file, 36/36; roles unchanged afterwards: 12 customers, 0 ADMIN, 2 SUPER_ADMIN); merged into `main` (f11a039), dist rebuilt (8c9968f), `gh-pages` deployed as `f5c5cc2` (the page serves build `0.1.0+f11a039`; app rollback target: `gh-pages` `df3f8cc`, keep `ocr/`; database rollback: the file below). No Edge Function changed. Nobody has been given access yet: the first person to give it is the owner, from LINE members. Migration `supabase/migrations/20261128110000_backoffice_access.sql`, rollback `supabase/rollbacks/20261128110000_backoffice_access_down.sql`, code `src/pages/LineMembers.tsx` and `src/lib/lineMemberAccess.ts`.
 
 ## Why
 
