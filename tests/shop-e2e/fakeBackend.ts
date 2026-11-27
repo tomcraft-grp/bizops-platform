@@ -10,6 +10,7 @@ import { FakeWallet, NOT_HANDLED } from './fakeWallet';
 import { FakeReview } from './fakeReview';
 import { FakeRewards } from './fakeRewards';
 import { FakeLine } from './fakeLine';
+import { FakeTransfers } from './fakeTransfers';
 
 export const USER_ID = '11111111-1111-4111-8111-111111111111';
 const HOST = 'hlvravynjalculvplrxc.supabase.co';
@@ -45,6 +46,8 @@ export class FakeShop {
   rw = new FakeRewards(this);
   /** the LINE notifications settings (fakeLine.ts) */
   ln = new FakeLine(this);
+  /** customer-to-customer points transfers and their staff audit (fakeTransfers.ts) */
+  tr = new FakeTransfers(this);
   private fail = new Map<string, number>();
   private drop = new Set<string>();
   private seq = 0;
@@ -240,7 +243,7 @@ export class FakeShop {
       }
       case 'finance_role': return this.w.role;
       case 'finance_staff': return null;
-      default: { const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const ln = this.ln.rpc(fn, a); if (ln !== NOT_HANDLED) return ln; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
+      default: { const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const pt = this.tr.rpc(fn, a); if (pt !== NOT_HANDLED) return pt; const ln = this.ln.rpc(fn, a); if (ln !== NOT_HANDLED) return ln; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
     }
   }
 

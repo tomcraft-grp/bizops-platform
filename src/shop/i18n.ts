@@ -2,6 +2,7 @@
 // choice is remembered on their device and is independent of the staff app's language.
 import { useCallback } from 'react';
 import { create } from 'zustand';
+import { POINTS_D } from './i18n.points';
 
 export type ShopLang = 'th' | 'en';
 const KEY = 'tc.shop.lang';
@@ -13,6 +14,7 @@ export const useShopLangStore = create<{ lang: ShopLang; set: (l: ShopLang) => v
 export const useShopLang = () => useShopLangStore((s) => s.lang);
 
 const D = {
+  ...POINTS_D,
   // navigation and general
   'nav.home': ['หน้าหลัก', 'Home'], 'nav.shop': ['สินค้า', 'Products'], 'nav.cart': ['ตะกร้า', 'Cart'], 'nav.orders': ['คำสั่งซื้อ', 'Orders'], 'nav.account': ['บัญชีของฉัน', 'Account'],
   'common.back': ['ย้อนกลับ', 'Back'], 'common.retry': ['ลองอีกครั้ง', 'Try again'], 'common.close': ['ปิด', 'Close'], 'common.all': ['ทั้งหมด', 'All'],
