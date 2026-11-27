@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  blankRow, dayTotals, fillFromSuggestion, formatAmount, isBlank, isDirty, isEditable, matchSuggestion, mergeDay, newRowTaxType, parseAmount, rowFromClaim, shiftDay, stashOf, suggestionsFrom, validateRow,
+  blankRow, dayTotals, fillFromSuggestion, formatAmount, isBlank, isDirty, isEditable, filterSuggestions, matchSuggestion, mergeDay, newRowTaxType, parseAmount, rowFromClaim, shiftDay, stashOf, suggestionsFrom, validateRow,
   type SheetRow,
 } from '../../src/expenses/sheet';
 import type { Category, Claim } from '../../src/expenses/api';
@@ -121,6 +121,26 @@ describe('suggestions for the item box', () => {
     expect(fillFromSuggestion(typed({ categoryId: '' }), m, true)).toMatchObject({ categoryId: 'fuel', method: 'card' });
     expect(fillFromSuggestion(typed({ categoryId: 'food' }), m, false)).toMatchObject({ categoryId: 'food', method: 'cash' });
     expect(matchSuggestion(s, 'nothing like it')).toBeNull();
+  });
+});
+
+describe('the list under the item box', () => {
+  const list = [{ text: 'Coffee', icon: 'utensils', sub: 'Food' }, { text: 'Coffee beans', icon: 'utensils' }, { text: 'ค่าน้ำมัน', icon: 'fuel' }, { text: 'ค่าไฟฟ้า', icon: 'zap' }, { text: 'Gasoline' }];
+  it('shows everything before anything is typed, up to the limit', () => {
+    expect(filterSuggestions(list, '')).toHaveLength(5);
+    expect(filterSuggestions(list, '   ')).toHaveLength(5);
+    expect(filterSuggestions(list, '', 2).map((x) => x.text)).toEqual(['Coffee', 'Coffee beans']);
+  });
+  it('keeps what contains the typed text, in any case and in Thai too, in the same order, with its icon', () => {
+    expect(filterSuggestions(list, 'cOFF').map((x) => x.text)).toEqual(['Coffee', 'Coffee beans']);
+    expect(filterSuggestions(list, 'น้ำมัน')).toEqual([{ text: 'ค่าน้ำมัน', icon: 'fuel' }]);
+    expect(filterSuggestions(list, 'ฟ้า')[0].icon).toBe('zap');
+    expect(filterSuggestions(list, '  coffee   BEAN ').map((x) => x.text)).toEqual(['Coffee beans']);
+  });
+  it('offers nothing when nothing fits, or when the only fit is exactly what is typed', () => {
+    expect(filterSuggestions(list, 'zzz')).toEqual([]);
+    expect(filterSuggestions(list, 'gasoline')).toEqual([]);
+    expect(filterSuggestions(list, 'coffee')).toHaveLength(2);      // an exact fit that has longer ones after it still shows them
   });
 });
 

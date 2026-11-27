@@ -525,6 +525,22 @@ details.acc > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
 .xs-bar-sum b { font-size: 17px; color: var(--text); }
 .xs-bar-act { display: flex; gap: 8px; flex-wrap: wrap; }
 .xs-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
+/* item box with category icons (src/expenses/ItemBox.tsx): the list is drawn at page level, so nothing can cut it off */
+.xs-ib { position: relative; display: block; }
+.xs-ib .input { padding-left: 36px; padding-right: 30px; }
+.xs-lead { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); display: inline-flex; color: var(--brand-text, var(--brand)); pointer-events: none; z-index: 1; }
+.xs-lead.off { color: var(--muted); opacity: .55; }
+.xs-chev { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.xs-pop { position: fixed; z-index: 70; overflow-y: auto; overscroll-behavior: contain; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 14px 36px rgba(0, 0, 0, .18); padding: 4px; }
+.xs-opt { display: flex; align-items: center; gap: 10px; padding: 6px 8px; min-height: 40px; border-radius: 9px; cursor: pointer; color: var(--text); }
+.xs-opt.on { background: var(--brand-soft); }
+.xs-ico { flex: none; width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--brand-soft); color: var(--brand-text, var(--brand)); }
+.xs-ico.off { background: var(--surface-3); color: var(--muted); }
+.xs-opt.on .xs-ico { background: var(--surface); }
+.xs-opt-t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.xs-opt-s { flex: none; max-width: 45%; color: var(--text-2); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
+.xs-lt { display: inline-flex; align-items: center; gap: 8px; } .xs-lt .xs-ico { width: 24px; height: 24px; border-radius: 7px; }
+@media (pointer: coarse) { .xs-opt { min-height: 46px; } }
 @media (max-width: 860px) {
   .xs-hrow, .xs-n, .xs-keys { display: none !important; }
   .xs-row { grid-template-columns: 1.5fr 1fr auto; grid-template-areas: "item item act" "cat method method" "amt notes notes"; padding: 12px; gap: 8px; }
