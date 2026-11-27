@@ -3,8 +3,9 @@
 // the Settings page. The server says who may edit (can_edit = SUPER_ADMIN); everyone on staff may read and link their own LINE.
 import { useCallback, useEffect, useState } from 'react';
 import { toast, useLang } from '../domain/store';
+import { useAuth } from '../auth/AuthProvider';
 import { t } from '../lib/i18n';
-import { isLineMissing, line, lineErrorText, parseReasons, validMaxAmount, validReasons, type LineEvent, type LineSettings, type OutboxEntry } from '../lib/lineApi';
+import { isLineMissing, line, lineErrorText, myLinks, parseReasons, validMaxAmount, validReasons, type LineEvent, type LineSettings, type OutboxEntry } from '../lib/lineApi';
 import { Badge, Banner, Button, Card, Check, Field, Input, Seg, Switch, Textarea, Tx } from '../ui/kit';
 
 const EVENTS: { k: LineEvent; label: string }[] = [
@@ -23,6 +24,7 @@ const tone = (s: OutboxEntry['status']) => (s === 'sent' ? 'good' : s === 'dead'
 
 export function LineSettingsCard() {
   const lang = useLang();
+  const { profile } = useAuth();
   const [s, setS] = useState<LineSettings | null>(null);
   const [missing, setMissing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -53,6 +55,7 @@ export function LineSettingsCard() {
 
   if (missing) return <Card title="LINE notifications"><div data-line-settings><Banner tone="warn"><Tx>The LINE part of the database is not installed yet.</Tx></Banner></div></Card>;
   if (!s) return <Card title="LINE notifications"><div data-line-settings /></Card>;
+  const mine = myLinks(s);
 
   const saveCred = () => run(async () => {
     await line.setCredentials({ secret: cred.secret.trim() || undefined, token: cred.token.trim() || undefined });
@@ -123,12 +126,17 @@ export function LineSettingsCard() {
         {/* my LINE */}
         <section className="col" style={{ gap: 8 }}>
           <h3><Tx>My LINE</Tx></h3>
-          {s.my_link ? <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <Tx vars={{ name: s.my_link.display_name ?? 'LINE' }}>{'Linked as {name}'}</Tx>
-            <Button size="sm" disabled={busy} onClick={() => run(async () => { await line.unlink(); show(await line.settings()); toast('success', 'Unlinked'); })}><Tx>Unlink</Tx></Button>
-          </div> : <div className="muted"><Tx>Your LINE is not linked: you cannot act on cards yet.</Tx></div>}
-          <div><Button disabled={busy} onClick={() => run(async () => { const c = await line.linkCode('staff'); setCode({ kind: 'staff', code: c.code }); })}><Tx>Link my LINE</Tx></Button></div>
-          {code?.kind === 'staff' && <Banner tone="info"><Tx vars={{ code: code.code }}>{'Add the LINE OA as a friend, then send it this code in a private chat within 10 minutes: {code}'}</Tx></Banner>}
+          <div className="muted"><Tx vars={{ name: profile?.display_name || profile?.email || '' }}>{'Signed in as {name}. Every LINE account linked here can accept orders as this staff account.'}</Tx></div>
+          {mine.length ? <ul className="col" style={{ gap: 6, margin: 0, paddingLeft: 18 }} data-testid="my-links">
+            {mine.map((l, i) => (
+              <li key={l.line_user_id ?? i} className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <Tx vars={{ name: l.display_name ?? 'LINE' }}>{'Linked as {name}'}</Tx>
+                <Button size="sm" disabled={busy} onClick={() => run(async () => { if (l.line_user_id) await line.unlinkAccount(l.line_user_id); else await line.unlink(); show(await line.settings()); toast('success', 'Unlinked'); })}><Tx>Unlink</Tx></Button>
+              </li>
+            ))}
+          </ul> : <div className="muted"><Tx>Your LINE is not linked: you cannot act on cards yet.</Tx></div>}
+          <div><Button disabled={busy} onClick={() => run(async () => { const c = await line.linkCode('staff'); setCode({ kind: 'staff', code: c.code }); })}><Tx>{mine.length ? 'Add another LINE account' : 'Link my LINE'}</Tx></Button></div>
+          {code?.kind === 'staff' && <Banner tone="info"><Tx vars={{ code: code.code, name: profile?.display_name || profile?.email || '' }}>{'This code links a LINE account to the staff account {name}. Add the LINE OA as a friend, then send it this code in a private chat within 10 minutes: {code}'}</Tx><div className="muted"><Tx>{'Someone else should sign in with their own staff account and make their own code, so that their name appears on the orders they accept. A code never removes anybody else\'s link.'}</Tx></div></Banner>}
         </section>
 
         {edit && s.links && (
@@ -137,9 +145,9 @@ export function LineSettingsCard() {
             {s.links.length === 0 ? <div className="muted"><Tx>Nobody has linked a LINE account yet.</Tx></div> : (
               <ul className="col" style={{ gap: 6, margin: 0, paddingLeft: 18 }}>
                 {s.links.map((l) => (
-                  <li key={l.profile_id} className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <li key={l.line_user_id ?? l.profile_id} className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                     <span>{l.name}</span>{l.line_name && <span className="muted">({l.line_name})</span>}
-                    <Button size="sm" disabled={busy} onClick={() => run(async () => { await line.unlink(l.profile_id); show(await line.settings()); toast('success', 'Unlinked'); })}><Tx>Unlink</Tx></Button>
+                    <Button size="sm" disabled={busy} onClick={() => run(async () => { if (l.line_user_id) await line.unlinkAccount(l.line_user_id); else await line.unlink(l.profile_id); show(await line.settings()); toast('success', 'Unlinked'); })}><Tx>Unlink</Tx></Button>
                   </li>
                 ))}
               </ul>

@@ -80,4 +80,8 @@ export const TH_LINE: Record<string, string> = {
   'No bank reference': 'ไม่มีเลขอ้างอิง',
   'LINE quick approvals': 'อนุมัติด่วนจาก LINE',
   'Bank transaction reference (optional, from the bank statement)': 'เลขอ้างอิงธนาคาร (ไม่บังคับ จากรายการเดินบัญชี)',
+  'Signed in as {name}. Every LINE account linked here can accept orders as this staff account.': 'เข้าสู่ระบบเป็น {name} ทุกบัญชี LINE ที่ผูกไว้ที่นี่กดรับออเดอร์ในนามบัญชีพนักงานนี้ได้',
+  'Add another LINE account': 'เพิ่มบัญชี LINE อีกบัญชี',
+  'This code links a LINE account to the staff account {name}. Add the LINE OA as a friend, then send it this code in a private chat within 10 minutes: {code}': 'รหัสนี้ผูกบัญชี LINE กับบัญชีพนักงาน {name} เพิ่ม LINE OA เป็นเพื่อน แล้วส่งรหัสนี้ในแชทส่วนตัวภายใน 10 นาที: {code}',
+  'Someone else should sign in with their own staff account and make their own code, so that their name appears on the orders they accept. A code never removes anybody else\'s link.': 'คนอื่นควรเข้าสู่ระบบด้วยบัญชีพนักงานของตัวเองแล้วสร้างรหัสของตัวเอง เพื่อให้ชื่อของเขาขึ้นในออเดอร์ที่เขากดรับ รหัสใหม่ไม่ลบการผูกของคนอื่น',
 };

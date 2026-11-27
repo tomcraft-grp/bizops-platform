@@ -18,7 +18,9 @@ export interface LineSettings {
   token_set: boolean; token_set_at: string | null;
   can_edit: boolean;
   my_link: { display_name: string | null; linked_at: string } | null;
-  links: { profile_id: string; name: string; email: string; line_name: string | null; linked_at: string }[] | null;
+  /** every LINE account linked to my staff account (a database with the multi-link migration); an older one sends only `my_link` */
+  my_links?: { line_user_id: string; display_name: string | null; linked_at: string }[];
+  links: { profile_id: string; name: string; email: string; line_name: string | null; linked_at: string; line_user_id?: string }[] | null;
   webhook_url: string;
 }
 export interface OutboxEntry {
@@ -33,6 +35,10 @@ function must<T>(r: { data: T | null; error: { message: string } | null }, what:
   return r.data as T;
 }
 
+/** My linked LINE accounts: the list when the database sends it, else the single old `my_link`. */
+export const myLinks = (s: Pick<LineSettings, 'my_link' | 'my_links'>): { line_user_id?: string; display_name: string | null; linked_at: string }[] =>
+  s.my_links ?? (s.my_link ? [s.my_link] : []);
+
 export const line = {
   async settings(): Promise<LineSettings> { return must(await supabase.rpc('line_admin_settings'), 'LINE settings'); },
   async save(patch: SettingsPatch): Promise<LineSettings> { return must(await supabase.rpc('line_admin_save_settings', { p_patch: patch }), 'Save LINE settings'); },
@@ -40,7 +46,10 @@ export const line = {
     must(await supabase.rpc('line_admin_set_credentials', { p_channel_secret: p.secret || null, p_access_token: p.token || null }), 'Save LINE credentials');
   },
   async linkCode(kind: 'staff' | 'group'): Promise<{ code: string; expires_at: string }> { return must(await supabase.rpc('line_link_code', { p_kind: kind }), 'LINE code'); },
+  /** Take back every LINE account of a staff account (mine when no id is given). */
   async unlink(profileId?: string): Promise<void> { must(await supabase.rpc('line_unlink', { p_profile: profileId ?? null }), 'Unlink LINE'); },
+  /** Take back ONE LINE account (mine, or anybody's for a SUPER_ADMIN). */
+  async unlinkAccount(lineUserId: string): Promise<void> { must(await supabase.rpc('line_unlink_account', { p_line_user: lineUserId }), 'Unlink LINE'); },
   async outbox(filter: 'all' | 'failed'): Promise<OutboxEntry[]> { return must(await supabase.rpc('line_admin_outbox', { p_filter: filter, p_limit: 100 }), 'LINE delivery log') ?? []; },
   async resend(id: string): Promise<void> { must(await supabase.rpc('line_admin_resend', { p_id: id }), 'Send again'); },
   async test(): Promise<{ ok: boolean; name?: string | null; error?: string | null }> {

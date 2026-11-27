@@ -39,3 +39,17 @@ describe('form checks', () => {
     expect(parseReasons(' สลิปไม่ถูกต้อง \n\nสินค้าหมด\n')).toEqual(['สลิปไม่ถูกต้อง', 'สินค้าหมด']);
   });
 });
+
+describe('myLinks: my LINE accounts, from a database with or without the multi-link migration', () => {
+  it('uses the list when the database sends it (several accounts, none removed by another)', async () => {
+    const { myLinks } = await import('../../src/lib/lineApi');
+    const l = [{ line_user_id: 'U1', display_name: 'A', linked_at: 't1' }, { line_user_id: 'U2', display_name: 'B', linked_at: 't2' }];
+    expect(myLinks({ my_link: { display_name: 'B', linked_at: 't2' }, my_links: l })).toEqual(l);
+    expect(myLinks({ my_link: null, my_links: [] })).toEqual([]);
+  });
+  it('falls back to the single old key from an older database', async () => {
+    const { myLinks } = await import('../../src/lib/lineApi');
+    expect(myLinks({ my_link: { display_name: 'Only', linked_at: 't' } })).toEqual([{ display_name: 'Only', linked_at: 't' }]);
+    expect(myLinks({ my_link: null })).toEqual([]);
+  });
+});
