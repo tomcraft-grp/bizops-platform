@@ -11,6 +11,7 @@ import { FakeReview } from './fakeReview';
 import { FakeRewards } from './fakeRewards';
 import { FakeLine } from './fakeLine';
 import { FakeTransfers } from './fakeTransfers';
+import { FakePreorders } from './fakePreorders';
 
 export const USER_ID = '11111111-1111-4111-8111-111111111111';
 const HOST = 'hlvravynjalculvplrxc.supabase.co';
@@ -24,7 +25,7 @@ export interface FItem {
 /** One payment event on an invoice, as the fake keeps it. `staffNote` is what staff wrote in the staff-only columns (review_note, confirm_note): it must never reach a customer's screen. */
 export interface FEvidence { id: string; status: 'submitted' | 'confirmed' | 'more_evidence' | 'verified' | 'rejected'; claimed_amount: number; created_at: string; reject_reason?: string | null; reviewed_at?: string; request_message?: string | null; confirmed_amount?: number | null; source?: 'customer_slip' | 'staff_entry'; method?: 'transfer' | 'cash'; staffNote?: string }
 interface FInvoice { id: string; invoice_no: string; amount: number; paid: number; cancelled: boolean; evidence: FEvidence[]; req: null | { ref: string; amount: number; qr_payload: string; expires_at: string }; source_ref: string; created_at: string; refunded?: number; /** the customer's receipts (what the payment history lists) */ receipts?: { receipt_no: string; amount: number; received_at: string }[]; /** test control: force a state code the fake cannot derive (6 = overpaid, under review) */ forceCode?: number }
-interface FOrder { id: string; order_no: string; status: string; fulfilment: string; contact_name: string; contact_phone: string; delivery_address: string | null; note: string | null; items: { line_no: number; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[]; subtotal: number; discount: number; shipping_fee: number; total: number; created_at: string; key: string; hash: string; invoice: FInvoice; status_note: string | null; cancel_reason: string | null; payment_pref: string | null }
+export interface FOrder { id: string; order_no: string; status: string; fulfilment: string; contact_name: string; contact_phone: string; delivery_address: string | null; note: string | null; items: { line_no: number; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[]; subtotal: number; discount: number; shipping_fee: number; total: number; created_at: string; key: string; hash: string; invoice: FInvoice; status_note: string | null; cancel_reason: string | null; payment_pref: string | null }
 
 /** the columns of the payment events table that the slip-review migration added and that a customer reads */
 const REVIEW_COLUMNS = ['request_message', 'source', 'method'];
@@ -48,6 +49,8 @@ export class FakeShop {
   ln = new FakeLine(this);
   /** customer-to-customer points transfers and their staff audit (fakeTransfers.ts) */
   tr = new FakeTransfers(this);
+  /** preorders: the slot calendar, capacity, the change window, the checklist, notices and the staff screens (fakePreorders.ts) */
+  po = new FakePreorders(this);
   private fail = new Map<string, number>();
   private drop = new Set<string>();
   private seq = 0;
@@ -135,8 +138,10 @@ export class FakeShop {
   }
   private orderJson(o: FOrder) {
     const { key: _k, hash: _h, invoice, ...rest } = o; void _k; void _h;
-    return { ...rest, channel: 'LINE', updated_at: o.created_at, cancelled_at: null, invoice: this.invoiceRow(invoice) };
+    return { ...rest, channel: 'LINE', updated_at: o.created_at, cancelled_at: null, invoice: this.invoiceRow(invoice), ...this.po.orderExtra(o) };
   }
+  /** the order as the customer app reads it (for the preorder fake) */
+  orderJsonPublic(o: FOrder) { return this.orderJson(o); }
   private quote(items: unknown, fulfilment: string) {
     if (!Array.isArray(items) || !items.length) this.err('CART_EMPTY');
     if (items.length > 40) this.err('CART_TOO_LARGE');
@@ -162,7 +167,7 @@ export class FakeShop {
     switch (fn) {
       case 'get_published_customer_layout': return this.layout;
       case 'customer_app_query': return { columns: [{ key: 'sku_code', label: 'SKU', type: 'text' }, { key: 'name_full', label: 'Name', type: 'text' }, { key: 'price', label: 'Price', type: 'money' }], rows: this.items.slice(0, 3).map((i) => ({ sku_code: i.sku_code, name_full: i.name, price: i.price })) };
-      case 'shop_settings_public': return { ...this.settings, shop_open: this.settings.shop_open };
+      case 'shop_settings_public': return { ...this.settings, shop_open: this.settings.shop_open, ...this.po.publicSetting() };
       case 'shop_facets': {
         const cats = new Map<string, FItem[]>(); for (const i of this.items) cats.set(i.category, [...(cats.get(i.category) ?? []), i]);
         const brands = new Map<string, number>(); for (const i of this.items) if (i.brand) brands.set(i.brand, (brands.get(i.brand) ?? 0) + 1);
@@ -205,16 +210,17 @@ export class FakeShop {
       }
       case 'shop_my_orders': {
         const f = String(a.p_filter ?? 'all');
-        const mine = this.orders.filter((o) => { const p = this.payOf(o); return f === 'unpaid' ? o.status !== 'cancelled' && [0, 1, 3, 4, 7, 9, 10].includes(p) : f === 'to_ship' ? ['new', 'confirmed', 'preparing', 'packed'].includes(o.status) && [5, 6].includes(p) : f === 'to_receive' ? ['shipped', 'ready'].includes(o.status) : f === 'done' ? o.status === 'completed' : f === 'cancelled' ? ['cancelled', 'returned'].includes(o.status) : true; })
-          .sort((x, y) => y.created_at.localeCompare(x.created_at));
+        const mine = this.orders.filter((o) => { const p = this.payOf(o); return f === 'unpaid' ? o.status !== 'cancelled' && [0, 1, 3, 4, 7, 9, 10].includes(p) : f === 'to_ship' ? ['new', 'confirmed', 'preparing', 'packed'].includes(o.status) && [5, 6].includes(p) : f === 'to_receive' ? ['shipped', 'ready'].includes(o.status) : f === 'done' ? o.status === 'completed' : f === 'cancelled' ? ['cancelled', 'returned'].includes(o.status) : f === 'preorder' ? this.po.upcoming(o) : true; })
+          .sort((x, y) => (f === 'preorder' ? this.po.pickupOf(x).localeCompare(this.po.pickupOf(y)) : 0) || y.created_at.localeCompare(x.created_at));   // the scheduled pickups come soonest first
         const off = Number(a.p_offset ?? 0), lim = Number(a.p_limit ?? 20);
         return { total: mine.length, orders: mine.slice(off, off + lim).map((o) => this.orderJson(o)) };
       }
-      case 'shop_my_order': { const o = this.orders.find((x) => x.id === a.p_id); if (!o) this.err('Order not found'); return { ...this.orderJson(o), events: [] }; }
+      case 'shop_my_order': { const o = this.orders.find((x) => x.id === a.p_id); if (!o) this.err('Order not found'); return { ...this.orderJson(o), events: [], notices: this.po.customerNotices(o) }; }
       case 'shop_cancel_my_order': {
         const o = this.orders.find((x) => x.id === a.p_id); if (!o) this.err('Order not found');
         if (o.status !== 'new') this.err('ORDER_IN_PROGRESS'); if (o.invoice.paid > 0) this.err('PAYMENT_RECORDED'); if (o.invoice.evidence.some((e) => e.status === 'submitted' || e.status === 'confirmed' || e.status === 'more_evidence')) this.err('SLIP_PENDING');   // like shop_cancel_order_internal: a slip the shop confirmed (not yet posted) or asked more evidence for also blocks it
-        o.status = 'cancelled'; o.invoice.cancelled = true; o.cancel_reason = String(a.p_reason ?? 'Cancelled by customer'); return this.orderJson(o);
+        this.po.cancelCheck(o);
+        o.status = 'cancelled'; o.invoice.cancelled = true; o.cancel_reason = String(a.p_reason ?? 'Cancelled by customer'); this.po.afterCancel(o, 'customer', o.cancel_reason); return this.orderJson(o);
       }
       case 'finance_my_invoices': return this.orders.map((o) => this.invoiceRow(o.invoice));
       case 'finance_request_payment': {
@@ -243,7 +249,7 @@ export class FakeShop {
       }
       case 'finance_role': return this.w.role;
       case 'finance_staff': return null;
-      default: { const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const pt = this.tr.rpc(fn, a); if (pt !== NOT_HANDLED) return pt; const ln = this.ln.rpc(fn, a); if (ln !== NOT_HANDLED) return ln; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
+      default: { const po = this.po.rpc(fn, a); if (po !== NOT_HANDLED) return po; const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const pt = this.tr.rpc(fn, a); if (pt !== NOT_HANDLED) return pt; const ln = this.ln.rpc(fn, a); if (ln !== NOT_HANDLED) return ln; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
     }
   }
 
@@ -253,7 +259,7 @@ export class FakeShop {
   paymentAccountReady = false;
   private staff() { if (!['ADMIN', 'SUPER_ADMIN'].includes(this.profile.role)) this.err('You are not allowed to see online orders'); }
   private adminOrder(o: FOrder) {
-    return { ...this.orderJson(o), customer: { code: 'LINE-TEST', name: this.profile.display_name, phone: this.profile.phone, line_user_id: null },
+    return { ...this.orderJson(o), ...this.po.adminExtra(o), customer: { code: 'LINE-TEST', name: this.profile.display_name, phone: this.profile.phone, line_user_id: null },
       events: [{ at: o.created_at, actor_email: this.profile.email, action: 'order.place', detail: {} }, ...(this.statusLog.get(o.id) ?? [])] };
   }
   statusLog = new Map<string, { at: string; actor_email: string; action: string; detail: Record<string, unknown> }[]>();
@@ -270,6 +276,7 @@ export class FakeShop {
       case 'shop_admin_set_status': {
         this.staff();
         const o = this.orders.find((x) => x.id === a.p_order); if (!o) this.err('Order not found');
+        if (this.po.isPreorder(o)) return this.po.setStatus(o, String(a.p_status), String(a.p_note ?? '').trim() || null, String(a.p_override_reason ?? '').trim() || null);
         const to = String(a.p_status); const note = String(a.p_note ?? '').trim() || null; const why = String(a.p_override_reason ?? '').trim() || null;
         const log = (detail: Record<string, unknown>) => this.statusLog.set(o.id, [...(this.statusLog.get(o.id) ?? []), { at: new Date().toISOString(), actor_email: this.profile.email, action: 'order.status', detail }]);
         if (to === 'cancelled') { if (!note) this.err('A reason is required'); if (o.invoice.paid > 0) this.err('PAYMENT_RECORDED'); o.status = 'cancelled'; o.invoice.cancelled = true; o.cancel_reason = note; log({ to }); return this.orderJson(o); }
@@ -318,7 +325,7 @@ export class FakeShop {
   private place(a: Record<string, unknown>, viaHttp = false) {
     const key = String(a.p_key ?? '');
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) this.err('INVALID_KEY');
-    const norm = JSON.stringify({ i: (a.p_items as { sku_code: string; qty: number }[]).map((x) => [x.sku_code, x.qty]).sort(), f: a.p_fulfilment, n: String(a.p_name).trim(), p: String(a.p_phone).replace(/\D/g, ''), a: a.p_address ? String(a.p_address).trim() : null, note: a.p_note, ...(a.p_payment_method ? { pm: a.p_payment_method } : {}), ...(a.p_slip_sha256 ? { slip: a.p_slip_sha256 } : {}) });
+    const norm = JSON.stringify({ i: (a.p_items as { sku_code: string; qty: number }[]).map((x) => [x.sku_code, x.qty]).sort(), f: a.p_fulfilment, n: String(a.p_name).trim(), p: String(a.p_phone).replace(/\D/g, ''), a: a.p_address ? String(a.p_address).trim() : null, note: a.p_note, ...(a.p_payment_method ? { pm: a.p_payment_method } : {}), ...(a.p_slip_sha256 ? { slip: a.p_slip_sha256 } : {}), ...(a.p_pickup_at ? { pu: a.p_pickup_at } : {}) });
     const have = this.orders.find((o) => o.key === key);
     if (have) { if (have.hash !== norm) this.err('KEY_REUSED'); return { replay: true, order: this.orderJson(have) }; }
     if (!this.settings.shop_open) this.err('SHOP_CLOSED');
@@ -332,6 +339,7 @@ export class FakeShop {
     const q = this.quote(a.p_items, String(a.p_fulfilment)) as unknown as { ok: boolean; problems: unknown[]; total: number; subtotal: number; shipping_fee: number; lines: { ok: boolean; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[] };
     if (!q.ok) this.err('CART_INVALID', JSON.stringify(q.problems));
     if (a.p_expected_total != null && Number(a.p_expected_total) !== q.total) this.err('PRICE_CHANGED', String(q.total));
+    if (a.p_pickup_at) this.po.checkNew(String(a.p_pickup_at), String(a.p_fulfilment), (q.lines as unknown as { ok: boolean; qty: number }[]).filter((l) => l.ok).reduce((s, l) => s + l.qty, 0));
     const n = this.orders.length + 1; const no = `ORD-${String(n).padStart(6, '0')}`; const now = new Date(Date.now() + n * 1000).toISOString();
     const inv: FInvoice = { id: `inv-${n}`, invoice_no: `INV-${String(n).padStart(6, '0')}`, amount: q.total, paid: 0, cancelled: false, evidence: [], req: null, source_ref: no, created_at: now };
     const o: FOrder = { id: `ord-${n}`, order_no: no, status: 'new', fulfilment: String(a.p_fulfilment), contact_name: String(a.p_name).trim(), contact_phone: phone, delivery_address: a.p_fulfilment === 'delivery' ? (String(a.p_address ?? '').trim() || null) : null,
@@ -346,6 +354,7 @@ export class FakeShop {
       this.w.noteSlip(id, pm?.startsWith('bank:') ? (this.w.banks.find((b) => b.code === pm.slice(5))?.id ?? null) : null);
     }
     this.orders.push(o);
+    if (a.p_pickup_at) this.po.attach(o, new Date(String(a.p_pickup_at)).toISOString());
     return { replay: false, order: this.orderJson(o) };
   }
   // test controls: what staff do in the back office

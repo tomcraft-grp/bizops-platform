@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell, Boxes, Calculator, ChefHat, ChevronsLeft, ChevronsRight, CircleUser, Factory, FileImage, Gift, Heart, LayoutDashboard, Layers, Languages, LineChart, Lock, LogOut, Menu, Monitor, Moon,
   Package, Percent, Printer, Receipt, Search, Settings, ShieldCheck, ShoppingBag, ShoppingCart, Smartphone, Sparkles, Store, Sun, Tag, Truck, Users, Wallet, Radio, Hash, FileText, Activity, Map, Check, MessageSquarePlus,
-  Palette, Landmark,
+  Palette, Landmark, CalendarClock, ClipboardList,
 } from 'lucide-react';
 import { act, setLang, setTheme, toggleCollapsed, setUI, useDB, useLang, useStore } from '../domain/store';
 import { startSkuSyncWatch, syncSkus } from '../domain/skuSync';
@@ -43,6 +43,8 @@ const NAV: { title: string; items: NavItem[] }[] = [
     { to: '/pos', label: 'POS', icon: <ShoppingCart />, perm: 'pos:view' },
     { to: '/orders', label: 'Orders', icon: <ShoppingBag />, perm: 'orders:view', badge: 'orders' },
     { to: '/shop-admin', label: 'Online shop', icon: <Store />, perm: 'orders:view' },
+    { to: '/preorders', label: 'Preorders', icon: <CalendarClock />, perm: 'orders:view' },
+    { to: '/prep', label: 'Pickup prep', icon: <ClipboardList />, perm: 'orders:view' },
     { to: '/channels', label: 'Channels', icon: <Radio />, perm: 'channels:view', badge: 'sync' },
     { to: '/kds', label: 'Kitchen display', icon: <ChefHat />, perm: 'kds:view' },
   ] },

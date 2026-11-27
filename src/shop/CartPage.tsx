@@ -2,7 +2,7 @@
 // (shop_quote); placing the order sends only SKU + quantity + contact details and the total the customer saw, and the
 // database prices the order again. A retry of the same checkout returns the same order (see attemptKey).
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ShoppingCart, Store, Trash2, Truck, Upload } from 'lucide-react';
+import { ArrowLeft, CalendarClock, ShoppingCart, Store, Trash2, Truck, Upload } from 'lucide-react';
 import { Banner, Empty } from '../ui/kit';
 import { cx } from '../lib/util';
 import { useAuth } from '../auth/AuthProvider';
@@ -19,6 +19,8 @@ import { ConfirmSheet, ErrorBox, errText, Fold, ProductImage, Stepper } from './
 import { RewardsPreview } from './Rewards';
 import { CheckoutQrPanel, PayToBank } from '../wallet/PayTo';
 import { RecentOrders } from './RecentOrders';
+import { PickupPicker, PreorderSummary, QuickPhrases } from './Preorder';
+import { preorderUnits } from './preorderView';
 import { Choice, PayMethodPicker, useMethods } from '../wallet/ui';
 import { removeOrderSlip, slipFingerprint, slipProblem, uploadOrderSlip } from '../wallet/api';
 import { review } from '../finance/review';
@@ -93,6 +95,12 @@ export function CartCore() {
   );
 }
 
+/** The way the customer chose to pay, in words, for the confirmation of a preorder. */
+function methodLabel(t: ReturnType<typeof useT>, m: Choice, bank?: string): string {
+  if (!m) return '-';
+  return m.kind === 'wallet' ? t('po.cf.method.wallet') : m.kind === 'qr' ? t('po.cf.method.qr') : t('po.cf.method.bank', { bank: bank ?? '' });
+}
+
 const CONTACT_KEY = (uid: string) => `tc.shop.contact:${uid}`;
 interface Contact { name: string; phone: string; address: string }
 function loadContact(uid: string | undefined): Partial<Contact> {
@@ -115,11 +123,16 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   const phone = draft.phone ?? saved.phone ?? profile?.phone ?? '';
   const address = draft.address ?? saved.address ?? '';
   const note = draft.note ?? '';
+  // a preorder = pick-up at a time the customer chose; it exists only while the shop offers it
+  const preorder = fulfilment === 'pickup' && draft.preorder === true && settings?.preorder_enabled === true;
+  const pickupAt = preorder ? draft.pickupAt ?? '' : '';
+  const units = preorderUnits(quote.lines.filter((l) => l.ok));
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [asking, setAsking] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
+  const [reloadSlots, setReloadSlots] = useState(0);
   const inflight = useRef(false);
   const lines = useCart((s) => s.lines);
   // how the customer intends to pay: any active bank account, the wallet (only when it holds money) or the PromptPay QR. Changeable here at any time; a choice that is no
@@ -165,6 +178,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   const ask = () => {
     setTouched(true); setErr(null);
     if (needsSlip && !slip) { setErr(t('co.slipMissing')); slipSec.current?.scrollIntoView({ block: 'center' }); return; }
+    if (preorder && !pickupAt) { setErr(t('po.pickFirst')); document.querySelector('[data-testid="pickup-picker"]')?.scrollIntoView({ block: 'center' }); return; }
     if (!formOk) { setSec('contact'); setTimeout(() => document.querySelector<HTMLElement>('[data-fold="contact"] [aria-invalid="true"]')?.focus(), 0); return; }
     const hold = needsSlip ? holdUp(live) : null;              // still being read (never longer than 20 s), or something to confirm first
     if (hold) { setErr(t(hold)); document.querySelector('[data-testid="slip-live"]')?.scrollIntoView({ block: 'center' }); return; }
@@ -177,11 +191,11 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
     try {
       const items = toQuoteItems(lines);
       const fp = needsSlip && slip ? await slipFingerprint(slip.file) : null;
-      const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? address.trim() : '', note: note.trim(), pm: methodPref, slip: fp?.sha256 ?? null });
+      const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? address.trim() : '', note: note.trim(), pm: methodPref, slip: fp?.sha256 ?? null, pu: pickupAt || null });
       const key = attemptKey(sessionStorage, uid, payload);
       // the same key gives the same file: a retry never leaves a second one. A stalled upload gives up after 60 s so the button comes back (FB-001019)
       if (fp && slip) { setUploading(true); uploaded = await withTimeout(() => uploadOrderSlip(slip.file, key, fp), 60_000); setUploading(false); }
-      const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: address.trim(), note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total,
+      const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: address.trim(), note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total, pickupAt: pickupAt || null,
         slip: fp && uploaded ? { path: uploaded, sha256: fp.sha256, type: fp.type, transferAt: slipWhen ? new Date(slipWhen).toISOString() : null, ref: slipRef.trim() || null } : null });
       try { localStorage.setItem(CONTACT_KEY(uid), JSON.stringify({ name: name.trim(), phone: digits(phone), address: address.trim() } satisfies Contact)); } catch { /* ignore */ }
       forgetAttempt(sessionStorage, uid);
@@ -200,6 +214,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       const code = e instanceof ShopError ? e.code : '';
       if (uploaded && e instanceof ShopError && code !== 'NETWORK' && code !== 'ERROR') removeOrderSlip(uploaded);   // refused for good: do not keep the file (a lost answer might still have created the order, so then it stays)
       if (code === 'PRICE_CHANGED' || code === 'CART_INVALID') refresh();   // show the new numbers / the unavailable items
+      if (/^(SLOT_|DAY_UNITS)/.test(code)) { patch({ pickupAt: undefined }); setReloadSlots((k) => k + 1); }   // the time filled up or passed meanwhile: choose again
       setErr(e instanceof TimeoutError ? t('err.network') : errText(t, e));   // a stalled upload: the same "could not connect, safe to try again" message
     } finally { inflight.current = false; setBusy(false); setUploading(false); }
   };
@@ -212,12 +227,21 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
 
       <section className="sp-sec"><h3>{t('co.fulfilment')}</h3>
         <div className="sp-seg" role="radiogroup" aria-label={t('co.fulfilment')}>
-          <button type="button" role="radio" aria-checked={fulfilment === 'delivery'} className={cx(fulfilment === 'delivery' && 'on')} onClick={() => setFulfilment('delivery')}><Truck size={16} /> {t('co.delivery')}</button>
-          <button type="button" role="radio" aria-checked={fulfilment === 'pickup'} className={cx(fulfilment === 'pickup' && 'on')} onClick={() => setFulfilment('pickup')}><Store size={16} /> {t('co.pickup')}</button>
+          <button type="button" role="radio" aria-checked={fulfilment === 'delivery'} className={cx(fulfilment === 'delivery' && 'on')} onClick={() => { patch({ preorder: false, pickupAt: undefined }); setFulfilment('delivery'); }}><Truck size={16} /> {t('co.delivery')}</button>
+          <button type="button" role="radio" aria-checked={fulfilment === 'pickup' && !preorder} className={cx(fulfilment === 'pickup' && !preorder && 'on')} onClick={() => { patch({ preorder: false, pickupAt: undefined }); setFulfilment('pickup'); }}><Store size={16} /> {t('co.pickup')}</button>
+          {settings?.preorder_enabled === true && <button type="button" role="radio" data-testid="mode-preorder" aria-checked={preorder} className={cx(preorder && 'on')} onClick={() => { setFulfilment('pickup'); patch({ preorder: true }); }}><CalendarClock size={16} /> {t('po.mode')}</button>}
         </div>
+        {settings?.preorder_enabled === true && !preorder && <div className="sp-note">{t('po.modeHint')}</div>}
         {unavailable && <Banner tone="warn">{fulfilment === 'delivery' ? t('co.noDelivery') : t('co.noPickup')}</Banner>}
         {fulfilment === 'pickup' && settings?.pickup_note && <div className="sp-note"><b>{t('co.pickupNote')}:</b> {settings.pickup_note}</div>}
       </section>
+
+      {preorder && (
+        <section className="sp-sec" data-testid="preorder-section"><h3>{t('po.title')} <span className="bad" aria-hidden>*</span></h3>
+          <div className="sp-note">{t('po.prepNote')}</div>
+          <PickupPicker units={units} value={pickupAt} onChange={(at) => patch({ pickupAt: at || undefined })} reloadKey={reloadSlots} />
+        </section>
+      )}
 
       <Fold id="contact" title={t('co.contact')} open={sec === 'contact'} onToggle={() => toggle('contact')} action={t('pm.change')}
         summary={nameOk && phoneOk
@@ -235,6 +259,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
             </>
           )}
           <label>{t('co.note')}<textarea value={note} rows={2} maxLength={300} onChange={(e) => patch({ note: e.target.value })} /></label>
+          {preorder && <><small className="muted">{t('po.noteHint')}</small><QuickPhrases note={note} onChange={(n) => patch({ note: n })} /></>}
           <button type="button" className="btn block" onClick={contactDone}>{t('co.contactDone')}</button>
         </div>
       </Fold>
@@ -290,7 +315,9 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       {err && <div data-testid="checkout-error"><Banner tone="bad">{err}</Banner></div>}
       <button type="button" className="btn primary lg block" disabled={busy || loading || !quote.ok || closed || !!unavailable} onClick={ask}>{busy ? t('co.placing') : `${t('co.place')} · ${baht(quote.total)}`}</button>
 
-      {asking && <ConfirmSheet title={t('co.confirmTitle')} body={t(needsSlip ? 'co.confirmBodySlip' : 'co.confirmBody', { total: baht(quote.total) })} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} busyLabel={t(uploading ? 'co.uploading' : 'co.placing')} onConfirm={place} onCancel={() => setAsking(false)} />}
+      {asking && <ConfirmSheet title={t(preorder ? 'po.cf.title' : 'co.confirmTitle')} body={preorder
+        ? <PreorderSummary lines={quote.lines.filter((l) => l.ok)} pickupAt={pickupAt} note={note} total={quote.total} method={methodLabel(t, method, bank?.code)} />
+        : t(needsSlip ? 'co.confirmBodySlip' : 'co.confirmBody', { total: baht(quote.total) })} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} busyLabel={t(uploading ? 'co.uploading' : 'co.placing')} onConfirm={place} onCancel={() => setAsking(false)} />}
     </div>
   );
 }

@@ -473,3 +473,40 @@ div.wl-card .wl-no { user-select: all; }
 .pt-homecard { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-text); }
 @media (min-width: 640px) { .pt-actions .btn { flex: 0 1 auto; min-width: 170px; } }
 @media (prefers-reduced-motion: reduce) { .pt-skel i { animation: none; } }
+
+/* ---- preorder (scheduled pickup): day and time picker, confirmation, order page ---- */
+.sp-po { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sp-days { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px 1px 4px; scroll-snap-type: x proximity; }
+.sp-days::-webkit-scrollbar { display: none; }
+.sp-day { flex: none; scroll-snap-align: start; min-width: 64px; display: flex; flex-direction: column; align-items: center; gap: 1px; border: 1px solid var(--border-strong, var(--border)); background: var(--surface); color: var(--text); border-radius: 14px; padding: 8px 10px; font: inherit; cursor: pointer; }
+.sp-day span { font-size: 12px; color: var(--text-2); } .sp-day b { font-size: 15px; font-weight: 750; } .sp-day small { font-size: 11px; font-weight: 700; color: var(--crit-text, var(--crit)); }
+.sp-day.on { background: var(--brand); border-color: var(--brand); color: var(--on-brand); } .sp-day.on span { color: inherit; opacity: .9; }
+.sp-day.off { opacity: .55; cursor: not-allowed; background: var(--surface-3); }
+.sp-day:focus-visible, .sp-slot:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
+.sp-slotsbox { display: flex; flex-direction: column; gap: 10px; }
+.sp-slotgroup h4 { margin: 0 0 6px; font-size: 12.5px; font-weight: 700; color: var(--text-2); }
+.sp-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 8px; }
+.sp-slot { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-height: 44px; border: 1px solid var(--border-strong, var(--border)); background: var(--surface); color: var(--text); border-radius: 12px; padding: 6px 4px; font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.sp-slot b { font-size: 15px; font-weight: 700; } .sp-slot small { font-size: 10.5px; font-weight: 700; color: var(--crit-text, var(--crit)); }
+.sp-slot.on { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.sp-slot.off { background: var(--surface-3); opacity: .6; cursor: not-allowed; } .sp-slot.off b { text-decoration: line-through; text-decoration-thickness: 1px; }
+.sp-po-chosen { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--good-soft); color: var(--good-text); font-weight: 650; font-size: 14px; line-height: 1.4; }
+.sp-phrases { display: flex; flex-direction: column; gap: 6px; }
+.sp-phrases .sp-chips button { white-space: normal; text-align: left; border-radius: 12px; font-size: 13px; }
+.sp-po-sum dl { margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.sp-po-sum dl > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; font-size: 14px; }
+.sp-po-sum dt { color: var(--muted); } .sp-po-sum dd { margin: 0; overflow-wrap: anywhere; color: var(--text); }
+.sp-po-sum h4 { margin: 8px 0 6px; font-size: 13px; color: var(--text-2); }
+.sp-po-sum .sp-mini { max-height: 26dvh; overflow-y: auto; }
+.sp-po-sum .sp-total { margin: 10px 0 6px; font-size: 16px; }
+.sp-sheet-tall { max-height: 94dvh; overflow-y: auto; }
+.sp-sheet-tall .sp-sheet-body { display: flex; flex-direction: column; gap: 12px; }
+.sp-form-l { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.sp-form-l textarea { border: 1px solid var(--border-strong, var(--border)); border-radius: 10px; background: var(--surface); color: var(--text); padding: 10px 12px; font: inherit; font-size: 15px; font-weight: 400; }
+.sp-po-when { display: flex; align-items: flex-start; gap: 10px; color: var(--brand-text, var(--brand)); } .sp-po-when b { color: var(--text); font-size: 15px; line-height: 1.4; }
+.sp-po-prep { display: flex; flex-direction: column; gap: 6px; font-size: 14px; } .sp-po-prep progress { width: 100%; height: 10px; accent-color: var(--good); }
+.sp-po-actions { display: flex; flex-direction: column; gap: 8px; } .sp-po-actions .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.sp-updates { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sp-updates li { display: flex; flex-direction: column; gap: 1px; padding: 8px 12px; border-left: 3px solid var(--brand); background: var(--surface-3); border-radius: 0 10px 10px 0; font-size: 14px; }
+.sp-order-pickup { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 650; color: var(--brand-text, var(--brand)); }
+@media (prefers-reduced-motion: reduce) { .sp-days { scroll-behavior: auto; } }

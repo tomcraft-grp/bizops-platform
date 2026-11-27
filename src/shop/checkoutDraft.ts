@@ -5,7 +5,8 @@ import { create } from 'zustand';
 import type { Choice } from '../wallet/ui';
 import type { Fulfilment } from './api';
 
-export interface DraftText { name?: string; phone?: string; address?: string; note?: string; fulfilment?: Fulfilment; method?: Choice; slipWhen?: string; slipRef?: string }
+/** `preorder`: the customer chose "pick up later" (a pick-up order with `pickupAt`, the start of the chosen slot); the server re-checks the slot when the order is placed. */
+export interface DraftText { name?: string; phone?: string; address?: string; note?: string; fulfilment?: Fulfilment; method?: Choice; slipWhen?: string; slipRef?: string; preorder?: boolean; pickupAt?: string }
 /** The slip picture stays in memory only; `total` is the amount the customer was asked to transfer when they attached it. */
 export interface DraftSlip { file: File; total: number }
 
@@ -23,6 +24,7 @@ export function parseDraft(raw: string | null): DraftText {
     const d: DraftText = {
       name: str(o.name, 100), phone: str(o.phone, 14), address: str(o.address, 400), note: str(o.note, 300), slipWhen: str(o.slipWhen, 20), slipRef: str(o.slipRef, 80),
       fulfilment: o.fulfilment === 'delivery' || o.fulfilment === 'pickup' ? o.fulfilment : undefined, method,
+      preorder: o.preorder === true ? true : undefined, pickupAt: typeof o.pickupAt === 'string' && !isNaN(new Date(o.pickupAt).getTime()) ? o.pickupAt.slice(0, 40) : undefined,
     };
     return Object.fromEntries(Object.entries(d).filter(([, v]) => v !== undefined)) as DraftText;
   } catch { return {}; }

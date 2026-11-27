@@ -2,7 +2,7 @@
 // and one order with its progress, items, delivery details and the payment panel. Payment status is read from the finance
 // ledger through the server; nothing here can change it (a slip is only evidence, staff verification records the payment).
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ChevronRight, ClipboardList, RefreshCw } from 'lucide-react';
+import { ArrowLeft, CalendarClock, ChevronRight, ClipboardList, RefreshCw } from 'lucide-react';
 import { toast } from '../domain/store';
 import { CustomerInvoices, InvoiceCard } from '../finance/CustomerInvoices';
 import { cx } from '../lib/util';
@@ -16,8 +16,11 @@ import { useShopHost, useShopNav } from './nav';
 import { CANCEL_CODES, OPEN_CODES } from './pay';
 import { recentAction, reorderPlan } from './orderAgain';
 import { ConfirmSheet, ErrorBox, errText, Fold, OrderBadge, orderSteps, PayBadge, PayNotes, ProductImage } from './ui';
+import { useSettings } from './hooks';
+import { PreorderPanel } from './Preorder';
+import { pickupLabel } from './preorderView';
 
-const FILTERS: OrderFilter[] = ['all', 'unpaid', 'to_ship', 'to_receive', 'done', 'cancelled'];
+const FILTERS: OrderFilter[] = ['all', 'preorder', 'unpaid', 'to_ship', 'to_receive', 'done', 'cancelled'];
 const PAGE = 20;
 
 export function OrdersCore() {
@@ -32,6 +35,7 @@ function OrderList({ onOpen }: { onOpen: (id: string) => void }) {
   const t = useT();
   const lang = useShopLang();
   const host = useShopHost();
+  const settings = useSettings();
   const [filter, setFilter] = useState<OrderFilter>('all');
   const [st, setSt] = useState<{ orders: ShopOrder[]; total: number; loading: boolean; error: unknown }>({ orders: [], total: 0, loading: true, error: null });
   const req = useRef(0);
@@ -48,7 +52,7 @@ function OrderList({ onOpen }: { onOpen: (id: string) => void }) {
     <div className="sp-page">
       <h2 className="sp-h2">{t('ord.title')}</h2>
       <div className="sp-chips" role="tablist">
-        {FILTERS.map((f) => <button key={f} type="button" role="tab" aria-selected={filter === f} className={cx(filter === f && 'on')} onClick={() => setFilter(f)}>{t(`ord.f.${f}` as K)}</button>)}
+        {FILTERS.filter((f) => f !== 'preorder' || settings?.preorder_enabled === true || filter === 'preorder').map((f) => <button key={f} type="button" role="tab" aria-selected={filter === f} className={cx(filter === f && 'on')} onClick={() => setFilter(f)}>{t(`ord.f.${f}` as K)}</button>)}
       </div>
       {st.error ? <ErrorBox message={`${t('common.loadError')} · ${errText(t, st.error)}`} onRetry={() => load(0)} />
         : st.loading && !st.orders.length ? <div className="sp-list-skel" aria-busy="true"><i /><i /><i /></div>
@@ -59,6 +63,7 @@ function OrderList({ onOpen }: { onOpen: (id: string) => void }) {
               <li key={o.id}>
                 <button type="button" className="sp-order" onClick={() => onOpen(o.id)}>
                   <div className="row between"><b>{o.order_no}</b><OrderBadge status={o.status} /></div>
+                  {o.order_type === 'preorder' && o.pickup_at && <div className="sp-order-pickup" data-testid="order-pickup"><CalendarClock size={14} aria-hidden /> <span>{t('po.card.pickup', { when: pickupLabel(o.pickup_at, lang) })}</span></div>}
                   <div className="sp-order-items">
                     <div className="sp-thumbs-row">{o.items.slice(0, 3).map((i) => <ProductImage key={i.line_no} src={i.image_url} alt={i.name} />)}</div>
                     <div className="grow"><span className="sp-clamp">{o.items[0]?.name}</span><small>{o.items.length > 1 ? `+${o.items.length - 1} · ` : ''}{t('ord.n', { n: o.items.reduce((s, i) => s + i.qty, 0) })} · {shopDate(o.created_at, lang)}</small></div>
@@ -84,7 +89,7 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   // the order's own details are one tap away: what the customer has to do (pay) or to know (the progress) comes first. undefined = the customer has not tapped yet
-  const [sec, setSec] = useState<'progress' | 'items' | 'delivery' | null | undefined>(undefined);
+  const [sec, setSec] = useState<'progress' | 'items' | 'delivery' | 'schedule' | null | undefined>(undefined);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);   // set on mount too: StrictMode mounts, unmounts and mounts again
 
@@ -107,12 +112,14 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
   if (o === null) return <div className="sp-page">{back}<Empty title={t('od.notFound')} /></div>;
 
   const code = o.invoice.status_code;
-  const canCancel = o.status === 'new' && CANCEL_CODES.includes(code);   // never while a slip waits (3, also one the shop confirmed) or more evidence is requested (10)
-  const steps = orderSteps(o.fulfilment);
+  const pre = o.order_type === 'preorder';
+  // never while a slip waits (3, also one the shop confirmed) or more evidence is requested (10); a preorder also not inside its change window's end (the server decides)
+  const canCancel = o.status === 'new' && CANCEL_CODES.includes(code) && (!pre || o.change?.can_cancel_time !== false);
+  const steps = orderSteps(o.fulfilment, o.order_type);
   const at = steps.indexOf(o.status);
   const mustPay = OPEN_CODES.includes(code) && o.status !== 'cancelled';
-  const openSec = sec === undefined ? (mustPay ? null : 'progress') : sec;
-  const fold = (id: 'progress' | 'items' | 'delivery') => ({ id, open: openSec === id, onToggle: () => setSec(openSec === id ? null : id) });
+  const openSec = sec === undefined ? (mustPay ? null : pre ? 'schedule' : 'progress') : sec;
+  const fold = (id: 'progress' | 'items' | 'delivery' | 'schedule') => ({ id, open: openSec === id, onToggle: () => setSec(openSec === id ? null : id) });
   const orderAgain = () => {
     const plan = reorderPlan(o.items);          // free gift / reward lines are never ordered again
     const added = plan.ok.length ? useCart.getState().reorder(plan.ok) : 0;
@@ -135,8 +142,8 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
     <div className="sp-page sp-order-detail">
       {back}
       <div className="row between"><div><h2 className="sp-h2" style={{ margin: 0 }}>{o.order_no}</h2><small className="muted">{shopDateTime(o.created_at, lang)}</small></div><button type="button" className="sp-iconbtn" aria-label={t('od.refresh')} onClick={() => void load()}><RefreshCw size={17} /></button></div>
-      <div className="row gap-6 wrap"><OrderBadge status={o.status} /><PayBadge code={code} /></div>
-      {o.status === 'cancelled' && <div className="sp-note bad">{t('st.cancelled')}{o.cancel_reason ? ` · ${t('od.cancelReason')}: ${o.cancel_reason}` : ''}</div>}
+      <div className="row gap-6 wrap">{pre && <span className="sp-pill info" data-testid="preorder-badge">{t('po.badge')}</span>}<OrderBadge status={o.status} /><PayBadge code={code} /></div>
+      {o.status === 'cancelled' && <div className="sp-note bad">{pre && o.cancel_kind === 'rejected' ? t('po.od.rejected') : pre && o.cancel_kind === 'staff' ? t('po.od.cancelledShop') : pre && o.cancel_kind === 'customer' ? t('po.od.cancelledYou') : t('st.cancelled')}{o.cancel_reason ? ` · ${t('od.cancelReason')}: ${o.cancel_reason}` : ''}</div>}
       {o.status_note && <section className="sp-sec"><h3>{t('od.shopNote')}</h3><p className="sp-text">{o.status_note}</p></section>}
 
       {o.status !== 'cancelled' && o.status !== 'returned' && (
@@ -144,6 +151,8 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
           <ol className="sp-steps">{steps.map((s, i) => <li key={s} className={cx(i < at && 'done', i === at && 'now')}><span aria-hidden>{i < at ? '✓' : i + 1}</span>{t(`st.${s}` as K)}</li>)}</ol>
         </Fold>
       )}
+
+      {pre && <PreorderPanel o={o} onChanged={(r) => setO(r)} {...fold('schedule')} />}
 
       <section className="sp-sec"><h3>{t('od.payment')}</h3>
         <InvoiceCard compact inv={o.invoice} lang={lang} preferred={o.payment_pref} defaultOpen={mustPay} onChanged={() => void load()} />
@@ -169,7 +178,7 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
       {canCancel && <button type="button" className="btn block danger-outline" onClick={() => setAsking(true)}>{t('od.cancel')}</button>}
       {/* a cancelled order (e.g. the shop declined it) can be put back in the cart in one tap (FB-001002); the cart re-checks every price with the server */}
       {recentAction(o) === 'again' && <button type="button" className="btn primary block" data-testid="order-again" onClick={orderAgain}>{t('od.again')}</button>}
-      {asking && <ConfirmSheet danger title={t('od.cancelTitle')} body={t('od.cancelBody')} confirmLabel={t('od.confirmYes')} cancelLabel={t('common.cancel')} busy={busy} onConfirm={cancel} onCancel={() => setAsking(false)} />}
+      {asking && <ConfirmSheet danger title={t('od.cancelTitle')} body={t(pre ? 'po.od.cancelBodyPre' : 'od.cancelBody')} confirmLabel={t('od.confirmYes')} cancelLabel={t('common.cancel')} busy={busy} onConfirm={cancel} onCancel={() => setAsking(false)} />}
     </div>
   );
 }
