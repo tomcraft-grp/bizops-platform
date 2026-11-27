@@ -148,6 +148,9 @@ export const TH_FEEDBACK: Record<string, string> = {
   'Closing officially completes the issue. The reporter is notified and can no longer reply; it can be reopened later if needed.': 'การปิดเรื่องคือการปิดงานอย่างเป็นทางการ ระบบจะแจ้งผู้แจ้งและผู้แจ้งจะตอบกลับไม่ได้อีก หากจำเป็นสามารถเปิดเรื่องใหม่ได้ภายหลัง',
   'Overdue (open)': 'เกินกำหนด (ยังเปิดอยู่)', 'Critical {c} d · High {h} d · Medium {m} d · Low {l} d': 'วิกฤต {c} วัน · สูง {h} วัน · ปานกลาง {m} วัน · ต่ำ {l} วัน',
   'Not closed yet': 'ยังไม่ปิดเรื่อง', 'Assigned to me': 'มอบหมายให้ฉัน', 'Reported by me': 'ที่ฉันแจ้ง',
+  'This issue could not be opened. It may not exist, or you may not have access to it.': 'เปิดเรื่องนี้ไม่ได้ อาจไม่มีเรื่องนี้อยู่ หรือคุณไม่มีสิทธิ์เปิดดู',
+  'This issue is archived. It is hidden from the list but never deleted.': 'เรื่องนี้ถูกเก็บถาวรแล้ว จึงไม่แสดงในรายการแต่ไม่ถูกลบ เก็บถาวรเมื่อ',
+  '(no longer active)': '(ไม่ได้ใช้งานแล้ว)',
   'feedback updates for you': 'อัปเดตเรื่องแจ้งปัญหาสำหรับคุณ',
   'Copied the English text and {n} attachment link(s). Images are linked, not embedded.': 'คัดลอกข้อความอังกฤษและลิงก์ไฟล์แนบ {n} รายการแล้ว (รูปภาพเป็นลิงก์ ไม่ได้ฝังในข้อความ)',
 };
