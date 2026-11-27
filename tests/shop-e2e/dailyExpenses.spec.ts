@@ -3,6 +3,7 @@
 // rejected claims; submit locks them; nothing is ever deleted, only cancelled). This file proves the SCREEN: many rows for one day, the
 // running total, saving them together without duplicates, keeping unsaved rows across days and reloads, failures that keep the data.
 import { expect, test, type Page, type Route } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { FakeShop, USER_ID } from './fakeBackend';
 
 const HOST = 'hlvravynjalculvplrxc.supabase.co';
@@ -259,5 +260,166 @@ test.describe('phone', () => {
     await expect(page.getByText(/Saved 2 expense|บันทึก 2 รายการของ/)).toBeVisible();
     expect(fx.live()).toHaveLength(2);
     await page.screenshot({ path: 'test-results/daily-expenses-phone.png', fullPage: true });
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ the list under the item box shows the icon of each category
+const opts = (page: Page) => page.getByTestId('xs-opt');
+const optOf = (page: Page, text: string) => opts(page).filter({ has: page.locator('.xs-opt-t', { hasText: new RegExp(`^${text}$`) }) });
+const pop = (page: Page) => page.getByTestId('xs-pop');
+function earlier(fx: FakeExpenses) {
+  fx.seed({ expense_date: YESTERDAY, description: 'Coffee', category_id: 'cat-food', amount_paid: 60 });
+  fx.seed({ expense_date: YESTERDAY, description: 'Gasoline', category_id: 'cat-fuel', amount_paid: 900, payment_method: 'card' });
+  return fx;
+}
+
+test.describe('item list with category icons (desktop)', () => {
+  test.use({ viewport: { width: 1366, height: 900 } });
+
+  test('every entry has the icon of its category; choosing one fills the item, the category and how it was paid', async ({ page }) => {
+    await boot(page, earlier(new FakeExpenses()));
+    await expect(pop(page)).toHaveCount(0);
+    await item(page, 1).click();
+    await expect(pop(page)).toBeVisible();
+    await expect(opts(page)).toHaveCount(6);                       // the two earlier items, then the four category names
+    for (let i = 0; i < 6; i++) await expect(opts(page).nth(i).locator('.xs-ico svg')).toHaveCount(1);
+    await expect(optOf(page, 'Coffee').locator('.xs-ico svg')).toHaveClass(/lucide-utensils/);
+    await expect(optOf(page, 'Gasoline').locator('.xs-ico svg')).toHaveClass(/lucide-fuel/);
+    await expect(optOf(page, 'Coffee')).toContainText(/Food & drinks|ค่าอาหารและรับรอง/);          // the category name, small, at the end
+    await expect(page.locator('.xs-opt-s')).toHaveCount(2);                                          // not repeated on the entries that ARE a category
+    await page.screenshot({ path: 'test-results/xs-icons-desktop.png' });
+    await optOf(page, 'Gasoline').click();
+    await expect(item(page, 1)).toHaveValue('Gasoline');
+    await expect(cat(page, 1)).toHaveValue('cat-fuel');
+    await expect(method(page, 1)).toHaveValue('card');
+    await expect(pop(page)).toHaveCount(0);
+    await expect(item(page, 1)).toBeFocused();
+    await expect(page.locator('.xs-lead svg').first()).toHaveClass(/lucide-fuel/);                  // the icon in front of the text follows the category
+  });
+
+  test('typing narrows the list; arrow keys and Enter choose; Enter with nothing highlighted changes nothing; Escape and Tab close', async ({ page }) => {
+    await boot(page, earlier(new FakeExpenses()));
+    await item(page, 1).click(); await page.keyboard.type('gas');
+    await expect(opts(page)).toHaveCount(1);
+    await page.keyboard.press('Enter');                                            // nothing highlighted: the typed text stays, no other row appears
+    await expect(item(page, 1)).toHaveValue('gas');
+    await expect(opts(page)).toHaveCount(1);
+    await expect(item(page, 2)).toHaveCount(0);
+    await page.keyboard.press('ArrowDown');
+    await expect(opts(page).first()).toHaveAttribute('aria-selected', 'true');
+    await expect(item(page, 1)).toHaveAttribute('aria-activedescendant', /.+/);
+    await page.keyboard.press('Enter');
+    await expect(item(page, 1)).toHaveValue('Gasoline');
+    await expect(cat(page, 1)).toHaveValue('cat-fuel');
+    await expect(pop(page)).toHaveCount(0);
+    await item(page, 1).fill('co');
+    await expect(opts(page)).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(pop(page)).toHaveCount(0);
+    await expect(item(page, 1)).toHaveValue('co');                                 // Escape does not touch the text
+    await page.keyboard.press('ArrowDown');                                        // ArrowDown opens it again
+    await expect(opts(page)).toHaveCount(1);
+    await page.keyboard.press('Tab');
+    await expect(pop(page)).toHaveCount(0);
+  });
+
+  test('the cursor that the sheet moves into the next row by itself does not open the list', async ({ page }) => {
+    await boot(page, earlier(new FakeExpenses()));
+    await fillRow(page, 1, { item: 'Water', cat: 'cat-food', amount: '10' });
+    await amount(page, 1).press('Enter');
+    await expect(item(page, 2)).toBeFocused();
+    await expect(pop(page)).toHaveCount(0);
+    await item(page, 2).click();
+    await expect(pop(page)).toBeVisible();                                          // a click does
+    await page.getByTestId('xs-total').click();                                     // a press anywhere else closes it
+    await expect(pop(page)).toHaveCount(0);
+  });
+
+  test('the list is on top of the sheet and inside the window', async ({ page }) => {
+    await boot(page, earlier(new FakeExpenses()));
+    await item(page, 1).click();
+    const b = (await pop(page).boundingBox())!;
+    expect(b.x).toBeGreaterThanOrEqual(0); expect(b.y).toBeGreaterThanOrEqual(0);
+    expect(b.x + b.width).toBeLessThanOrEqual(1366); expect(b.y + b.height).toBeLessThanOrEqual(900);
+    const onTop = await page.evaluate(() => { const p = document.querySelector('[data-testid=xs-pop]')!; const r = p.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + 20); return !!e && p.contains(e); });
+    expect(onTop).toBe(true);
+  });
+
+  test('with no room below, the list opens upwards and stays inside the window', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 360 });
+    await boot(page, earlier(new FakeExpenses()));
+    await item(page, 1).focus();
+    await item(page, 1).evaluate((el) => el.scrollIntoView({ block: 'end' }));
+    await page.keyboard.press('ArrowDown');
+    await expect(pop(page)).toBeVisible();
+    const p = (await pop(page).boundingBox())!, i = (await item(page, 1).boundingBox())!;
+    expect(p.y + p.height).toBeLessThanOrEqual(i.y + 1);                            // above the box
+    expect(p.y).toBeGreaterThanOrEqual(0);
+  });
+
+  test("a row sent for approval keeps its icon, and a new row's icon follows the category chosen by hand", async ({ page }) => {
+    const fx = new FakeExpenses(); fx.seed({ expense_date: TODAY, description: 'Taxi', category_id: 'cat-travel', status: 'submitted' });
+    await boot(page, fx);
+    await expect(page.locator('.xs-lt .xs-ico svg')).toHaveClass(/lucide-bus/);
+    await expect(page.locator('.xs-lead svg')).toHaveClass(/lucide-receipt/);       // nothing chosen yet: a neutral icon
+    await expect(page.locator('.xs-lead.off')).toHaveCount(1);
+    await cat(page, 2).selectOption('cat-office');
+    await expect(page.locator('.xs-lead svg')).toHaveClass(/lucide-paperclip/);
+    await expect(page.locator('.xs-lead.off')).toHaveCount(0);
+  });
+
+  test('in the dark theme the list is dark with light text', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await boot(page, earlier(new FakeExpenses()));
+    await item(page, 1).click();
+    await expect(pop(page)).toBeVisible();
+    const lum = (c: string) => { const m = c.match(/\d+(\.\d+)?/g)!.map(Number); return (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) / 255; };
+    const { bg, fg } = await page.evaluate(() => ({ bg: getComputedStyle(document.querySelector('[data-testid=xs-pop]')!).backgroundColor, fg: getComputedStyle(document.querySelector('.xs-opt-t')!).color }));
+    expect(lum(bg)).toBeLessThan(0.3); expect(lum(fg)).toBeGreaterThan(0.6);
+    await page.screenshot({ path: 'test-results/xs-icons-dark.png' });
+  });
+
+  test('axe: no serious problems in the open list', async ({ page }) => {
+    await boot(page, earlier(new FakeExpenses()));
+    await item(page, 1).click();
+    await expect(pop(page)).toBeVisible();
+    const r = await new AxeBuilder({ page }).include('[data-testid=xs-pop]').include('.xs-ib').withTags(['wcag2a', 'wcag2aa']).analyze();
+    expect(r.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious').map((v) => `${v.id}: ${v.nodes.map((n) => n.html.slice(0, 80)).join(' | ')}`)).toEqual([]);
+  });
+});
+
+test.describe('item list with category icons (Thai)', () => {
+  test.use({ viewport: { width: 1366, height: 900 } });
+  test('Thai names, even very long ones, stay inside the list', async ({ page }) => {
+    await page.addInitScript(() => { try { localStorage.setItem('bizops.lang', 'th'); } catch { /* ignore */ } });
+    const fx = earlier(new FakeExpenses());
+    fx.seed({ expense_date: YESTERDAY, description: 'ค่าอินเทอร์เน็ตและโทรศัพท์ของสำนักงานใหญ่และสาขาทั้งหมดประจำเดือนพฤศจิกายนพร้อมค่าบริการเสริมทุกรายการ', category_id: 'cat-food' });
+    await boot(page, fx);
+    await item(page, 1).click();
+    await expect(pop(page)).toBeVisible();
+    await expect(page.locator('.xs-opt-s').first()).toContainText(/ค่าอาหารและรับรอง|ค่าน้ำมัน/);     // Thai category names under the items
+    const over = await opts(page).evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 1).length);
+    expect(over).toBe(0);
+    const p = (await pop(page).boundingBox())!;
+    expect(p.x + p.width).toBeLessThanOrEqual(1366);
+    await page.screenshot({ path: 'test-results/xs-icons-thai.png' });
+  });
+});
+
+test.describe('item list with category icons (phone)', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  test('the list fits the screen, a tap chooses an entry, and nothing scrolls sideways', async ({ page }) => {
+    await boot(page, earlier(new FakeExpenses()));
+    await item(page, 1).tap();
+    await expect(pop(page)).toBeVisible();
+    const b = (await pop(page).boundingBox())!;
+    expect(b.x).toBeGreaterThanOrEqual(0); expect(b.x + b.width).toBeLessThanOrEqual(390); expect(b.width).toBeGreaterThanOrEqual(270);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    for (const h of await opts(page).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height))) expect(h).toBeGreaterThanOrEqual(40);
+    await page.screenshot({ path: 'test-results/xs-icons-phone.png' });
+    await optOf(page, 'Coffee').tap();
+    await expect(item(page, 1)).toHaveValue('Coffee');
+    await expect(cat(page, 1)).toHaveValue('cat-food');
+    await expect(pop(page)).toHaveCount(0);
   });
 });

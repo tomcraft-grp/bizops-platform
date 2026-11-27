@@ -9,7 +9,8 @@ import { toast, useLang } from '../domain/store';
 import { Badge, Button, Modal, useConfirm } from '../ui/kit';
 import { cx, dayKey } from '../lib/util';
 import { METHOD_META, cancelClaim, catName, listClaims, saveClaim, submitClaim, useT, type Claim, type PayMethod } from './api';
-import { StatusBadge, useExpense } from './parts';
+import { CatIcon, StatusBadge, useExpense } from './parts';
+import { ItemBox, type ItemOption } from './ItemBox';
 import { ExpenseForm } from './ExpenseForm';
 import {
   blankRow, dayTotals, fillFromSuggestion, formatAmount, isBlank, isDirty, isEditable, matchSuggestion, mergeDay, newRowTaxType, parseAmount, rowFromClaim, shiftDay, stashOf, suggestionsFrom,
@@ -65,7 +66,11 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
   const focusNext = useRef<string | null>(null);
   const active = useMemo(() => categories.filter((c) => c.active), [categories]);
   const suggestions = useMemo(() => suggestionsFrom(history, categories, lang), [history, categories, lang]);
-  const listId = 'exp-sheet-items';
+  // each suggestion carries the icon of its category and, small at the end, the category name (not repeated when the suggestion IS the category)
+  const options = useMemo<ItemOption[]>(() => suggestions.map((x) => {
+    const c = x.categoryId ? catById[x.categoryId] : undefined, name = c ? catName(lang, c) : '';
+    return { text: x.text, icon: c?.icon, sub: name && name !== x.text ? name : undefined };
+  }), [suggestions, catById, lang]);
 
   // ---------------------------------------------------------------- loading
   const loadHistory = useCallback(() => {
@@ -290,7 +295,7 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
             if (!isEditable(r)) return (
               <div key={r.key} className="xs-row xs-locked" role="row" data-testid="xs-row">
                 <span className="xs-n" role="cell">{i + 1}</span>
-                <span role="cell" className="xs-item"><b>{r.description}</b><span className="xs-meta"><StatusBadge status={r.status!} />{r.expenseNo && <span className="muted">{r.expenseNo}</span>}</span></span>
+                <span role="cell" className="xs-item"><b className="xs-lt"><span className="xs-ico" aria-hidden><CatIcon name={(catById[r.categoryId] ?? r.base?.category)?.icon} size={14} /></span>{r.description}</b><span className="xs-meta"><StatusBadge status={r.status!} />{r.expenseNo && <span className="muted">{r.expenseNo}</span>}</span></span>
                 <span role="cell" className="xs-cat">{catName(lang, catById[r.categoryId] ?? r.base?.category)}</span>
                 <span role="cell" className="xs-method">{methodLabel(r.method)}</span>
                 <span role="cell" className="xs-amt num"><b>{n !== null ? formatAmount(n) : r.amount}</b></span>
@@ -302,9 +307,8 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
                 <div className={cx('xs-row', dirty && 'dirty', rowErr[r.key] && 'failed')} role="row" data-testid="xs-row">
                   <span className="xs-n" role="cell" title={dirty ? T('Not saved yet', 'ยังไม่บันทึก') : undefined}>{dirty ? <i className="xs-dot" aria-label={T('Not saved yet', 'ยังไม่บันทึก')} /> : i + 1}</span>
                   <span role="cell" className="xs-item">
-                    <input ref={(el) => { itemRefs.current[r.key] = el; }} className={cx('input', e.description && 'bad')} list={listId} value={r.description} maxLength={300} readOnly={!edit}
-                      placeholder={T('e.g. Coffee, Gasoline…', 'เช่น กาแฟ ค่าน้ำมัน…')} aria-label={T(`Expense item, row ${i + 1}`, `รายการ แถว ${i + 1}`)} aria-invalid={!!e.description}
-                      onChange={(ev) => typeItem(r, ev.target.value)} />
+                    <ItemBox inputRef={(el) => { itemRefs.current[r.key] = el; }} value={r.description} options={options} icon={catById[r.categoryId]?.icon} invalid={!!e.description} readOnly={!edit}
+                      placeholder={T('e.g. Coffee, Gasoline…', 'เช่น กาแฟ ค่าน้ำมัน…')} label={T(`Expense item, row ${i + 1}`, `รายการ แถว ${i + 1}`)} listLabel={T(`Suggestions for the item, row ${i + 1}`, `รายการแนะนำ แถว ${i + 1}`)} onChange={(text) => typeItem(r, text)} />
                     {e.description && <span className="exp-err">{errText('description', e.description)}</span>}
                     {(r.status === 'rejected' || r.id) && <span className="xs-meta">{r.status && <StatusBadge status={r.status} />}{r.status === 'rejected' && r.base?.reject_reason && <span className="muted">{r.base.reject_reason}</span>}</span>}
                   </span>
@@ -343,7 +347,6 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
                 {rowErr[r.key] && <div className="xs-rowerr exp-err" role="alert">{T('Not saved', 'ยังไม่ได้บันทึก')}: {rowErr[r.key]}</div>}
               </Fragment>);
           })}
-          <datalist id={listId}>{suggestions.slice(0, 60).map((s) => <option key={s.text} value={s.text}>{s.categoryId ? catName(lang, catById[s.categoryId]) : ''}</option>)}</datalist>
         </div>)}
 
       {rows && (

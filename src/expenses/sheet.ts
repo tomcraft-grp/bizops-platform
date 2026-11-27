@@ -121,6 +121,14 @@ export function suggestionsFrom(history: Claim[], categories: Category[], lang: 
   return [...mine, ...cats];
 }
 export const matchSuggestion = (list: Suggestion[], typedText: string): Suggestion | null => { const k = norm(typedText); return k ? list.find((s) => norm(s.text) === k) ?? null : null; };
+/** The suggestions that fit what was typed (any part of the text, upper or lower case), in the same order. Nothing is offered when the only fit is exactly what is
+ *  typed: there is nothing left to choose. */
+export function filterSuggestions<T extends { text: string }>(list: T[], typed: string, limit = 60): T[] {
+  const k = norm(typed);
+  const hit = k ? list.filter((s) => norm(s.text).includes(k)) : list;
+  if (k && hit.length === 1 && norm(hit[0].text) === k) return [];
+  return hit.slice(0, limit);
+}
 /** Fill the category (and how it was paid) from a suggestion. `overwrite` = the person did not choose them by hand. */
 export function fillFromSuggestion(r: SheetRow, s: Suggestion, overwrite: boolean): SheetRow {
   const out = { ...r };
