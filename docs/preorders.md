@@ -5,7 +5,7 @@ Design and the reasons behind each choice: `docs/superpowers/specs/2026-11-27-pr
 Migration `supabase/migrations/20261128100000_preorders.sql`, rollback `supabase/rollbacks/20261128100000_preorders_down.sql`.
 Code: `src/shop/Preorder.tsx` (customer), `src/preorders/` (Preorders page, Pickup prep board), `supabase/functions/line-dispatch` + `_shared/lineCards.ts` (LINE).
 
-**Status: built and tested, NOT applied or published.** The one production database has not been touched except by rolled-back test transactions. Going live needs the owner's go for each step in "Go-live".
+**Status (2026-11-28, about 00:20 Bangkok): LIVE but DARK.** Edge Function `line-dispatch` redeployed (version 2, JWT verification off, answers 401 / 403 without credentials as before); migration `20261128100000` **applied to the live project** (one transaction, after a rolled-back rehearsal of the same file; the 22 existing orders read through the new functions, `preorder_settings.enabled = false`, not configured, sweep job `preorder-sweep` every 5 minutes, LINE switches `preorder*` added); merged into `main` (a2aff3e), dist rebuilt (2e53531), `gh-pages` deployed as `df3f8cc` (the page serves build `0.1.0+a2aff3e`; app rollback target: `gh-pages` `c786501`, keep `ocr/`; Edge Function rollback: redeploy `line-dispatch` from commit `cc613b8`). **What remains is the owner's step 4 and 5 below:** customers see nothing new until a SUPER_ADMIN saves the opening hours and switches preorders on.
 
 ## What a preorder is
 
@@ -65,7 +65,7 @@ A 5-minute `pg_cron` job (`preorder_sweep`) writes the time-based ones; a resche
 
 There is **no central stock** (inventory lives in the staff browser's local store). Availability is the *sold out* switch and *max per order* per SKU, plus the slot capacity above. Nothing is reserved or deducted, so no duplicate inventory transaction is possible. When a central stock exists, reservation belongs at *confirmed* and deduction at *ready* / *picked up*.
 
-## Go-live (each step needs the owner's go; in this order)
+## Go-live (steps 1 to 3 are done; 4 and 5 are the owner's)
 
 1. **Deploy `line-dispatch`** (backward compatible; renders the new `preorder` event and the pickup line on the order card):
    `supabase functions deploy line-dispatch --no-verify-jwt --project-ref hlvravynjalculvplrxc`
