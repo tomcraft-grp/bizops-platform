@@ -70,6 +70,8 @@ export const PAGE_META: Record<string, PageMeta> = {
   '/payment-review': { page: 'Payment review', module: 'receivables', feature: 'payment-review' },
   '/payments': { page: 'Payments & wallet', module: 'receivables', feature: 'payments-wallet' },
   '/shop-admin': { page: 'Online shop', module: 'orders', feature: 'online-shop' },
+  '/preorders': { page: 'Preorders', module: 'orders', feature: 'preorders' },
+  '/prep': { page: 'Pickup prep', module: 'orders', feature: 'preorders' },
   '/members': { page: 'LINE members', module: 'customers', feature: 'line-members' },
   '/dev-app': { page: 'DEV APP Customer', module: 'devapp' },
   '/app': { page: 'Customer app (LIFF)', module: 'customer_app' },

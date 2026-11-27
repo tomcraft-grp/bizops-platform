@@ -34,6 +34,8 @@ import DevApp from './pages/DevApp';
 import Finance from './pages/Finance';
 import ExpensesPage from './expenses/ExpensesPage';
 import ShopAdmin from './shop/ShopAdmin';
+import PreordersPage from './preorders/PreordersPage';
+import PrepBoard from './preorders/PrepBoard';
 import PaymentsAdmin from './wallet/PaymentsAdmin';
 import Login from './pages/auth/Login';
 import ForgotPassword from './pages/auth/ForgotPassword';
@@ -104,6 +106,8 @@ export default function App() {
             <Route path="pos" element={<G perm="pos:view"><POS /></G>} />
             <Route path="orders" element={<G perm="orders:view"><Orders /></G>} />
             <Route path="shop-admin" element={<G perm="orders:view"><ShopAdmin /></G>} />
+            <Route path="preorders" element={<G perm="orders:view"><PreordersPage /></G>} />
+            <Route path="prep" element={<G perm="orders:view"><PrepBoard /></G>} />
             <Route path="channels" element={<G perm="channels:view"><Channels /></G>} />
             <Route path="kds" element={<G perm="kds:view"><KDS /></G>} />
             <Route path="customers" element={<G perm="customers:view"><Customers /></G>} />

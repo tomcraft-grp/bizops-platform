@@ -12,6 +12,8 @@ import { supabase } from '../lib/supabase';
 import { Badge, Banner, Button, Drawer, Empty, Field, Input, PageHead, SearchBox, Select, Skeleton, Switch, Tabs, Textarea, useConfirm } from '../ui/kit';
 import { STATUS as PAY_STATUS } from '../finance/api';
 import { AdminCategory, AdminOrder, AdminOrdersPage, AdminProduct, AdminSettings, ContentPatch, OrderStatus, ShopError, ShopSpec, shopAdmin } from './api';
+import { preError } from '../preorders/view';
+import { pickupLabel } from './preorderView';
 
 type Panel = 'orders' | 'products' | 'settings';
 const publicUrl = (path: string) => supabase.storage.from('shop-products').getPublicUrl(path).data.publicUrl;
@@ -21,9 +23,9 @@ const TONE: Record<OrderStatus, 'good' | 'warn' | 'bad' | 'info' | ''> = { new: 
 export const ORDER_TONE = TONE;   // the Orders page shows the same colours for the same statuses
 
 /** The moves the database allows (public.shop_admin_set_status); cancelling is separate. */
-const nextSteps = (o: Pick<AdminOrder, 'status' | 'fulfilment'>): OrderStatus[] => {
+const nextSteps = (o: Pick<AdminOrder, 'status' | 'fulfilment' | 'order_type'>): OrderStatus[] => {
   switch (o.status) {
-    case 'new': return ['confirmed']; case 'confirmed': return ['preparing']; case 'preparing': return ['packed'];
+    case 'new': return ['confirmed']; case 'confirmed': return ['preparing']; case 'preparing': return [o.order_type === 'preorder' ? 'ready' : 'packed'];   // a preorder goes straight to ready (its checklist replaces the packing step)
     case 'packed': return [o.fulfilment === 'pickup' ? 'ready' : 'shipped']; case 'ready': return ['completed'];
     case 'shipped': return ['completed', 'returned']; case 'completed': return ['returned']; default: return [];
   }
@@ -48,6 +50,7 @@ type TFn = (s: string, v?: Record<string, string | number>) => string;
 
 // ================================================================================================ orders
 function OrdersPanel({ T, onCounts }: { T: TFn; onCounts: (c: AdminOrdersPage['counts']) => void }) {
+  const lang = useLang();
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState<AdminOrdersPage | null>(null);
@@ -73,7 +76,7 @@ function OrdersPanel({ T, onCounts }: { T: TFn; onCounts: (c: AdminOrdersPage['c
           <table className="t"><thead><tr><th>{T('Order')}</th><th>{T('Date')}</th><th>{T('Customer')}</th><th className="r">{T('Total')}</th><th>{T('Payment')}</th><th>{T('Status')}</th></tr></thead>
             <tbody>{page.orders.map((o) => (
               <tr key={o.id} className="click" tabIndex={0} onClick={() => setOpen(o.id)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(o.id); }}>
-                <td><b className="mono">{o.order_no}</b></td><td>{dateTimeFmt(o.created_at)}</td><td>{o.contact_name}<div className="muted">{o.contact_phone}</div></td>
+                <td><b className="mono">{o.order_no}</b>{o.order_type === 'preorder' && o.pickup_at && <div><Badge tone="info">{T('Preorder')}</Badge> <span className="muted">{pickupLabel(o.pickup_at, lang)}</span></div>}</td><td>{dateTimeFmt(o.created_at)}</td><td>{o.contact_name}<div className="muted">{o.contact_phone}</div></td>
                 <td className="r">{money(o.total)}</td>
                 <td><PayBadge code={o.invoice.status_code} T={T} /></td><td><Badge tone={TONE[o.status]}>{T(STATUS_LABEL[o.status])}</Badge></td>
               </tr>))}</tbody></table>
@@ -91,6 +94,7 @@ function PayBadge({ code }: { code: keyof typeof PAY_STATUS; T?: TFn }) {
 }
 
 function OrderDrawer({ id, T, onClose, onChanged }: { id: string; T: TFn; onClose: () => void; onChanged: () => void }) {
+  const lang = useLang();
   const confirm = useConfirm();
   const [o, setO] = useState<AdminOrder | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -102,7 +106,7 @@ function OrderDrawer({ id, T, onClose, onChanged }: { id: string; T: TFn; onClos
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true);
-    try { await fn(); toast('success', T(ok)); setNote(''); await reload(); onChanged(); } catch (e) { toast('error', e instanceof ShopError && e.code === 'PAYMENT_REQUIRED' ? T('Payment has not been verified yet') : msg(e)); } finally { setBusy(false); }
+    try { await fn(); toast('success', T(ok)); setNote(''); await reload(); onChanged(); } catch (e) { toast('error', e instanceof ShopError && e.code === 'PAYMENT_REQUIRED' ? T('Payment has not been verified yet') : preError(e, T)); } finally { setBusy(false); }
   };
   const move = (to: OrderStatus) => run(() => shopAdmin.setStatus(id, to, note), 'Order updated');
   const moveUnpaid = async (to: OrderStatus) => {
@@ -119,14 +123,15 @@ function OrderDrawer({ id, T, onClose, onChanged }: { id: string; T: TFn; onClos
       {error && <Banner tone="bad">{error}</Banner>}
       {!o ? <Skeleton h={200} /> : (
         <div className="col gap-12">
-          <div className="row wrap gap-6"><Badge tone={TONE[o.status]}>{T(STATUS_LABEL[o.status])}</Badge><PayBadge code={o.invoice.status_code} T={T} /><Badge>{o.fulfilment === 'pickup' ? T('Pick-up') : T('Delivery')}</Badge>{o.payment_pref && <Badge>{T('Customer plans to pay by')}: {o.payment_pref === 'wallet' ? T('Wallet') : o.payment_pref === 'qr' ? 'PromptPay QR' : `${T('Bank transfer')} · ${o.payment_pref.slice(5)}`}</Badge>}</div>
+          <div className="row wrap gap-6"><Badge tone={TONE[o.status]}>{T(STATUS_LABEL[o.status])}</Badge><PayBadge code={o.invoice.status_code} T={T} />{o.order_type === 'preorder' && <Badge tone="info">{T('Preorder')}</Badge>}<Badge>{o.fulfilment === 'pickup' ? T('Pick-up') : T('Delivery')}</Badge>{o.payment_pref && <Badge>{T('Customer plans to pay by')}: {o.payment_pref === 'wallet' ? T('Wallet') : o.payment_pref === 'qr' ? 'PromptPay QR' : `${T('Bank transfer')} · ${o.payment_pref.slice(5)}`}</Badge>}</div>
           {!paid && o.status !== 'cancelled' && <Banner tone="warn">{T('Not paid yet. Verify the customer\'s slip on the Payment review page: a slip alone never marks an order paid.')} <Link to="/payment-review">{T('Open Payment review')}</Link> · <span className="mono">{o.invoice.invoice_no}</span></Banner>}
           <div className="card card-b col gap-4">
+            {o.order_type === 'preorder' && o.pickup_at && <span data-testid="drawer-pickup"><b>{T('Pickup')}: {pickupLabel(o.pickup_at, lang)}</b> · <Link to={`/preorders?order=${o.id}`}>{T('Manage in Preorders')}</Link></span>}
             <b>{o.contact_name}</b><span>{o.contact_phone}</span>
             {o.customer && <span className="muted">{T('Customer account')}: {o.customer.code}{o.customer.line_user_id ? ' · LINE' : ''}</span>}
             {o.delivery_address && <span style={{ whiteSpace: 'pre-wrap' }}>{o.delivery_address}</span>}
             {o.fulfilment === 'delivery' && !o.delivery_address && <span className="muted">{T('No delivery address given: please call the customer')}</span>}
-            {o.note && <span className="muted">{T('Customer note')}: {o.note}</span>}
+            {o.note && <span className="muted">{T(o.order_type === 'preorder' ? 'Customer instructions' : 'Customer note')}: {o.note}</span>}
           </div>
           <table className="t"><thead><tr><th>{T('Item')}</th><th style={{ textAlign: 'right' }}>{T('Qty')}</th><th style={{ textAlign: 'right' }}>{T('Amount')}</th></tr></thead>
             <tbody>{o.items.map((i) => <tr key={i.line_no}><td>{i.name}<div className="muted mono">{i.sku_code} · {money(i.unit_price)}</div></td><td style={{ textAlign: 'right' }}>{i.qty}</td><td style={{ textAlign: 'right' }}>{money(i.line_total)}</td></tr>)}

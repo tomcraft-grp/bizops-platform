@@ -22,6 +22,8 @@ export const NO_BRAND = '__none__';
 export interface ShopSettings {
   shop_open: boolean; closed_message: string | null; delivery_enabled: boolean; pickup_enabled: boolean; pickup_note: string | null;
   shipping_fee: number; free_shipping_min: number | null; require_payment_slip?: boolean;
+  /** Only a database with the preorder migration sends it: without it the app simply offers no preorder. */
+  preorder_enabled?: boolean;
 }
 export type SortKey = 'recommended' | 'newest' | 'price_asc' | 'price_desc' | 'name';
 export interface CatalogQuery { search?: string; category?: string; brand?: string; sort?: SortKey; limit?: number; offset?: number; featured?: boolean }
@@ -40,6 +42,18 @@ export interface Quote {
 }
 /** The PromptPay QR of the cart about to be ordered (migration 20261123100000): the amount is the database's own total of that cart. */
 export interface CheckoutQr { amount: number; qr_payload: string; account_label: string; merchant_name: string | null }
+/** A day of the preorder calendar (shop time). `free_slots` counts the times still open for a new order. */
+export interface PreorderDay { day: string; closed: boolean; open: string | null; close: string | null; reason: string | null; free_slots: number }
+export interface PreorderOptions {
+  enabled: boolean; slot_minutes?: number; lead_minutes?: number; max_advance_days?: number; change_cutoff_minutes?: number; note?: string | null; now?: string; days?: PreorderDay[];
+}
+export type SlotState = 'ok' | 'soon' | 'full' | 'units';
+export interface PreorderSlot { at: string; time: string; state: SlotState; orders_left: number; units_left: number | null }
+export interface PreorderSlots { day: string; closed: boolean; open: string | null; close: string | null; reason: string | null; slots: PreorderSlot[] }
+/** What the customer may still do with their preorder (decided by the server). */
+export interface ChangeRules { deadline: string; can_reschedule: boolean; can_cancel_time: boolean; reschedules_left: number }
+export interface OrderNotice { at: string; kind: string; data: Record<string, unknown>; text_th: string | null }
+export type OrderType = 'regular' | 'preorder';
 export type OrderStatus = 'new' | 'confirmed' | 'preparing' | 'packed' | 'ready' | 'shipped' | 'completed' | 'cancelled' | 'returned';
 export interface OrderItem { line_no: number; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }
 export interface ShopOrder {
@@ -47,10 +61,15 @@ export interface ShopOrder {
   subtotal: number; discount: number; shipping_fee: number; total: number; created_at: string; updated_at: string; status_note: string | null; cancel_reason: string | null;
   cancelled_at: string | null; payment_pref?: string | null; items: OrderItem[]; invoice: InvoiceRow;
   events?: { at: string; action: string; to?: string | null }[];
+  // preorder (all absent from a database without the preorder migration)
+  order_type?: OrderType; pickup_at?: string | null; confirmed_at?: string | null; preparing_at?: string | null; ready_at?: string | null; completed_at?: string | null;
+  cancel_kind?: 'customer' | 'rejected' | 'staff' | null; reschedule_count?: number; prep?: { checked: number; total: number } | null; change?: ChangeRules | null; notices?: OrderNotice[];
 }
-export type OrderFilter = 'all' | 'unpaid' | 'to_ship' | 'to_receive' | 'done' | 'cancelled';
+export type OrderFilter = 'all' | 'unpaid' | 'to_ship' | 'to_receive' | 'done' | 'cancelled' | 'preorder';
 export interface OrdersPage { total: number; orders: ShopOrder[] }
-export interface PlaceOrderInput { key: string; items: { sku_code: string; qty: number }[]; fulfilment: Fulfilment; name: string; phone: string; address: string; note: string; paymentMethod?: string | null; slip?: { path: string; sha256: string; type: string; transferAt?: string | null; ref?: string | null } | null; expectedTotal: number | null }
+export interface PlaceOrderInput { key: string; items: { sku_code: string; qty: number }[]; fulfilment: Fulfilment; name: string; phone: string; address: string; note: string; paymentMethod?: string | null; slip?: { path: string; sha256: string; type: string; transferAt?: string | null; ref?: string | null } | null; expectedTotal: number | null;
+  /** A preorder: the start of the chosen pickup slot (ISO). Pick-up only. */
+  pickupAt?: string | null }
 
 // staff
 export interface AdminOrder extends ShopOrder {
@@ -128,6 +147,7 @@ export const shop = {
       p_key: i.key, p_items: i.items, p_fulfilment: i.fulfilment, p_name: i.name, p_phone: i.phone, p_address: i.fulfilment === 'delivery' ? i.address : null,
       p_note: i.note || null, p_expected_total: i.expectedTotal, ...(i.paymentMethod ? { p_payment_method: i.paymentMethod } : {}),
       ...(i.slip ? { p_slip_path: i.slip.path, p_slip_sha256: i.slip.sha256, p_slip_type: i.slip.type, p_slip_transfer_at: i.slip.transferAt ?? null, p_slip_ref: i.slip.ref || null } : {}),
+      ...(i.pickupAt ? { p_pickup_at: i.pickupAt } : {}),
     }, WRITE_TIMEOUT_MS);
     clearShopCache();
     return r;
@@ -135,6 +155,12 @@ export const shop = {
   myOrders: (filter: OrderFilter = 'all', limit = 20, offset = 0) => rpc<OrdersPage>('shop_my_orders', { p_filter: filter, p_limit: limit, p_offset: offset }),
   myOrder: (id: string) => rpc<ShopOrder>('shop_my_order', { p_id: id }),
   cancelMyOrder: (id: string, reason?: string) => rpc<ShopOrder>('shop_cancel_my_order', { p_id: id, p_reason: reason ?? null }),
+  // preorders
+  preorderOptions: () => rpc<PreorderOptions>('preorder_options'),
+  preorderSlots: (day: string, units: number) => rpc<PreorderSlots>('preorder_slots', { p_day: day, p_units: Math.max(1, units) }),
+  /** Change the pickup time and / or the instructions of my preorder; only the keys given are changed. */
+  changePreorder: (id: string, patch: { pickup_at?: string; note?: string }) => rpc<ShopOrder>('preorder_change_my_order', { p_id: id, p_patch: patch }, WRITE_TIMEOUT_MS),
+  requestPreorderChange: (id: string, message: string) => rpc<{ ok: boolean }>('preorder_request_change', { p_id: id, p_message: message }, WRITE_TIMEOUT_MS),
 };
 
 // ---------------------------------------------------------------- staff

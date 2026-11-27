@@ -4,6 +4,31 @@ import type { Pair } from './errorMessages.app';
 
 /** What a machine code means, for a bare "CODE" and for a "CODE: detail" whose detail has no entry of its own. */
 export const CODE_MESSAGES: Record<string, Pair> = {
+  DAY_HAS_ORDERS: ['Preorders are booked on that day that would no longer fit.', 'มีพรีออเดอร์ที่จองไว้ในวันนั้นซึ่งจะไม่ตรงเวลาอีกต่อไป'],
+  DAY_UNITS_FULL: ['That day is at its limit of items.', 'วันนั้นรับจำนวนสินค้าเต็มแล้ว'],
+  INVALID_ASSIGNEE: ['Choose an active staff member.', 'กรุณาเลือกพนักงานที่ยังใช้งานอยู่'],
+  INVALID_DAY: ['The date or hours are not valid.', 'วันที่หรือเวลาไม่ถูกต้อง'],
+  INVALID_MESSAGE: ['Write a message of 3 to 300 characters.', 'กรุณาเขียนข้อความ 3 ถึง 300 ตัวอักษร'],
+  NOTHING_TO_CHANGE: ['There is nothing to change.', 'ไม่มีอะไรให้เปลี่ยน'],
+  NOT_PREORDER: ['This order is not a preorder.', 'คำสั่งซื้อนี้ไม่ใช่พรีออเดอร์'],
+  NOT_PREPARING: ['The checklist can be ticked while the order is confirmed or being prepared.', 'ติ๊กรายการเตรียมสินค้าได้เมื่อออเดอร์ยืนยันแล้วหรือกำลังเตรียม'],
+  ORDER_CLOSED: ['This order is already finished.', 'คำสั่งซื้อนี้สิ้นสุดแล้ว'],
+  PICKUP_PASSED: ['The pickup time has already passed. Move the order to a new time first.', 'เลยเวลานัดรับแล้ว กรุณาย้ายออเดอร์ไปเวลาใหม่ก่อน'],
+  PREORDER_NOT_CONFIGURED: ['Save the opening hours first, then switch preorders on.', 'กรุณาบันทึกเวลาเปิด-ปิดก่อน แล้วจึงเปิดพรีออเดอร์'],
+  PREORDER_OFF: ['Preorders are not open right now.', 'ขณะนี้ยังไม่เปิดรับพรีออเดอร์'],
+  PREORDER_PICKUP_ONLY: ['A preorder is for pickup at the shop only.', 'พรีออเดอร์ใช้ได้กับการรับสินค้าที่ร้านเท่านั้น'],
+  PREP_INCOMPLETE: ['Tick every item of the checklist before marking the order ready.', 'กรุณาติ๊กครบทุกรายการเตรียมสินค้าก่อนกดพร้อมรับ'],
+  RESCHEDULE_LIMIT: ['The pickup time was already changed the most times allowed.', 'เปลี่ยนเวลานัดรับครบจำนวนครั้งที่กำหนดแล้ว'],
+  SLOT_CLOSED: ['The shop is closed on that day.', 'ร้านปิดทำการในวันที่เลือก'],
+  SLOT_FULL: ['That time is full.', 'ช่วงเวลานั้นเต็มแล้ว'],
+  SLOT_INVALID: ['That is not one of the shop\x27s pickup times.', 'เวลานั้นไม่ใช่เวลานัดรับของร้าน'],
+  SLOT_PAST: ['That time has already passed.', 'เวลานั้นผ่านไปแล้ว'],
+  SLOT_REQUIRED: ['Choose a pickup time.', 'กรุณาเลือกเวลานัดรับ'],
+  SLOT_TOO_FAR: ['That day is further ahead than the shop accepts.', 'วันที่เลือกไกลเกินกว่าที่ร้านรับล่วงหน้า'],
+  SLOT_TOO_SOON: ['That time is too soon.', 'เวลานั้นเร็วเกินไป'],
+  SLOT_UNITS_FULL: ['That time cannot take this many items.', 'ช่วงเวลานั้นรับจำนวนสินค้าเท่านี้ไม่ได้'],
+  TOO_LATE_TO_CHANGE: ['It is too close to the pickup time to change or cancel.', 'ใกล้เวลานัดรับแล้ว เปลี่ยนหรือยกเลิกไม่ได้'],
+  TOO_MANY_REQUESTS: ['A message was sent a moment ago. Wait a few minutes.', 'เพิ่งส่งข้อความไป กรุณารอสักครู่'],
   ADJUSTMENT_NEEDS_SUPER_ADMIN: ['Only a SUPER_ADMIN can make an adjustment this large.', 'การปรับยอดจำนวนนี้ทำได้เฉพาะ SUPER_ADMIN'],
   AI_DISABLED: ['The AI check is switched off.', 'ปิดการตรวจด้วย AI อยู่'],
   ALREADY_DONE: ['This was already done.', 'รายการนี้ทำเสร็จแล้ว'],
@@ -123,6 +148,7 @@ export const CODE_MESSAGES: Record<string, Pair> = {
 };
 
 export const DB_MESSAGES: Pair[] = [
+  ['Only a SUPER_ADMIN can change the preorder settings', 'เฉพาะ SUPER_ADMIN เท่านั้นที่แก้ตั้งค่าพรีออเดอร์ได้'],
   // ---- central receivables (store credit sales billed centrally)
   ['A customer link is never deleted (link it to the right customer instead)', 'ลบการเชื่อมลูกค้าไม่ได้ (ให้เชื่อมกับลูกค้าที่ถูกต้องแทน)'],
   ['The device and local customer of a link cannot be changed', 'แก้เครื่องและลูกค้าในเครื่องของการเชื่อมลูกค้าไม่ได้'],

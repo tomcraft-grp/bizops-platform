@@ -13,8 +13,11 @@ const EVENTS: { k: LineEvent; label: string }[] = [
   { k: 'order_status', label: 'Order accepted or cancelled on the web' },
   { k: 'payment_issue', label: 'Payment problem (slip rejected, more evidence, AI check)' },
   { k: 'customer_notify', label: 'Tell the customer on LINE when the order is accepted or cancelled' },
+  { k: 'preorder', label: 'Preorder alerts for the group (changes, cancellations, late, waiting for pickup, slot full, large order)' },
+  { k: 'preorder_staff', label: 'Tell the assigned employee on LINE about their preorders' },
+  { k: 'preorder_customer', label: 'Tell the customer on LINE about their preorder (confirmed, ready, reminder, changes)' },
 ];
-const EVENT_NAME: Record<LineEvent, string> = { order_new: 'New order', slip_new: 'New slip', order_status: 'Order status', payment_issue: 'Payment problem', customer_notify: 'Customer message' };
+const EVENT_NAME: Record<LineEvent, string> = { order_new: 'New order', slip_new: 'New slip', order_status: 'Order status', payment_issue: 'Payment problem', customer_notify: 'Customer message', preorder: 'Preorder', preorder_staff: 'Preorder (employee)', preorder_customer: 'Preorder (customer)' };
 const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('en-GB', { timeZone: 'Asia/Bangkok', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
 const tone = (s: OutboxEntry['status']) => (s === 'sent' ? 'good' : s === 'dead' ? 'bad' : s === 'failed' ? 'warn' : '');
 
@@ -147,7 +150,7 @@ export function LineSettingsCard() {
         {/* events, quick approve, reasons */}
         <section className="col" style={{ gap: 8 }}>
           <h3><Tx>Events</Tx></h3>
-          {EVENTS.map((e) => (
+          {EVENTS.filter((e) => !e.k.startsWith('preorder') || e.k in s.events).map((e) => (   // a database without the preorder migration has no such switches
             <Check key={e.k} checked={!!form.events[e.k]} onChange={(v) => edit && setForm({ ...form, events: { ...form.events, [e.k]: v } })}>{e.label}</Check>
           ))}
         </section>

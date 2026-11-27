@@ -5,10 +5,10 @@
 //   POST {"op":"test"} with Authorization: Bearer <a SUPER_ADMIN's JWT> (the Settings page) -> 200 {ok, name, error}: LINE's bot info, i.e. the token works
 // The token never appears in a stored error or an answer (redacted).
 import { classify, redact, type SendResult } from '../_shared/line.ts';
-import { followUpCard, orderCard, orderUrl, type CardData } from '../_shared/lineCards.ts';
+import { followUpCard, orderCard, orderUrl, preorderUrl, type CardData } from '../_shared/lineCards.ts';
 
 export type OutboxRow = {
-  id: string; event: 'order_new' | 'slip_new' | 'order_status' | 'payment_issue' | 'customer_notify';
+  id: string; event: 'order_new' | 'slip_new' | 'order_status' | 'payment_issue' | 'customer_notify' | 'preorder';
   target_type: 'group' | 'user'; target_id: string; attempts: number; card: CardData | null; payload: Record<string, unknown>;
 };
 
@@ -50,6 +50,12 @@ export function render(row: OutboxRow): unknown[] | null {
     case 'payment_issue': {
       const link = row.card ? `\nดูออเดอร์: ${orderUrl(row.card)}` : '';
       return [{ type: 'text', text: `⚠️ ${s('order_no')}: ${ISSUE[s('kind')] ?? 'มีปัญหาเรื่องการชำระเงิน'}${s('reason') ? ` (${s('reason')})` : ''}${link}` }];
+    }
+    case 'preorder': {
+      // the Thai sentence is written by the database (preorder_msg); staff messages end with the link to the order in the back office, customer messages never do
+      if (!s('text')) return null;
+      const link = s('audience') === 'staff' && row.card ? `\nดูออเดอร์: ${preorderUrl(row.card)}` : '';
+      return [{ type: 'text', text: s('text') + link }];
     }
     case 'customer_notify':
       return [{ type: 'text', text: s('status') === 'cancelled'

@@ -11,6 +11,7 @@ import { MAX_QTY, useCart } from './cart';
 import { baht, packLabel } from './format';
 import { K, ShopLang, useShopLang, useT } from './i18n';
 import { payNotes } from './pay';
+import { PREORDER_STEPS } from './preorderView';
 
 export function ProductImage({ src, alt, className }: { src?: string | null; alt: string; className?: string }) {
   const [bad, setBad] = useState(false);
@@ -48,6 +49,8 @@ export function GridSkeleton({ n = 6 }: { n?: number }) {
 }
 
 /** User-facing text for a failed call (never the raw database message). */
+/** The coded refusals of the preorder functions (each has a sentence `po.err.<CODE>`). */
+const PREORDER_CODES = new Set(['PREORDER_OFF', 'PREORDER_PICKUP_ONLY', 'SLOT_REQUIRED', 'SLOT_TOO_SOON', 'SLOT_TOO_FAR', 'SLOT_PAST', 'SLOT_CLOSED', 'SLOT_INVALID', 'SLOT_FULL', 'SLOT_UNITS_FULL', 'DAY_UNITS_FULL', 'RESCHEDULE_LIMIT', 'TOO_LATE_TO_CHANGE', 'NOT_PREORDER', 'ORDER_CLOSED', 'INVALID_MESSAGE', 'TOO_MANY_REQUESTS', 'INVALID_NOTE']);
 export function errText(t: ReturnType<typeof useT>, e: unknown): string {
   if (!(e instanceof ShopError)) return t('err.generic');
   switch (e.code) {
@@ -67,7 +70,7 @@ export function errText(t: ReturnType<typeof useT>, e: unknown): string {
     case 'INVALID_PAYMENT_METHOD': return t('err.method');
     case 'INVALID_NAME': return t('err.name');
     case 'FORBIDDEN': return t('err.signin');
-    default: return t('err.generic');
+    default: return PREORDER_CODES.has(e.code) ? t(`po.err.${e.code}` as K) : t('err.generic');
   }
 }
 
@@ -163,7 +166,7 @@ export function OrderBadge({ status }: { status: OrderStatus }) {
   const t = useT();
   return <span className={cx('sp-pill', ORDER_TONE[status])}>{t(`st.${status}` as K)}</span>;
 }
-export const orderSteps = (f: 'delivery' | 'pickup'): OrderStatus[] => (f === 'pickup' ? ['new', 'confirmed', 'preparing', 'packed', 'ready', 'completed'] : ['new', 'confirmed', 'preparing', 'packed', 'shipped', 'completed']);
+export const orderSteps = (f: 'delivery' | 'pickup', type?: 'regular' | 'preorder'): OrderStatus[] => (type === 'preorder' ? [...PREORDER_STEPS] : f === 'pickup' ? ['new', 'confirmed', 'preparing', 'packed', 'ready', 'completed'] : ['new', 'confirmed', 'preparing', 'packed', 'shipped', 'completed']);
 
 export function Section({ title, action, children }: { title: ReactNode; action?: ReactNode; children: ReactNode }) {
   return <section className="sp-sec"><div className="sp-sec-h"><h3>{title}</h3>{action}</div>{children}</section>;

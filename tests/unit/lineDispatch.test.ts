@@ -120,3 +120,39 @@ describe('line-dispatch', () => {
     expect(r.status).toBe(200); expect(r.headers.get('Access-Control-Allow-Origin')).toBe('https://tomcraft-grp.github.io');
   });
 });
+
+describe('line-dispatch: preorder messages', () => {
+  const PRE: CardData = { ...CARD, order_type: 'preorder', pickup_at: '2026-12-01T03:00:00Z' };
+  it('a staff message is the database\'s Thai sentence plus the back-office link of that order', async () => {
+    const { deps, pushes, done } = fakes([row(ID1, { event: 'preorder', card: PRE, payload: { kind: 'late', order_no: 'ORD-1', text: '🚨 ORD-1 ถึงเวลานัดรับแล้ว (01/12 10:00 น.) แต่ยังไม่พร้อม', audience: 'staff' } })]);
+    await handleDispatch(drain(), deps);
+    const text = (pushes[0].messages[0] as { type: string; text: string }).text;
+    expect(pushes[0].to).toBe('Cgroup');
+    expect(text.startsWith('🚨 ORD-1 ถึงเวลานัดรับแล้ว')).toBe(true);
+    expect(text).toContain(`#/preorders?order=${ORDER}`);
+    expect(done[0].slice(1, 3)).toEqual([true, false]);
+  });
+  it('a customer message never carries a back-office link', async () => {
+    const { deps, pushes } = fakes([row(ID1, { event: 'preorder', target_type: 'user', target_id: 'Ucust', card: PRE, payload: { kind: 'ready', order_no: 'ORD-1', text: '✅ ออเดอร์ ORD-1 พร้อมให้รับแล้ว', audience: 'customer' } })]);
+    await handleDispatch(drain(), deps);
+    const text = (pushes[0].messages[0] as { text: string }).text;
+    expect(pushes[0].to).toBe('Ucust');
+    expect(text).toBe('✅ ออเดอร์ ORD-1 พร้อมให้รับแล้ว');
+    expect(text).not.toContain('#/');
+  });
+  it('a preorder row without its text is dead (nothing to send), and a gone card still sends the text', async () => {
+    const a = fakes([row(ID1, { event: 'preorder', payload: { kind: 'x' } })]);
+    await handleDispatch(drain(), a.deps);
+    expect(a.done[0].slice(1, 4)).toEqual([false, false, 'NOTHING_TO_SEND']);
+    const b = fakes([row(ID2, { event: 'preorder', card: null, payload: { text: 'hello', audience: 'staff' } })]);
+    await handleDispatch(drain(), b.deps);
+    expect((b.pushes[0].messages[0] as { text: string }).text).toBe('hello');
+  });
+  it('a preorder order card says so and shows the pickup time; a regular card is unchanged', async () => {
+    const { deps, pushes } = fakes([row(ID1, { event: 'order_new', card: PRE }), row(ID2, { event: 'order_new' })]);
+    await handleDispatch(drain(), deps);
+    const pre = JSON.stringify(pushes[0].messages); const reg = JSON.stringify(pushes[1].messages);
+    expect(pre).toContain('พรีออเดอร์ใหม่'); expect(pre).toContain('นัดรับ'); expect(pre).toContain('10:00');
+    expect(reg).toContain('ออเดอร์ใหม่'); expect(reg).not.toContain('พรีออเดอร์'); expect(reg).not.toContain('นัดรับ');
+  });
+});

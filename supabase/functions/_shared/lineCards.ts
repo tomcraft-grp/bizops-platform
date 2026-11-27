@@ -7,6 +7,8 @@ export type CardData = {
   order_id: string; order_no: string; customer_name: string; phone: string; created_at: string;
   item_count: number; items: { name: string; qty: number; price: number; image: string | null }[]; more_count: number;
   total: number; fulfilment: 'delivery' | 'pickup';
+  /** A preorder (scheduled pickup): the database sends both; a database without the preorder migration sends neither. */
+  order_type?: 'regular' | 'preorder'; pickup_at?: string | null;
   payment: { method: 'transfer' | 'wallet' | 'qr' | 'unpaid'; bank: string | null; has_slip: boolean; transfer_at: string | null; evidence_id: string | null };
   status: string; quick: { ok: boolean; why: string | null }; app_url: string;
 };
@@ -40,6 +42,8 @@ function statusChip(status: string): { text: string; color: string } {
   return { text: 'รับแล้ว', color: GREEN };
 }
 export const orderUrl = (d: Pick<CardData, 'app_url' | 'order_id'>) => `${d.app_url}?openExternalBrowser=1#/shop-admin?order=${d.order_id}`;
+/** The back-office page of one preorder (sign-in required, like every back-office link). */
+export const preorderUrl = (d: Pick<CardData, 'app_url' | 'order_id'>) => `${d.app_url}?openExternalBrowser=1#/preorders?order=${d.order_id}`;
 export const slipUrl = (appUrl: string, evidenceId: string) => `${appUrl}?openExternalBrowser=1#/payment-review?evidence=${evidenceId}`;
 
 const text = (t: string, extra: Record<string, unknown> = {}) => ({ type: 'text', text: t, wrap: true, size: 'sm', color: DARK, ...extra });
@@ -73,6 +77,7 @@ function itemRow(it: CardData['items'][number]) {
 export function orderCard(d: CardData, event: 'order_new' | 'slip_new' = 'order_new', cardId = '00000000-0000-4000-8000-000000000000') {
   const chip = statusChip(d.status);
   const isNew = d.status === 'new';
+  const pre = d.order_type === 'preorder' && !!d.pickup_at;
   const items = [...d.items.map(itemRow), ...(d.more_count > 0 ? [text(`+ อีก ${d.more_count} รายการ`, { color: GREY, size: 'xs' })] : [])];
   const actions = isNew ? [
     button('รับออเดอร์', postback('รับออเดอร์', encodePostback({ a: 'accept', o: d.order_id, c: cardId }), `รับออเดอร์ ${d.order_no}`), 'primary', GREEN),
@@ -84,7 +89,7 @@ export function orderCard(d: CardData, event: 'order_new' | 'slip_new' = 'order_
     ...(d.payment.has_slip && d.payment.evidence_id ? [button('ตรวจสลิป', { type: 'uri', uri: slipUrl(d.app_url, d.payment.evidence_id) }, 'link')] : []),
     button('โทรหาลูกค้า', { type: 'uri', uri: `tel:${d.phone}` }, 'link'),
   ];
-  const title = event === 'slip_new' ? 'สลิปใหม่' : 'ออเดอร์ใหม่';
+  const title = event === 'slip_new' ? 'สลิปใหม่' : pre ? 'พรีออเดอร์ใหม่' : 'ออเดอร์ใหม่';
   return {
     type: 'flex', altText: `${title} ${d.order_no} ${money(d.total)}`,
     contents: {
@@ -103,7 +108,8 @@ export function orderCard(d: CardData, event: 'order_new' | 'slip_new' = 'order_
           row('เลขที่', d.order_no, { weight: 'bold' }),
           row('ลูกค้า', d.customer_name),
           row('วันที่', dayTime(d.created_at)),
-          row('รับสินค้า', d.fulfilment === 'pickup' ? 'รับที่ร้าน' : 'จัดส่ง'),
+          row('รับสินค้า', pre ? 'พรีออเดอร์ · รับที่ร้าน' : d.fulfilment === 'pickup' ? 'รับที่ร้าน' : 'จัดส่ง'),
+          ...(pre ? [row('นัดรับ', `${dayTime(d.pickup_at as string)} น.`, { weight: 'bold', color: AMBER })] : []),
           { type: 'separator' },
           ...items,
           { type: 'separator' },

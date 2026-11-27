@@ -4,7 +4,7 @@
 import { supabase } from './supabase';
 import { t, type Lang } from './i18n';
 
-export type LineEvent = 'order_new' | 'slip_new' | 'order_status' | 'payment_issue' | 'customer_notify';
+export type LineEvent = 'order_new' | 'slip_new' | 'order_status' | 'payment_issue' | 'customer_notify' | 'preorder' | 'preorder_staff' | 'preorder_customer';
 export interface LineSettings {
   enabled: boolean;
   group: { name: string | null; bound_at: string } | null;
