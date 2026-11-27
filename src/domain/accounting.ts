@@ -245,12 +245,21 @@ function ownedByOrder(d: DB, j: Journal) {
   const po = j.refType === 'production' ? d.productionOrders.find((o) => o.id === j.refId) : undefined;
   return po && !po.batches.some((b) => b.journalId === j.id) ? po : undefined;
 }
-export function reverseJournal(d: DB, ctx: Ctx, journalId: ID, reason: string, opts?: { fromProduction?: boolean }): ID {
+/** The entries of a goods receipt, a supplier payment or a supplier return go with their stock, invoice and payables: only domain/purchasing.ts (fromPurchasing) may reverse them. */
+function ownedByPurchasing(d: DB, j: Journal) {
+  if (j.refType === 'grn') { const g = d.grns.find((x) => x.id === j.refId); return g && !g.reversal && g.journalId === j.id ? g.no : undefined; }
+  if (j.refType === 'supplier_payment') { const p = d.supplierPayments.find((x) => x.id === j.refId); return p && !p.reversal ? p.no : undefined; }
+  if (j.refType === 'supplier_return') return d.supplierReturns.find((x) => x.id === j.refId)?.no;
+  return undefined;
+}
+export function reverseJournal(d: DB, ctx: Ctx, journalId: ID, reason: string, opts?: { fromProduction?: boolean; fromPurchasing?: boolean }): ID {
   const j = d.journals.find((x) => x.id === journalId) || fail('NOT_FOUND', 'Journal not found');
   if (j.status === 'reversed') fail('ALREADY', 'Journal already reversed');
   if (j.reverses) fail('INVALID', 'A reversal entry cannot itself be reversed');
   const owner = opts?.fromProduction ? undefined : ownedByOrder(d, j);
   if (owner) fail('USE_PRODUCTION', `${j.no} belongs to production order ${owner.no}. Reverse it on the production order, so that its stock and cost go with it`);
+  const doc = opts?.fromPurchasing ? undefined : ownedByPurchasing(d, j);
+  if (doc) fail('USE_PURCHASING', `${j.no} belongs to ${doc}. Reverse it in Purchasing, so that its stock, invoice and payables go with it`);
   if (!reason.trim()) fail('REASON', 'A reason is required for a reversal');
   const rid = post(d, ctx, {
     memo: `Reversal of ${j.no}: ${reason}`, refType: 'reversal', refId: j.id, reverses: j.id, dim: j.dim, allowInactive: true,

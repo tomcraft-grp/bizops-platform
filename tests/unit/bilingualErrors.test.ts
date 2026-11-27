@@ -26,7 +26,7 @@ const TOASTS = collect(SRC, new RegExp("toast\\('error',\\s*tl?\\((?:lang,\\s*)"
 
 // Not shown to anybody: checks inside a migration file, programming mistakes, and codes the caller turns into its own sentence.
 const NOT_SHOWN = [
-  /changed: anchor not found/, /^numbering swap/, /^customer_app_validate has an unexpected shape/, /^Backfill incomplete/, /^Unmapped SKU domain/, /refusing to renumber/,
+  /changed: anchor not found/, /changed since this migration was written/, /^numbering swap/, /^customer_app_validate has an unexpected shape/, /^Backfill incomplete/, /^Unmapped SKU domain/, /refusing to renumber/,
   /^Cannot add the event link/, /^an old numbering sequence/, /^Only LINE secrets$/, /must be used within/, /^ExpenseCtx missing$/, /^amount changed$/, /^TOO_MANY$/, /^FAILED$/,
   /^1: 1$/,
 ];

@@ -12,6 +12,7 @@ import { useSettings } from './hooks';
 import { useShopLang, useT } from './i18n';
 import { EMPTY_FILTER, useShopHost, useShopNav } from './nav';
 import { categoryName, ErrorBox, errText, ProductCard, ProductImage, useCategoryLabel, useFacets } from './ui';
+import { RecentOrders } from './RecentOrders';
 
 export function ShopHome() {
   const t = useT();
@@ -65,6 +66,7 @@ export function ShopHome() {
       {toPay > 0 && <button type="button" className="sp-topay" onClick={() => host.goTab('pay')}><Wallet size={18} /><span>{lang === 'en' ? `${toPay} order(s) waiting for payment` : `มี ${toPay} คำสั่งซื้อที่รอชำระเงิน`}</span><ChevronRight size={16} /></button>}
       {balance != null && <button type="button" className="sp-topay wl-homecard" onClick={() => { useShopNav.setState({ pendingWallet: true }); host.goTab('profile'); }} data-testid="home-wallet"><Wallet size={18} /><span>{t('home.wallet')}: <b>{baht(balance)}</b></span><ChevronRight size={16} /></button>}
       <TransferHomeBanner />
+      <RecentOrders />
       {error != null && !data && <ErrorBox message={`${t('common.loadError')} · ${errText(t, error)}`} onRetry={() => setN((x) => x + 1)} />}
 
       {facets && facets.categories.length > 0 && (

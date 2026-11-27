@@ -18,6 +18,7 @@ import { useShopHost, useShopNav } from './nav';
 import { ConfirmSheet, ErrorBox, errText, Fold, ProductImage, Stepper } from './ui';
 import { RewardsPreview } from './Rewards';
 import { CheckoutQrPanel, PayToBank } from '../wallet/PayTo';
+import { RecentOrders } from './RecentOrders';
 import { Choice, PayMethodPicker, useMethods } from '../wallet/ui';
 import { removeOrderSlip, slipFingerprint, slipProblem, uploadOrderSlip } from '../wallet/api';
 import { review } from '../finance/review';
@@ -37,7 +38,7 @@ export function CartCore() {
   const { quote, loading, error, refresh } = useQuote(lines, fulfilment);
 
   if (!lines.length) {
-    return <Empty icon={<ShoppingCart size={28} />} title={t('cart.empty')} hint={t('cart.emptyHint')} action={<button type="button" className="btn primary" onClick={() => host.goTab('shop')}>{t('cart.browse')}</button>} />;
+    return <><Empty icon={<ShoppingCart size={28} />} title={t('cart.empty')} hint={t('cart.emptyHint')} action={<button type="button" className="btn primary" onClick={() => host.goTab('shop')}>{t('cart.browse')}</button>} /><div className="sp-page"><RecentOrders /></div></>;
   }
   if (step === 'checkout' && quote) {
     return <Checkout quote={quote} loading={loading} fulfilment={fulfilment} setFulfilment={setFulfilment} onBack={() => setStep('cart')} refresh={refresh} />;

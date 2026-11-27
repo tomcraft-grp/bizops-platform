@@ -11,6 +11,8 @@ import { TH_REWARDS } from './i18n.rewards';
 import { TH_TRANSFERS } from './i18n.transfers';
 import { TH_SKUSYNC } from './i18n.skusync';
 import { TH_CATEGORIES } from './i18n.categories';
+import { TH_POLICY } from './i18n.policy';
+import { TH_PURCHASING } from './i18n.purchasing';
 import { TH_LINE } from './i18n.line';
 import { TH_PRODUCTION } from './i18n.production';
 
@@ -142,6 +144,8 @@ for (const [k, v] of Object.entries(TH_REWARDS)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_SKUSYNC)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_TRANSFERS)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_CATEGORIES)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_POLICY)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_PURCHASING)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_LINE)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_PRODUCTION)) if (!(k in TH)) TH[k] = v;
 

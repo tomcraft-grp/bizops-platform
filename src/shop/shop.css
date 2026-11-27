@@ -168,6 +168,10 @@ body.customer-app .toast { max-width: 440px; }
 .sp-orders { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .sp-order { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
 .sp-order:hover { border-color: var(--brand); }
+/* recent orders: the card is a box with two buttons (open the order, then the action), not one big button */
+div.sp-order { cursor: default; }
+div.sp-order:hover { border-color: var(--border); }
+.sp-order-open { display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 0; margin: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .sp-order-items { display: flex; align-items: center; gap: 10px; }
 .sp-order-items small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 .sp-thumbs-row { display: flex; flex: none; }

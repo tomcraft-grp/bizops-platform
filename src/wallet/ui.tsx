@@ -88,6 +88,20 @@ export function MethodCards({ methods, value, onChange, wallet: showWallet = tru
   );
 }
 
+/** The PromptPay QR as a choice in the wallet top-up (shown only when the shop linked its QR to a bank account). */
+export function QrTopUpCard({ selected, onSelect }: { selected: boolean; onSelect: () => void }) {
+  const t = useT();
+  return (
+    <div className={cx('wl-method', selected && 'on')} data-method="qr">
+      <label className="wl-card">
+        <input type="radio" name="dep-method" className="wl-radio" checked={selected} onChange={onSelect} aria-label={t('pm.qr')} />
+        <span className="wl-logo wl-badge wl-qr" aria-hidden><QrCode size={22} /></span>
+        <span className="wl-card-main"><b>{t('pm.qr')}</b><span className="wl-en">{t('pm.qrHint')}</span></span>
+      </label>
+    </div>
+  );
+}
+
 /** The chosen method in one line, for the closed picker: its badge, its name and the detail that tells it apart. */
 export function ChoiceSummary({ methods, value }: { methods: PaymentMethods; value: Choice }) {
   const t = useT();

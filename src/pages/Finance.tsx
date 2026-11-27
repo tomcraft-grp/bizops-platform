@@ -122,7 +122,7 @@ function Invoices({ role, onChanged }: { role: FinanceRole; onChanged: () => voi
               <td style={{ textAlign: 'right' }}>{money(r.amount)}</td><td style={{ textAlign: 'right' }}>{money(r.paid)}</td><td style={{ textAlign: 'right' }}><b>{money(r.outstanding)}</b></td>
               <td><Badge tone={s.tone} dot>{lang === 'th' ? s.th : s.en}</Badge></td>
               <td><div className="row gap-4">
-                {canFinance(role, 'verify') && r.status_code !== 8 && r.outstanding > 0 && <Button size="sm" onClick={() => setRecording({ invoiceId: r.id, invoiceNo: r.invoice_no, customer: r.customer_name, outstanding: r.outstanding, confirmedPending: r.confirmed_pending })}><Tx>Record payment</Tx></Button>}
+                {canFinance(role, 'verify') && r.status_code !== 8 && r.outstanding > 0 && <Button size="sm" onClick={() => setRecording({ invoiceId: r.id, invoiceNo: r.invoice_no, customer: r.customer_name, customerId: r.customer_id ?? null, outstanding: r.outstanding, confirmedPending: r.confirmed_pending })}><Tx>Record payment</Tx></Button>}
                 {canFinance(role, 'manage') && r.status_code !== 8 && r.paid === 0 && <Button size="sm" variant="ghost" onClick={() => cancel(r)}><Tx>Cancel</Tx></Button>}</div></td></tr>); })}</tbody></table></div>
       )}
       {adding && <NewInvoice onClose={() => setAdding(false)} onDone={() => { setAdding(false); void load(); }} />}

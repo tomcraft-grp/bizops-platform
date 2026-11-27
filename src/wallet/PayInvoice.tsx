@@ -12,12 +12,13 @@ import { ConfirmSheet } from '../shop/ui';
 import { newKey, wallet } from './api';
 import { clearMethodsCache, CopyButton, walletErrText } from './ui';
 
-export function WalletPayPanel({ inv, balance, onPaid }: { inv: InvoiceRow; balance: number; onPaid: () => void }) {
+/** `full`: the customer's policy is full payment: the wallet pays the whole outstanding amount or nothing (the database refuses less). */
+export function WalletPayPanel({ inv, balance, full = false, onPaid }: { inv: InvoiceRow; balance: number; full?: boolean; onPaid: () => void }) {
   const t = useT();
   const host = useShopHost();
   const { session } = useAuth();
   const uid = session?.user.id ?? '';
-  const max = Math.min(balance, inv.outstanding);
+  const max = full ? inv.outstanding : Math.min(balance, inv.outstanding);
   const [amount, setAmount] = useState(String(Math.max(0, Math.floor(max * 100) / 100)));
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -25,7 +26,8 @@ export function WalletPayPanel({ inv, balance, onPaid }: { inv: InvoiceRow; bala
   const inflight = useRef(false);
   const n = Number(amount);
   const cents = Math.round(n * 100);
-  const valid = isFinite(n) && n > 0 && Math.abs(n * 100 - cents) < 1e-6 && cents <= Math.round(max * 100);   // whole satang, within the balance and what is owed
+  const valid = isFinite(n) && n > 0 && Math.abs(n * 100 - cents) < 1e-6 && cents <= Math.round(max * 100)   // whole satang, within the balance and what is owed
+    && (!full || (cents === Math.round(inv.outstanding * 100) && balance + 1e-9 >= inv.outstanding));        // full payment: exactly what is owed, and the balance covers it
   const short = inv.outstanding - balance;
 
   const pay = async () => {
@@ -33,7 +35,7 @@ export function WalletPayPanel({ inv, balance, onPaid }: { inv: InvoiceRow; bala
     inflight.current = true; setBusy(true); setErr(null);
     try {
       const key = attemptKey(sessionStorage, uid, JSON.stringify({ i: inv.id, n }), newKey, 'walletpay');   // same payment, same key: a retry never charges twice
-      await wallet.payInvoice(inv.id, n, key);
+      await wallet.payInvoice(inv.id, full ? inv.outstanding : n, key);
       forgetAttempt(sessionStorage, uid, 'walletpay'); clearMethodsCache();
       setAsking(false); toast('success', t('wp.done')); onPaid();
     } catch (e) { setAsking(false); setErr(walletErrText(t, e)); } finally { inflight.current = false; setBusy(false); }
@@ -45,8 +47,8 @@ export function WalletPayPanel({ inv, balance, onPaid }: { inv: InvoiceRow; bala
         {' '}<button type="button" className="sp-link" onClick={() => { useShopNav.setState({ pendingWallet: true }); host.goTab('profile'); }}>{t('w.add')}</button></div>}
       {max > 0 && (
         <div className="sp-form">
-          <label>{t('wp.amount')}<input type="number" inputMode="decimal" min={0.01} max={max} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
-          <small className="muted">{t('wp.max', { amount: baht(max) })}</small>
+          <label>{t('wp.amount')}<input type="number" inputMode="decimal" min={0.01} max={max} step="0.01" readOnly={full} value={full ? String(inv.outstanding) : amount} onChange={(e) => setAmount(e.target.value)} data-testid="wallet-amount" /></label>
+          <small className="muted">{full ? t('wp.full', { amount: baht(inv.outstanding) }) : t('wp.max', { amount: baht(max) })}</small>
         </div>
       )}
       {err && <div className="sp-note bad" role="alert">{err}</div>}

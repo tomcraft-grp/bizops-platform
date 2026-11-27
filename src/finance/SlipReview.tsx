@@ -454,7 +454,7 @@ function Detail({ id, role, settings, reader, busy, run, postOne, rejectOne, onC
     <>
       {(e.status === 'submitted' || e.status === 'confirmed' || e.status === 'more_evidence') && <Button variant="danger" disabled={off} onClick={() => thenDone(rejectOne(g))}><XCircle size={15} /> <Tx>Reject</Tx></Button>}
       {(e.status === 'submitted' || e.status === 'confirmed') && !staffEntry && <Button disabled={off} onClick={() => { setMessage(''); setMode('more'); }}><Tx>Request more evidence</Tx></Button>}
-      {inv.invoice_status === 'open' && room > 0 && <Button disabled={off} onClick={() => onRecord({ invoiceId: inv.id, invoiceNo: inv.invoice_no, customer: d.customer.name, outstanding: inv.outstanding, confirmedPending: inv.confirmed_pending })}><Plus size={15} /> <Tx>Record payment</Tx></Button>}
+      {inv.invoice_status === 'open' && room > 0 && <Button disabled={off} onClick={() => onRecord({ invoiceId: inv.id, invoiceNo: inv.invoice_no, customer: d.customer.name, customerId: d.customer.id, outstanding: inv.outstanding, confirmedPending: inv.confirmed_pending })}><Plus size={15} /> <Tx>Record payment</Tx></Button>}
       {e.status === 'submitted' && <Button variant={canPostNow ? undefined : 'primary'} disabled={off} onClick={() => openConfirm('confirm')}><Tx>Confirm</Tx></Button>}
       {e.status === 'submitted' && canPostNow && <Button variant="primary" disabled={off} onClick={() => openConfirm('post')}><Tx>Confirm & Post</Tx></Button>}
       {e.status === 'confirmed' && canPostNow && <Button variant="primary" disabled={off} onClick={() => thenDone(postOne(g))}><CheckCircle2 size={15} /> <Tx>Post Invoice</Tx></Button>}
