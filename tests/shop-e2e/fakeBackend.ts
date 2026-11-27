@@ -75,6 +75,11 @@ export class FakeShop {
   invokeMode: 'ok' | 'fail' | 'hang' = 'ok';
   openGate: () => void = () => undefined;
   private gate = new Promise<void>((resolve) => { this.openGate = resolve; });
+  /** the LINE members page (profiles that have a LINE id) and the calls to line_member_set_access */
+  members: { id: string; display_name: string; phone: string | null; status: 'active' | 'disabled'; created_at: string; pdpa_consent_at: string | null; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' }[] = [];
+  accessCalls: Record<string, unknown>[] = [];
+  /** true = a database WITHOUT the back-office access migration */
+  noAccessFunction = false;
   /** every direct table read the browser made (the table and the columns it asked for), so a test can see what a customer screen reads */
   restReads: { table: string; select: string | null }[] = [];
   /** true = a database WITHOUT the slip-review migration: the payment events table has no request_message / source / method column (selecting one is an error, like PostgREST) */
@@ -286,6 +291,16 @@ export class FakeShop {
         o.status = to; if (note) o.status_note = note; log({ to, note, payment_override: !!why && ![5, 6].includes(this.payOf(o)), override_reason: why });
         return this.orderJson(o);
       }
+      case 'line_member_set_access': {      // migration 20261128110000: a SUPER_ADMIN gives / takes back the ADMIN role of a LINE member (same refusals as the database)
+        this.accessCalls.push({ ...a });
+        if (this.noAccessFunction) this.err('Could not find the function public.line_member_set_access(p_grant, p_profile, p_reason) in the schema cache');
+        if (this.profile.role !== 'SUPER_ADMIN') this.err('Only a SUPER_ADMIN can give or take back back-office access');
+        const m = this.members.find((x) => x.id === a.p_profile); if (!m) this.err('NOT_FOUND');
+        if (m.id === this.profile.id) this.err('SELF_CHANGE'); if (m.role === 'SUPER_ADMIN') this.err('SUPER_ADMIN_FIXED');
+        const role = a.p_grant ? 'ADMIN' : 'USER'; if (m.role === role) return { changed: false, role };
+        if (a.p_grant && m.status !== 'active') this.err('MEMBER_DISABLED');
+        m.role = role; return { changed: true, role };
+      }
       case 'shop_admin_settings': return this.adminSettings();
       case 'shop_admin_save_settings': { this.staff(); Object.assign(this.settings, a.p_patch as object); return this.adminSettings(); }
       case 'shop_admin_categories': {
@@ -408,7 +423,10 @@ export class FakeShop {
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
       if (p === '/auth/v1/user') return json(route, { id: USER_ID, aud: 'authenticated', role: 'authenticated', email: this.profile.email, user_metadata: {}, app_metadata: {} });
       if (p.startsWith('/auth/v1/')) return json(route, {});
-      if (p === '/rest/v1/profiles') return json(route, this.profile);
+      if (p === '/rest/v1/profiles') {
+        if (url.searchParams.has('line_user_id')) return json(route, this.members);          // the LINE members page: every profile that has a LINE id
+        return json(route, this.profile);
+      }
       if (p.startsWith('/functions/v1/')) {                                           // an Edge Function: only recorded (name + body), it is never run here
         let body: Record<string, unknown> = {};
         try { body = JSON.parse(req.postData() || '{}') as Record<string, unknown>; } catch { /* no body */ }

@@ -4,6 +4,10 @@ import type { Pair } from './errorMessages.app';
 
 /** What a machine code means, for a bare "CODE" and for a "CODE: detail" whose detail has no entry of its own. */
 export const CODE_MESSAGES: Record<string, Pair> = {
+  MEMBER_DISABLED: ['A disabled member cannot be given back-office access.', 'สมาชิกที่ปิดบัญชีอยู่ให้สิทธิ์หลังบ้านไม่ได้'],
+  NOT_LINE_MEMBER: ['Only LINE members can be given access here.', 'ให้สิทธิ์จากหน้านี้ได้เฉพาะสมาชิก LINE'],
+  SELF_CHANGE: ['You cannot change your own access.', 'เปลี่ยนสิทธิ์ของตัวเองไม่ได้'],
+  SUPER_ADMIN_FIXED: ['A SUPER_ADMIN\x27s access cannot be changed here.', 'เปลี่ยนสิทธิ์ของ SUPER_ADMIN จากหน้านี้ไม่ได้'],
   DAY_HAS_ORDERS: ['Preorders are booked on that day that would no longer fit.', 'มีพรีออเดอร์ที่จองไว้ในวันนั้นซึ่งจะไม่ตรงเวลาอีกต่อไป'],
   DAY_UNITS_FULL: ['That day is at its limit of items.', 'วันนั้นรับจำนวนสินค้าเต็มแล้ว'],
   INVALID_ASSIGNEE: ['Choose an active staff member.', 'กรุณาเลือกพนักงานที่ยังใช้งานอยู่'],
@@ -148,6 +152,7 @@ export const CODE_MESSAGES: Record<string, Pair> = {
 };
 
 export const DB_MESSAGES: Pair[] = [
+  ['Only a SUPER_ADMIN can give or take back back-office access', 'เฉพาะ SUPER_ADMIN เท่านั้นที่ให้หรือถอนสิทธิ์หลังบ้านได้'],
   ['Only a SUPER_ADMIN can change the preorder settings', 'เฉพาะ SUPER_ADMIN เท่านั้นที่แก้ตั้งค่าพรีออเดอร์ได้'],
   // ---- central receivables (store credit sales billed centrally)
   ['A customer link is never deleted (link it to the right customer instead)', 'ลบการเชื่อมลูกค้าไม่ได้ (ให้เชื่อมกับลูกค้าที่ถูกต้องแทน)'],
