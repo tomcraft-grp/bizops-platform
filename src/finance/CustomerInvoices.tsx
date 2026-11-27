@@ -77,7 +77,10 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   useEffect(() => () => { if (pickedUrl.current) URL.revokeObjectURL(pickedUrl.current); }, []);
   const [qr, setQr] = useState<QrRequest | null>(null);
   // how the customer pays: a bank account, the wallet or the PromptPay QR (all from the database-driven payment methods)
-  const { methods, error: methodsError, reload: reloadMethods } = useMethods();
+  const { methods: allMethods, error: methodsError, reload: reloadMethods } = useMethods();
+  // a store invoice is never paid from the wallet (the owner's rule; the database refuses it too): offer banks and QR only
+  const noWallet = inv.origin === 'store';
+  const methods = allMethods && noWallet ? { ...allMethods, wallet: { ...allMethods.wallet, balance: 0 } } : allMethods;
   const [picked0, setChoice] = useState<Choice>(null);
   const hasMethods = !!methods && (methods.banks.length > 0 || methods.wallet.balance > 0);
   // the customer's choice at checkout (when it is still available) comes first, then the first bank
@@ -169,7 +172,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
       {open && payable && !pv.waiting && (
         <div className="col gap-8" style={{ marginTop: 10 }}>
           {loadingMethods && <div className="muted" aria-busy="true" style={{ fontSize: 12.5 }}>{tr(lang, 'pm.loading')}</div>}
-          {hasMethods && <PayMethodPicker id={`pay-${inv.id}`} title={tr(lang, 'pm.title')} methods={methods!} value={choice} onChange={(c) => { setChoice(c); setQrError(null); }} open={picking} setOpen={setPicking} />}
+          {hasMethods && <PayMethodPicker id={`pay-${inv.id}`} title={tr(lang, 'pm.title')} methods={methods!} value={choice} onChange={(c) => { setChoice(c); setQrError(null); }} open={picking} setOpen={setPicking} wallet={!noWallet} />}
           {choice?.kind === 'wallet' && methods && <WalletPayPanel inv={inv} balance={methods.wallet.balance} full={pv.locked} onPaid={() => { reloadMethods(); onChanged(); void loadHistory(); }} />}
           {bankChoice && <><PayToBank bank={bankChoice} /><TransferAmount amount={inv.outstanding} reference={inv.invoice_no} /></>}
           {showQr && (live

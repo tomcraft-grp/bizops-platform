@@ -13,7 +13,7 @@ import { BRAND } from '../brand';
 import { dayKey } from '../lib/util';
 import { STATUS_META, canDo, dashboard, loadCategories, loadSettings, markPosted, myRole, useT, type Category, type Claim, type ExpenseCap, type ExpenseRole, type Settings, type Status } from './api';
 import { ExpenseCtx, claimToPosting, useExpense } from './parts';
-import { ExpenseForm } from './ExpenseForm';
+import { DailySheet } from './DailySheet';
 import { ClaimList } from './ClaimList';
 import { ClaimDrawer } from './ClaimDrawer';
 import { Dashboard } from './Dashboard';
@@ -51,7 +51,7 @@ export default function ExpensesPage({ mode }: { mode: 'backoffice' | 'standalon
     return <ExpenseCtx.Provider value={value}><Workspace /></ExpenseCtx.Provider>;
   })();
 
-  if (backoffice) return <><PageHead title="Daily expenses" desc="Record everyday spending in under a minute. A manager approves it, then the accountant checks the tax and posts it to the books." />{body}</>;
+  if (backoffice) return <><PageHead title="Daily expenses" desc={T('Record and manage your daily expenses: pick a day, type one row per expense, save. A manager approves them, then the accountant checks the tax and posts them to the books.', 'บันทึกและจัดการรายจ่ายประจำวัน: เลือกวัน พิมพ์รายจ่ายทีละแถว แล้วกดบันทึก ผู้จัดการอนุมัติ จากนั้นนักบัญชีตรวจภาษีและลงบัญชี')} />{body}</>;
   return (
     <div className="exp-standalone">
       <header className="exp-top">
@@ -96,7 +96,7 @@ function Workspace() {
   };
 
   const tabs = [
-    { v: 'new' as Tab, label: T('New expense', 'บันทึกรายจ่าย') }, { v: 'mine' as Tab, label: T('My expenses', 'รายจ่ายของฉัน') }, { v: 'overview' as Tab, label: T('Overview', 'ภาพรวม') },
+    { v: 'new' as Tab, label: T('Record expenses', 'บันทึกรายจ่าย') }, { v: 'mine' as Tab, label: T('My expenses', 'รายจ่ายของฉัน') }, { v: 'overview' as Tab, label: T('Overview', 'ภาพรวม') },
     ...(can('approve') ? [{ v: 'approve' as Tab, label: T('Approvals', 'รออนุมัติ'), count: counts.submitted || '' }] : []),
     ...(showPost ? [{ v: 'post' as Tab, label: T('Accounting', 'ลงบัญชี'), count: counts.approved || '' }, { v: 'reports' as Tab, label: T('Reports', 'รายงาน') }] : []),
     ...(can('config') || can('manage_roles') ? [{ v: 'settings' as Tab, label: T('Settings', 'ตั้งค่า') }] : []),
@@ -108,8 +108,8 @@ function Workspace() {
       <HowItWorks />
       {role && can('post') && !backoffice && counts.approved > 0 && <div className="mb16"><Banner>{T(`${counts.approved} approved expense(s) are waiting to be posted. Posting is done in the back office (Daily expenses → Accounting).`, `มี ${counts.approved} รายการที่อนุมัติแล้วรอลงบัญชี การลงบัญชีทำในหลังบ้าน (รายจ่ายประจำวัน → ลงบัญชี)`)}</Banner></div>}
       <Tabs value={tab} onChange={setTab} tabs={tabs} />
-      {tab === 'new' && <Card><ExpenseForm key={tick} onDone={() => { refresh(); setTab('mine'); }} /></Card>}
-      {tab === 'mine' && <Card flush title={T('My expenses', 'รายจ่ายของฉัน')}><ClaimList filters={{ employee: userId }} refreshKey={tick} onOpen={open} empty={<div className="card-b muted">{T('You have not recorded any expenses yet. Use “New expense”.', 'คุณยังไม่ได้บันทึกรายจ่าย กดแท็บ “บันทึกรายจ่าย”')}</div>} /></Card>}
+      {tab === 'new' && <DailySheet refreshKey={tick} onOpen={setOpenId} onChanged={refresh} />}
+      {tab === 'mine' && <Card flush title={T('My expenses', 'รายจ่ายของฉัน')}><ClaimList filters={{ employee: userId }} refreshKey={tick} onOpen={open} empty={<div className="card-b muted">{T('You have not recorded any expenses yet. Use “Record expenses”.', 'คุณยังไม่ได้บันทึกรายจ่าย กดแท็บ “บันทึกรายจ่าย”')}</div>} /></Card>}
       {tab === 'overview' && <Dashboard onOpen={open} refreshKey={tick} />}
       {tab === 'approve' && <Card flush title={T('Waiting for your approval', 'รอการอนุมัติจากคุณ')} sub={T('Open an expense to see the receipt, then approve or reject it. You cannot approve your own.', 'เปิดรายการเพื่อดูใบเสร็จ แล้วอนุมัติหรือไม่อนุมัติ คุณอนุมัติรายการของตัวเองไม่ได้')}><ClaimList filters={{ status: 'submitted' }} refreshKey={tick} onOpen={open} showEmployee empty={<div className="card-b muted">{T('Nothing is waiting for approval.', 'ไม่มีรายการรออนุมัติ')}</div>} /></Card>}
       {tab === 'post' && showPost && (
@@ -148,7 +148,7 @@ function HowItWorks() {
       <div className="col gap-12">
         <div className="exp-steps">{steps.map((s, i) => <span key={s} className="row gap-6"><Badge tone={STATUS_META[s].tone} dot>{lang === 'th' ? STATUS_META[s].th : STATUS_META[s].en}</Badge>{i < steps.length - 1 && <span className="muted">→</span>}</span>)}</div>
         <ol className="exp-list">
-          <li><b>{T('Employee:', 'พนักงาน:')}</b> {T('pick the category, type the amount, take a photo of the receipt, press “Submit for approval”. Not sure about VAT? Leave “No VAT”: the accountant will check.', 'เลือกหมวดหมู่ ใส่จำนวนเงิน ถ่ายรูปใบเสร็จ แล้วกด “ส่งอนุมัติ” ไม่แน่ใจเรื่อง VAT เลือก “ไม่มี VAT” นักบัญชีจะตรวจให้')}</li>
+          <li><b>{T('Employee:', 'พนักงาน:')}</b> {T('pick the day, type one row per expense (item, category, amount) and press “Save”. Saved rows stay editable; when the day is complete press “Send day for approval”. To attach a receipt photo, open the row or use “Detailed entry”. Not sure about VAT? The accountant will check.', 'เลือกวัน พิมพ์รายจ่ายทีละแถว (รายการ หมวดหมู่ จำนวนเงิน) แล้วกด “บันทึก” แถวที่บันทึกแล้วยังแก้ไขได้ เมื่อครบทั้งวันกด “ส่งอนุมัติทั้งวัน” ถ้าต้องแนบรูปใบเสร็จ เปิดดูรายการนั้นหรือใช้ “บันทึกแบบละเอียด” ไม่แน่ใจเรื่อง VAT นักบัญชีจะตรวจให้')}</li>
           <li><b>{T('Manager:', 'ผู้จัดการ:')}</b> {T('checks the receipt and approves or rejects (with a reason). Nobody approves their own expense.', 'ตรวจใบเสร็จ แล้วอนุมัติหรือไม่อนุมัติ (ใส่เหตุผล) ไม่มีใครอนุมัติรายจ่ายของตัวเองได้')}</li>
           <li><b>{T('Accountant:', 'นักบัญชี:')}</b> {T('confirms VAT and withholding tax, sees the exact journal, and posts it to the books. Mistakes are fixed by a reversal, never by deleting.', 'ยืนยัน VAT และภาษีหัก ณ ที่จ่าย ดูรายการบัญชีที่จะลง แล้วบันทึกบัญชี แก้ไขข้อผิดพลาดด้วยการกลับรายการ ไม่ลบทิ้ง')}</li>
         </ol>

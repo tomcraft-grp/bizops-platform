@@ -156,3 +156,24 @@ Each apply follows the existing procedure: rehearsal in rollback mode, explicit 
 1. **Customer master:** credit customers are linked to a central `finance_customers` record by staff choosing or creating it (search by phone or name). All customers are NOT moved this round.
 2. **Category nesting:** one level (group → category).
 3. **Excess transfer:** keep crediting the excess to the customer's wallet (today's rule, unchanged).
+
+## 6. Central receivables as built (step 4, 2026-11-22)
+
+Owner's further decisions (2026-11-22):
+4. **Books:** store credit invoices and their payments go to the accountant's ledger queue on Supabase (`finance_gl_queue`), like the online shop's. The device moves the receivable out of its own books when the central invoice exists, and never books the cash of a central payment itself (no double count).
+5. **Customer app:** customers who use the app see their store invoices and can send a slip; a store invoice cannot be paid from the wallet.
+
+Migration `20261122130000_central_receivables.sql` (rollback in `supabase/rollbacks/`; tests `supabase/tests/central_receivables.sql` 51/51 and rollback proof 7/7, both rolled back on the live project):
+- `finance_customers.phone` (optional, normalised); `finance_customer_links (device_id, local_customer_id) → customer_id` (never deleted; a relink is logged).
+- `finance_invoices.source_device / source_order_id` (fixed once written); one **open** invoice per (device, order), so a retry replays and a cancelled wrong invoice can be replaced.
+- `finance_issue_order_invoice` (staff 'invoice' role; idempotent per device + order), `finance_customer_search` (name, code, phone, app phone), `finance_link_customer` (choose, or create; a phone already used by another customer is refused with that customer named), `finance_customer_links_for`, `finance_customer_open_invoices`, `finance_store_invoice_states`.
+- `finance_receive_payment`: one payment of ONE customer over one or several of their invoices, each part through `finance_record_payment` (same checks, same end-of-day posting), request key + part number (a retry records nothing twice), invoices locked in a fixed order. A transfer over several invoices keeps the bank reference on the first part and marks the others "(part k of n)", because a bank reference is accepted once. Over-payment at the counter is refused (wallet credit for an excess stays the customer-slip rule).
+- Trigger: a receipt from the wallet on a store invoice is refused. `finance_my_invoices` gains `origin` (the app hides the wallet for store invoices).
+
+Device side:
+- Device id = a random id kept by the browser + the local database's creation time.
+- An order is sent when it is recognised (the sale is in the books), merchant-collected, for a customer, and still owing. Orders made after central receivables began on the device are sent automatically (background sync every 2 minutes and on opening Receive payment); older ones only through "Send open balances to the central ledger" (all, or one customer from the receive screen).
+- When the central invoice exists: journal Dr 1135 "Due from the central ledger" / Cr 1130 customer receivable; `order.central` holds the invoice and what it still owes (refreshed from the server). The order then owes nothing locally (no local receipt), still counts towards the credit limit, and a local return or voiding an earlier receipt of it is refused (a finance manager adjusts the central invoice). The device's reconciliation subtracts the moved amounts from the receivable and shows 1135 against the orders moved.
+- Receive payment (when the migration is installed and the user has a finance role): choose the local customer → link to the central customer if needed → their open invoices from every device and the shop → amount, method (transfer needs the bank reference, cash needs where it was received), oldest first or manual → record (optionally post now). A split is recorded as consecutive payments; each has its own request key; changing the customer starts a fresh form. Without the migration, or for a user without a finance role, the old local screen stays.
+
+Known limits: a return on a central order needs the central invoice adjusted first (manual); 1135 is an inter-ledger balance the accountant reconciles against the queue; the live two-device concurrency of the request key is covered by the invoice row lock and unique keys but was not exercised with two real devices.

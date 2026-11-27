@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { act, setLang, setTheme, toggleCollapsed, setUI, useDB, useLang, useStore } from '../domain/store';
 import { startSkuSyncWatch, syncSkus } from '../domain/skuSync';
+import { useCentralArSync } from '../finance/centralAr';
 import { currentUser, hasPerm, userPerms } from '../domain/core';
 import { Avatar, Badge, Button, Empty, Popover, Modal, useUser } from './kit';
 import { useAlerts } from './data';
@@ -106,6 +107,8 @@ export function Shell() {
     return startSkuSyncWatch();
   }, [signedIn, canSyncSkus]);
   const feedbackUnread = useFeedbackUnread(!DEMO_SEED && signedIn);
+  // store credit sales -> central invoices, and what those invoices still owe (does nothing without the migration or a finance role)
+  useCentralArSync(!DEMO_SEED && signedIn && hasPerm(perms, 'receivables:view'));
   const otherTabs = useOtherTabs(!DEMO_SEED);
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen(true); } };

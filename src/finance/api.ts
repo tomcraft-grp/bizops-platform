@@ -38,6 +38,8 @@ export interface InvoiceState {
 export interface InvoiceRow extends InvoiceState {
   id: string; invoice_no: string; issue_date: string; due_date: string; description: string | null; customer_name?: string;
   customer_id?: string; customer_code?: string; source_ref?: string | null;
+  /** 'store': a store credit sale billed centrally (migration 20261122130000); it is paid by transfer or at the store, never from the wallet */
+  origin?: 'store' | 'shop';
 }
 export interface QrRequest { ref: string; amount: number; qr_payload: string; expires_at: string; account_label: string; merchant_name: string | null }
 export interface PaymentAccount { id: string; label: string; kind: 'promptpay' | 'bill_payment'; target: string; target_type: string; merchant_name: string | null; is_default: boolean; active: boolean; created_at: string; /** the recipient's name as slips print it in another language (migration 20261124100000) */ slip_name_alt?: string | null;

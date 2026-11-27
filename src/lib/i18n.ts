@@ -15,6 +15,7 @@ import { TH_POLICY } from './i18n.policy';
 import { TH_PURCHASING } from './i18n.purchasing';
 import { TH_LINE } from './i18n.line';
 import { TH_PRODUCTION } from './i18n.production';
+import { TH_CENTRAL_AR } from './i18n.centralAr';
 
 export type Lang = 'en' | 'th';
 
@@ -148,6 +149,7 @@ for (const [k, v] of Object.entries(TH_POLICY)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_PURCHASING)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_LINE)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_PRODUCTION)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_CENTRAL_AR)) if (!(k in TH)) TH[k] = v;
 
 /** Translate an English source string. `{name}` placeholders are filled from `vars` AFTER lookup, so the
  *  dictionary key is the template (e.g. 'Type {word} to confirm') and dynamic values are never translated. */

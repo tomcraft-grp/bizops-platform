@@ -179,6 +179,8 @@ export interface Order {
   settlementId?: ID; creditNoted: number; refundsPaid: number; idempotencyKey?: string; note?: string; createdBy: ID;
   shipping?: { carrier?: string; tracking?: string; recipient?: string; address?: string }; cancelledReason?: string;
   tableNo?: string;
+  // billed by a central invoice (Supabase, migration 20261122130000): the receivable left this device's books; outstanding/pending are the server's last answer
+  central?: { invoiceId: string; invoiceNo: string; customerId: string; amount: number; outstanding: number; pending: number; at: string; syncedAt?: string; cancelled?: boolean };
 }
 export interface ReturnDoc {
   id: ID; no: string; orderId: ID; ts: string; lines: { lineId: ID; qty: number; restock: boolean }[];
@@ -259,7 +261,7 @@ export interface EventAdminAction { id: ID; eventId: ID; ts: string; by: ID; act
 // ---------- accounting
 export type FsLine = 'cash' | 'receivables' | 'inventory' | 'tax_asset' | 'other_assets' | 'fixed_assets' | 'payables' | 'tax_payable' | 'customer_liabilities' | 'loans' | 'equity'
   | 'revenue' | 'contra_revenue' | 'cogs' | 'channel_costs' | 'opex' | 'other_income' | 'other_expense';
-export type ControlKind = 'ar' | 'platform' | 'ap' | 'inventory' | 'cash_bank' | 'customer_credit' | 'tax' | 'supplier_deposit' | 'wip';
+export type ControlKind = 'ar' | 'platform' | 'ap' | 'inventory' | 'cash_bank' | 'customer_credit' | 'tax' | 'supplier_deposit' | 'wip' | 'ar_central';
 export interface Account {
   code: string; name: string; nameTh: string; type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'; normal: 'debit' | 'credit'; group: string; contra?: boolean;
   parent?: string; posting: boolean; system?: boolean; control?: ControlKind; fsLine: FsLine; cashFlow?: 'cash' | 'operating' | 'investing' | 'financing';

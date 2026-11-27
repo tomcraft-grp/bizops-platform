@@ -10,14 +10,14 @@ import { CatIcon, useExpense } from './parts';
 
 const todayKey = () => dayKey(new Date());
 
-export function ExpenseForm({ claim, existing = [], onDone }: { claim?: Claim; existing?: Attachment[]; onDone: (c: Claim, submitted: boolean) => void }) {
+export function ExpenseForm({ claim, existing = [], defaultDate, onDone }: { claim?: Claim; existing?: Attachment[]; /** the day a new expense starts on (the daily sheet's day) */ defaultDate?: string; onDone: (c: Claim, submitted: boolean) => void }) {
   const T = useT();
   const lang = useLang();
   const { categories, catById, settings } = useExpense();
   const active = useMemo(() => categories.filter((c) => c.active), [categories]);
   const [catId, setCatId] = useState(claim?.category_id ?? '');
   const [amount, setAmount] = useState(claim ? String(claim.tax_type === 'vat_excluded' ? Number(claim.amount_paid) - Number(claim.vat_amount) : claim.amount_paid) : '');
-  const [date, setDate] = useState(claim?.expense_date ?? todayKey());
+  const [date, setDate] = useState(claim?.expense_date ?? defaultDate ?? todayKey());
   const [method, setMethod] = useState<PayMethod>(claim?.payment_method ?? 'cash');
   const [desc, setDesc] = useState(claim?.description ?? '');
   const [vendor, setVendor] = useState(claim?.vendor ?? '');

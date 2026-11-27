@@ -8,6 +8,7 @@ import { earnPoints, issueCoupon, reversePoints } from './loyalty';
 import { grantEntitlements } from './events';
 import { allocatedMap, applyCredit, createReceipt, customerOutstanding, orderBalance, refundCash, refundToCredit } from './payments';
 import { enqueueOrderPrints } from './printing';
+import { centralOwing } from './centralAr';
 import { CHANNELS, FLOWS } from './meta';
 import { r2 } from '../lib/util';
 
@@ -123,7 +124,7 @@ export function createOrder(d: DB, ctx: Ctx, input: NewOrderInput): ID {
     const unpaid = r2(total - payNow);
     if (input.channel === 'POS' && !cust) fail('UNDERPAID', 'Payment is less than the total. Select a customer to leave the balance on account.');
     if (cust && (input.payLater || input.channel === 'POS')) {
-      const out = customerOutstanding(d, cust.id);
+      const out = r2(customerOutstanding(d, cust.id) + centralOwing(d, cust.id)); // what is owed here + on central invoices of this device's orders
       if (out + unpaid > cust.creditLimit + 0.004) fail('CREDIT_LIMIT', `Credit limit exceeded: outstanding ${out} + ${unpaid} > limit ${cust.creditLimit}`);
     }
   }
@@ -287,6 +288,7 @@ export function returnOrder(
   guard(d, ctx, 'orders:cancel');
   const o = getOrder(d, p.orderId);
   if (!o.recognizedAt) fail('INVALID', 'Order has not shipped yet — cancel it instead');
+  if (o.central && !o.central.cancelled) fail('CENTRAL_INVOICE', `${o.no} is billed by central invoice ${o.central.invoiceNo}: ask a finance manager to cancel or adjust that invoice first, so the customer is not charged for returned items`);
   if (!p.reason.trim()) fail('REASON', 'A return reason is required');
   const lines = p.lines.filter((l) => l.qty > 0);
   if (!lines.length) fail('INVALID', 'Select at least one item to return');

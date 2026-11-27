@@ -375,4 +375,9 @@ export const APP_MESSAGES: Pair[] = [
   ['Too many reset requests. Please wait a few minutes and try again.', 'ขอตั้งรหัสผ่านใหม่บ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่'],
   ['We could not send the reset email right now. Please try again in a few minutes.', 'ขณะนี้ส่งอีเมลตั้งรหัสผ่านใหม่ไม่ได้ กรุณาลองใหม่ในอีกสักครู่'],
   ['New password should be different from the old password.', 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม'],
+  // ---- central receivables
+  ['{1} is already billed by central invoice {2}', '{1} ถูกเรียกเก็บด้วยใบแจ้งหนี้ส่วนกลาง {2} อยู่แล้ว'],
+  ['{1} now owes {2}, but the central invoice is for {3}. Check the order and send it again.', 'ตอนนี้ {1} ค้างชำระ {2} แต่ใบแจ้งหนี้ส่วนกลางเป็นยอด {3} ให้ตรวจออเดอร์แล้วส่งใหม่อีกครั้ง'],
+  ['{1} is billed by central invoice {2}: ask a finance manager to cancel or adjust that invoice first, so the customer is not charged for returned items', '{1} ถูกเรียกเก็บด้วยใบแจ้งหนี้ส่วนกลาง {2} ให้ผู้จัดการการเงินยกเลิกหรือปรับใบแจ้งหนี้นั้นก่อน เพื่อไม่ให้ลูกค้าถูกเรียกเก็บเงินสินค้าที่คืนแล้ว'],
+  ['{1} is billed by central invoice {2}; voiding this receipt would change what it owes after it was sent. Ask a finance manager to adjust the central invoice instead.', '{1} ถูกเรียกเก็บด้วยใบแจ้งหนี้ส่วนกลาง {2} การยกเลิกใบเสร็จนี้จะเปลี่ยนยอดค้างหลังจากที่ส่งไปแล้ว ให้ผู้จัดการการเงินปรับใบแจ้งหนี้ส่วนกลางแทน'],
 ];
