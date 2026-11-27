@@ -17,6 +17,7 @@ import { SlipCheck } from './SlipCheck';
 import { payNotes } from '../shop/pay';
 import { withTimeout } from '../shop/timeout';
 import { tr } from '../shop/i18n';
+import { policyView, useMyPaymentPolicy } from './paymentPolicy';
 import { slipProblem } from '../wallet/api';
 
 const MSG: Record<StatusCode, { th: string; en: string; tone: 'info' | 'warn' | 'bad' | 'good' }> = {
@@ -91,6 +92,9 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   const [busy, setBusy] = useState('');
   const [history, setHistory] = useState<{ ev: CustomerEvidence[]; rc: Receipt[] } | null>(null);
   const [form, setForm] = useState({ amount: '', when: '', bank: '', ref: '' });
+  // the customer's payment policy: under 'full' the amount is the whole outstanding amount and cannot be edited (the database refuses anything else)
+  const policy = useMyPaymentPolicy();
+  const pv = policyView(policy, inv);
   const file = useRef<HTMLInputElement>(null);
   const upBtn = useRef<HTMLDivElement>(null);
   const [slipLive, setSlipLive] = useState<LiveState>(IDLE);                         // the check of the picked slip on this phone
@@ -108,7 +112,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
     setHistory({ ev: ev.status === 'fulfilled' ? ev.value : [], rc: rc.status === 'fulfilled' ? rc.value : [] });
   }, [inv.id]);
   useEffect(() => { if (open) void loadHistory(); }, [open, loadHistory, inv.status_code]);
-  useEffect(() => { setForm((f) => ({ ...f, amount: f.amount || String(inv.outstanding) })); }, [inv.outstanding]);
+  useEffect(() => { setForm((f) => ({ ...f, amount: pv.locked ? String(inv.outstanding) : f.amount || String(inv.outstanding) })); }, [inv.outstanding, pv.locked]);
 
   const makeQr = async () => {
     setBusy('qr'); setQrError(null);
@@ -121,7 +125,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   useEffect(() => { const k = `${inv.id}:${inv.outstanding}`; if (autoQr && asked.current !== k) { asked.current = k; void makeQr(); } }, [autoQr, inv.id, inv.outstanding]); // eslint-disable-line react-hooks/exhaustive-deps
   const upload = async (f: File | null) => {
     if (!f) return;
-    const amount = Number(form.amount);
+    const amount = pv.locked ? inv.outstanding : Number(form.amount);
     if (!(amount > 0)) return toast('error', tl(lang, 'Enter the amount you transferred'));
     const hold = holdUp(slipLive); if (hold) return toast('error', tr(lang, hold));
     setBusy('slip');
@@ -159,12 +163,14 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
       {(inv.refunded ?? 0) > 0 && <div style={{ marginTop: 6 }}><Badge tone="info" dot>{lang === 'th' ? `คืนเงินแล้ว ${money(inv.refunded ?? 0)} เข้ากระเป๋าเงิน` : `Refunded ${money(inv.refunded ?? 0)} to your wallet`}</Badge></div>}
       {rejected && inv.status_code === 7 && <div className="bad" style={{ fontSize: 12.5, marginTop: 6 }}>{tl(lang, 'Reason')}: {rejected.reject_reason}</div>}
 
-      {payable && !open && <Button variant="primary" className="block mt8" onClick={() => setOpen(true)}>{tl(lang, 'Pay this invoice')}</Button>}
-      {open && payable && (
+      {pv.locked && payable && !pv.waiting && <div style={{ marginTop: 6 }}><Banner tone="info"><span data-testid="policy-full">{tr(lang, 'pol.full', { amount: money(inv.outstanding) })}</span></Banner></div>}
+      {pv.waiting && payable && <div style={{ marginTop: 6 }}><Banner tone="warn"><span data-testid="policy-waiting">{tr(lang, 'pol.waiting')}</span></Banner></div>}
+      {payable && !open && !pv.waiting && <Button variant="primary" className="block mt8" onClick={() => setOpen(true)}>{tl(lang, 'Pay this invoice')}</Button>}
+      {open && payable && !pv.waiting && (
         <div className="col gap-8" style={{ marginTop: 10 }}>
           {loadingMethods && <div className="muted" aria-busy="true" style={{ fontSize: 12.5 }}>{tr(lang, 'pm.loading')}</div>}
           {hasMethods && <PayMethodPicker id={`pay-${inv.id}`} title={tr(lang, 'pm.title')} methods={methods!} value={choice} onChange={(c) => { setChoice(c); setQrError(null); }} open={picking} setOpen={setPicking} />}
-          {choice?.kind === 'wallet' && methods && <WalletPayPanel inv={inv} balance={methods.wallet.balance} onPaid={() => { reloadMethods(); onChanged(); void loadHistory(); }} />}
+          {choice?.kind === 'wallet' && methods && <WalletPayPanel inv={inv} balance={methods.wallet.balance} full={pv.locked} onPaid={() => { reloadMethods(); onChanged(); void loadHistory(); }} />}
           {bankChoice && <><PayToBank bank={bankChoice} /><TransferAmount amount={inv.outstanding} reference={inv.invoice_no} /></>}
           {showQr && (live
             ? <>
@@ -183,7 +189,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
               <SlipLive file={picked.file} total={Number(form.amount) || inv.outstanding} earliest={inv.issue_date} onState={setSlipLive} />
               {picked.url ? <img src={picked.url} alt={tl(lang, 'Slip preview')} style={{ width: '100%', maxHeight: 320, objectFit: 'contain', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }} />
                 : <div className="muted" style={{ padding: 12, border: '1px dashed var(--border)', borderRadius: 8 }}>{picked.file.name}</div>}
-              <Field label={tl(lang, 'Amount transferred (฿)')}><Input type="number" inputMode="decimal" min={0} step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></Field>
+              <Field label={tl(lang, 'Amount transferred (฿)')} hint={pv.locked ? tr(lang, 'pol.locked') : undefined}><Input type="number" inputMode="decimal" min={0} step="0.01" readOnly={pv.locked} value={pv.locked ? String(inv.outstanding) : form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} data-testid="slip-amount" /></Field>
               <Field label={tl(lang, 'Transfer date and time')}><Input type="datetime-local" value={form.when} onChange={(e) => setForm({ ...form, when: e.target.value })} /></Field>
               <div className="row gap-6">
                 {!bankChoice && choice?.kind !== 'qr' && <Field label={tl(lang, 'Bank / channel')}><Input maxLength={60} value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} /></Field>}

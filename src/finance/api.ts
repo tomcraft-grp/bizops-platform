@@ -40,7 +40,8 @@ export interface InvoiceRow extends InvoiceState {
   customer_id?: string; customer_code?: string; source_ref?: string | null;
 }
 export interface QrRequest { ref: string; amount: number; qr_payload: string; expires_at: string; account_label: string; merchant_name: string | null }
-export interface PaymentAccount { id: string; label: string; kind: 'promptpay' | 'bill_payment'; target: string; target_type: string; merchant_name: string | null; is_default: boolean; active: boolean; created_at: string; /** the recipient's name as slips print it in another language (migration 20261124100000) */ slip_name_alt?: string | null }
+export interface PaymentAccount { id: string; label: string; kind: 'promptpay' | 'bill_payment'; target: string; target_type: string; merchant_name: string | null; is_default: boolean; active: boolean; created_at: string; /** the recipient's name as slips print it in another language (migration 20261124100000) */ slip_name_alt?: string | null;
+  /** the bank account this QR pays into (migration 20261127110000); undefined = the database has no such column yet, null = not linked */ bank_account_id?: string | null }
 export interface QrInfo { kind: 'promptpay' | 'bill_payment'; target: string; target_type: string; ref1: string | null; merchant_name: string | null; has_amount: boolean }
 /** One payment event: a customer's slip, or a payment a staff member recorded at the back office (then it may have no file). */
 export interface Evidence {

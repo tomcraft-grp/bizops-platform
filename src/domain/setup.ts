@@ -5,7 +5,7 @@ import {
 } from './accounting';
 import { allocatedMap, orderBalance, receiptUnapplied } from './payments';
 import { inTransitValue, stockValue } from './inventory';
-import { apOpen, supplierDeposit } from './purchasing';
+import { apOpen, liveAp, supplierDeposit } from './purchasing';
 import { addDays, dayKey, r2 } from '../lib/util';
 
 // ======================================================================================
@@ -373,7 +373,7 @@ export function reconciliationMatrix(d: DB): ReconRow[] {
   const outGl = sumAccounts(d, bal, (a) => a.control === 'tax' && a.fsLine === 'tax_payable' && a.taxCode !== undefined);
   const inGl = sumAccounts(d, bal, (a) => a.control === 'tax' && a.fsLine === 'tax_asset');
   const outSub = d.orders.reduce((s, o) => s + (o.recognizedAt ? o.vatAmount ?? 0 : 0), 0) - d.returns.reduce((s, r) => s + r.vatAmount, 0);
-  const inSub = d.apInvoices.reduce((s, i) => s + i.vat, 0) + liveExpenses(d).reduce((s, e) => s + e.vat, 0) - d.supplierReturns.reduce((s, r) => s + (r.vat ?? 0), 0);
+  const inSub = liveAp(d).reduce((s, i) => s + i.vat, 0) + liveExpenses(d).reduce((s, e) => s + e.vat, 0) - d.supplierReturns.reduce((s, r) => s + (r.vat ?? 0), 0);
   add('tax', 'VAT (output − input)', codes('tax'), r2(outGl - inGl), r2(outSub - inSub), 'Tax base of sales, purchases and expenses', 'Net VAT payable per ledger vs per source documents');
   // cash & bank: reconciled-to-statement status
   const cashAccts = d.accounts.filter(isControl('cash_bank'));
@@ -407,7 +407,7 @@ export function reconDrill(d: DB, key: string): { label: string; amount: number;
   } else if (key === 'tax') {
     add('Output VAT on sales', d.orders.reduce((s, o) => s + (o.recognizedAt ? o.vatAmount ?? 0 : 0), 0));
     add('Output VAT reversed by returns', -d.returns.reduce((s, r) => s + r.vatAmount, 0));
-    add('Input VAT on purchases', -d.apInvoices.reduce((s, i) => s + i.vat, 0));
+    add('Input VAT on purchases', -liveAp(d).reduce((s, i) => s + i.vat, 0));
     add('Input VAT on expenses', -liveExpenses(d).reduce((s, e) => s + e.vat, 0));
     add('Input VAT returned to suppliers', d.supplierReturns.reduce((s, r) => s + (r.vat ?? 0), 0));
   }
@@ -487,7 +487,7 @@ export function vatReport(d: DB, from: string, to: string) {
   const sales: { doc: string; date: string; code: string; base: number; vat: number; channel: string }[] = [];
   for (const o of d.orders) if (o.recognizedAt && inRange(o.recognizedAt)) sales.push({ doc: o.no, date: o.recognizedAt, code: o.taxCode ?? 'n/a', base: o.taxBase ?? 0, vat: o.vatAmount ?? 0, channel: o.channel });
   const returns = d.returns.filter((r) => inRange(r.ts)).map((r) => ({ doc: r.no, date: r.ts, base: -r.netAmount, vat: -r.vatAmount }));
-  const purchases = d.apInvoices.filter((i) => inRange(i.date)).map((i) => ({ doc: i.no, date: i.date, base: i.net, vat: i.vat, kind: 'Purchase invoice' }));
+  const purchases = liveAp(d).filter((i) => inRange(i.date)).map((i) => ({ doc: i.no, date: i.date, base: i.net, vat: i.vat, kind: 'Purchase invoice' }));
   // reversed expenses are skipped by liveExpenses()
   const expenses = liveExpenses(d).filter((e) => inRange(e.date) && e.vat > 0).map((e) => ({ doc: e.no, date: e.date, base: r2(e.amount - e.vat), vat: e.vat, kind: 'Expense' }));
   const byCode: Record<string, { base: number; vat: number; n: number }> = {};

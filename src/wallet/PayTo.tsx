@@ -10,7 +10,7 @@ import { CheckoutQr, Fulfilment, shop, ShopError } from '../shop/api';
 import { baht } from '../shop/format';
 import { useShopLang, useT } from '../shop/i18n';
 import { errText } from '../shop/ui';
-import type { Bank } from './api';
+import { wallet, type Bank, type DepositQr } from './api';
 import { copyableAccountNo, formatAccountNo } from './bank';
 import { hostedQrLink, isInApp, openOutside, qrFileName, saveQr } from './qrSave';
 import { BankBadge, bankInstructions, CopyButton } from './ui';
@@ -160,6 +160,30 @@ export function QrProblem({ message, busy, onRetry, onOther }: { message: string
 export function QrWaiting() {
   const t = useT();
   return <div className="pq-card" data-testid="qr-loading"><div className="pq-plate pq-wait" aria-busy="true"><span>{t('qr.loading')}</span></div></div>;
+}
+
+/**
+ * The PromptPay QR of a wallet top-up (FB-001042): the amount of the customer's own pending deposit in the shop's QR. Like the checkout QR, it is only drawn when the database's amount is
+ * the amount shown on the screen; a failure shows a retry and never a QR (the bank details below it stay).
+ */
+export function DepositQrPanel({ depositId, amount }: { depositId: string; amount: number }) {
+  const t = useT();
+  const [st, setSt] = useState<{ qr: DepositQr | null; error: unknown } | null>(null);
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    let on = true;
+    setSt(null);
+    wallet.depositQr(depositId)
+      .then((qr) => { if (!on) return; if (!qr?.qr_payload || Math.round(Number(qr.amount) * 100) !== Math.round(amount * 100)) setSt({ qr: null, error: new ShopError('amount changed', 'PRICE_CHANGED') }); else setSt({ qr, error: null }); })
+      .catch((error) => { if (on) setSt({ qr: null, error }); });
+    return () => { on = false; };
+  }, [depositId, amount, n]);
+  if (!st) return <QrWaiting />;
+  if (!st.qr) {
+    const code = st.error instanceof ShopError ? st.error.code : '';
+    return <QrProblem message={code === 'NETWORK' ? t('qr.errorNetwork') : t('qr.errorHint')} onRetry={() => setN((x) => x + 1)} />;
+  }
+  return <QrPanel payload={st.qr.qr_payload} amount={Number(st.qr.amount)} merchant={st.qr.merchant_name} account={st.qr.account_label} reference={st.qr.deposit_no} fileId={`deposit-${st.qr.deposit_no}`} onRetry={() => setN((x) => x + 1)} />;
 }
 
 /**

@@ -20,6 +20,7 @@ const SUBJECT_TH: Record<string, string> = { 'this slip': 'สลิปนี้
 
 /** Known failures, most specific first. Each returns the Thai explanation for the English message it matched. */
 const RULES: Array<[RegExp, (m: RegExpExecArray) => string]> = [
+  [/a payment for this invoice is already waiting to be checked/i, () => 'มีการชำระเงินของใบแจ้งหนี้นี้รอร้านตรวจสอบอยู่แล้ว จึงยังชำระซ้ำไม่ได้'],   // before the generic "invoice is already <status>" rule, which would read "waiting" as a status
   [/this slip was already submitted/i, () => 'สลิปนี้เคยถูกส่งแล้ว (สลิปซ้ำ) หากเพิ่งส่งไป ร้านได้รับแล้ว กรุณารอร้านตรวจสอบ ส่งสลิปใบเดิมซ้ำไม่ได้'],
   [/bank transaction (\S+) was already recorded/i, (m) => `รหัสอ้างอิงการโอน ${m[1]} ถูกบันทึกไปแล้ว (อาจเป็นสลิปที่ใช้ซ้ำ)`],
   [/the transfer is older than the (invoice|deposit request)/i, (m) => `เวลาที่โอนเก่ากว่า${/invoice/i.test(m[1]) ? 'ใบแจ้งหนี้' : 'คำขอเติมเงิน'} สลิปอาจไม่ใช่ของรายการนี้`],

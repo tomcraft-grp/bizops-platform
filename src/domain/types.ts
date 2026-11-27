@@ -74,28 +74,40 @@ export interface Supplier {
   id: ID; code: string; name: string; contact: string; phone: string; email?: string;
   termsDays: number; taxId?: string; vatable: boolean; rating: number; productIds: ID[];
 }
-export interface POLine { productId: ID; qty: number; unitCost: number; receivedQty: number }
+/** `discountPct` (0-100, optional): the supplier's discount on this line; the stock value and the payable use the price after it */
+export interface POLine { productId: ID; qty: number; unitCost: number; receivedQty: number; discountPct?: number }
+export interface POEvent { ts: string; by: ID; action: 'created' | 'edited' | 'approved' | 'received' | 'receipt_reversed' | 'closed' | 'cancelled'; note?: string }
 export interface PurchaseOrder {
   id: ID; no: string; supplierId: ID; warehouseId: ID; status: 'draft' | 'sent' | 'partial' | 'received' | 'closed' | 'cancelled';
   lines: POLine[]; createdAt: string; expectedAt?: string; note?: string; createdBy: ID;
+  /** who approved (sent) it and when; an optional stamp, never a gate: a one-person shop can approve its own order */
+  approvedBy?: ID; approvedAt?: string;
+  /** why it was closed short or cancelled, and the history of the order (older orders have none) */
+  closedReason?: string; history?: POEvent[];
 }
-export interface GRNLine { productId: ID; qty: number; unitCost: number; landedUnit: number; lot?: string; expiry?: string }
+export interface GRNLine { productId: ID; qty: number; unitCost: number; landedUnit: number; lot?: string; expiry?: string; discountPct?: number }
+/** A goods receipt that was reversed: the stock went out at the CURRENT average, the receipt journal was mirrored, and the difference (receipt value less what left) went to the inventory adjustment account. */
+export interface GRNReversal { ts: string; by: ID; reason: string; journalId?: ID; diffJournalId?: ID; stockDiff: number }
 export interface GoodsReceipt {
   id: ID; no: string; poId: ID; supplierId: ID; warehouseId: ID; ts: string; lines: GRNLine[];
   freight: number; handling: number; invoiceNo: string; invoiceId: ID; journalId?: ID; createdBy: ID;
+  reversal?: GRNReversal;
 }
 export interface SupplierInvoice {
   id: ID; no: string; supplierId: ID; poId?: ID; grnId?: ID; invoiceNo: string; date: string; dueDate: string;
   net: number; vat: number; landed: number; amount: number; paid: number; creditNotes: number;
-  status: 'open' | 'partial' | 'paid';
+  status: 'open' | 'partial' | 'paid' | 'void';      // void: its goods receipt was reversed, nothing is owed on it any more
 }
 export interface SupplierPayment {
   id: ID; no: string; supplierId: ID; ts: string; amount: number; method: PayMethod | 'deposit';
   allocations: { invoiceId: ID; amount: number }[]; deposit: number; note?: string; journalId?: ID;
+  reversal?: { ts: string; by: ID; reason: string; journalId?: ID };
 }
 export interface SupplierReturn {
   id: ID; no: string; supplierId: ID; warehouseId: ID; ts: string; reason: string;
   lines: { productId: ID; qty: number; unitCost: number }[]; amount: number; vat?: number; invoiceId?: ID;
+  /** what the credit note took off which invoices, and the part that no invoice could take (an already paid invoice): kept as a supplier deposit */
+  applied?: { invoiceId: ID; amount: number }[]; deposit?: number;
 }
 
 // ---------- BOM & production

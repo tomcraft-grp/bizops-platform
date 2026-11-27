@@ -14,6 +14,7 @@ import { shopDate, shopDateTime } from './format';
 import { K, useShopLang, useT } from './i18n';
 import { useShopHost, useShopNav } from './nav';
 import { CANCEL_CODES, OPEN_CODES } from './pay';
+import { recentAction, reorderPlan } from './orderAgain';
 import { ConfirmSheet, ErrorBox, errText, Fold, OrderBadge, orderSteps, PayBadge, PayNotes, ProductImage } from './ui';
 
 const FILTERS: OrderFilter[] = ['all', 'unpaid', 'to_ship', 'to_receive', 'done', 'cancelled'];
@@ -113,9 +114,10 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const openSec = sec === undefined ? (mustPay ? null : 'progress') : sec;
   const fold = (id: 'progress' | 'items' | 'delivery') => ({ id, open: openSec === id, onToggle: () => setSec(openSec === id ? null : id) });
   const orderAgain = () => {
-    const added = useCart.getState().reorder(o.items);
+    const plan = reorderPlan(o.items);          // free gift / reward lines are never ordered again
+    const added = plan.ok.length ? useCart.getState().reorder(plan.ok) : 0;
     if (!added) { toast('error', t('od.againNone')); return; }
-    toast('success', t('od.againDone'));
+    toast('success', plan.skipped ? t('ro.addedSome', { n: added, skipped: plan.skipped }) : t('od.againDone'));
     host.goTab('cart');
   };
   const cancel = async () => {
@@ -166,7 +168,7 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
       {canCancel && <button type="button" className="btn block danger-outline" onClick={() => setAsking(true)}>{t('od.cancel')}</button>}
       {/* a cancelled order (e.g. the shop declined it) can be put back in the cart in one tap (FB-001002); the cart re-checks every price with the server */}
-      {(o.status === 'cancelled' || o.status === 'returned') && o.items.length > 0 && <button type="button" className="btn primary block" onClick={orderAgain}>{t('od.again')}</button>}
+      {recentAction(o) === 'again' && <button type="button" className="btn primary block" data-testid="order-again" onClick={orderAgain}>{t('od.again')}</button>}
       {asking && <ConfirmSheet danger title={t('od.cancelTitle')} body={t('od.cancelBody')} confirmLabel={t('od.confirmYes')} cancelLabel={t('common.cancel')} busy={busy} onConfirm={cancel} onCancel={() => setAsking(false)} />}
     </div>
   );
