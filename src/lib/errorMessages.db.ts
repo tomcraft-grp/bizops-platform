@@ -52,6 +52,9 @@ export const CODE_MESSAGES: Record<string, Pair> = {
   INSUFFICIENT_POINTS: ['You do not have enough available points.', 'แต้มที่ใช้ได้ไม่พอ'],
   INVALID_ADDRESS: ['The address is not complete.', 'ที่อยู่ไม่ครบถ้วน'],
   INVALID_AMOUNT: ['Enter the amount in baht and satang (at most 2 decimals).', 'กรอกจำนวนเงินเป็นบาทและสตางค์ (ทศนิยมไม่เกิน 2 ตำแหน่ง)'],
+  INVALID_DEVICE: ['The device is not valid.', 'รหัสเครื่องไม่ถูกต้อง'],
+  INVALID_LOCAL_CUSTOMER: ['The customer on this device is not valid.', 'ลูกค้าในเครื่องนี้ไม่ถูกต้อง'],
+  INVALID_ORDER: ['The order is not valid.', 'ออเดอร์ไม่ถูกต้อง'],
   INVALID_POLICY: ['Choose a valid payment policy (partial or full).', 'เลือกนโยบายการชำระเงินให้ถูกต้อง (ชำระบางส่วนได้ หรือ ต้องชำระเต็มจำนวน)'],
   INVALID_CONFIDENCE: ['The confidence value is not valid.', 'ค่าความมั่นใจไม่ถูกต้อง'],
   INVALID_DIRECTION: ['The direction of the transaction is not valid.', 'ทิศทางของรายการ (เพิ่มหรือลด) ไม่ถูกต้อง'],
@@ -120,6 +123,22 @@ export const CODE_MESSAGES: Record<string, Pair> = {
 };
 
 export const DB_MESSAGES: Pair[] = [
+  // ---- central receivables (store credit sales billed centrally)
+  ['A customer link is never deleted (link it to the right customer instead)', 'ลบการเชื่อมลูกค้าไม่ได้ (ให้เชื่อมกับลูกค้าที่ถูกต้องแทน)'],
+  ['The device and local customer of a link cannot be changed', 'แก้เครื่องและลูกค้าในเครื่องของการเชื่อมลูกค้าไม่ได้'],
+  ['The store order an invoice bills cannot be changed', 'แก้ออเดอร์หน้าร้านที่ใบแจ้งหนี้เรียกเก็บอยู่ไม่ได้'],
+  ['STORE_INVOICE_NO_WALLET: a store invoice is paid at the store or by bank transfer, not from the wallet', 'ใบแจ้งหนี้ของร้านชำระที่ร้านหรือโอนผ่านธนาคาร ชำระจากกระเป๋าเงินไม่ได้'],
+  ['INVALID_TAX_ID: a tax id has 13 digits', 'เลขประจำตัวผู้เสียภาษีต้องมี 13 หลัก'],
+  ['PHONE_TAKEN: {1} ({2}) already has this phone number; choose that customer instead', 'เบอร์โทรนี้เป็นของ {1} ({2}) อยู่แล้ว ให้เลือกลูกค้ารายนั้นแทน'],
+  ['INVALID_DUE_DATE: the due date is before the issue date', 'วันครบกำหนดอยู่ก่อนวันที่ออกใบแจ้งหนี้'],
+  ['INVALID_ISSUE_DATE: the issue date is in the future', 'วันที่ออกใบแจ้งหนี้เป็นวันในอนาคต'],
+  ['ORDER_ALREADY_INVOICED: order {1} already has invoice {2} for {3} (another customer or amount)', 'ออเดอร์ {1} มีใบแจ้งหนี้ {2} จำนวน {3} อยู่แล้ว (เป็นของลูกค้าหรือยอดอื่น)'],
+  ['ALLOCATION_REQUIRED: choose the invoices this payment is for', 'เลือกใบแจ้งหนี้ที่การชำระเงินนี้ชำระ'],
+  ['TOO_MANY_INVOICES: 50 invoices at most in one payment', 'ชำระได้สูงสุด 50 ใบแจ้งหนี้ต่อหนึ่งรายการ'],
+  ['DUPLICATE_INVOICE: an invoice appears twice', 'มีใบแจ้งหนี้ซ้ำกันสองครั้ง'],
+  ['ALLOCATION_REQUIRED: an invoice is missing', 'มีรายการที่ไม่ได้ระบุใบแจ้งหนี้'],
+  ['ALLOCATION_MISMATCH: the parts add up to {1} but the payment is {2}', 'ยอดที่แบ่งรวมได้ {1} แต่ยอดชำระคือ {2}'],
+  ['REFERENCE_TOO_LONG: 60 characters at most when one transfer pays several invoices', 'เลขอ้างอิงยาวได้ไม่เกิน 60 ตัวอักษร เมื่อโอนครั้งเดียวชำระหลายใบแจ้งหนี้'],
   // ---- points transfers (rewards)
   ['rw_admin_adjust_points changed since this migration was written: copy the live definition again and re-add the reserved-points check', 'ฟังก์ชันปรับแต้มเปลี่ยนไปแล้วตั้งแต่เขียนการติดตั้งนี้ ต้องคัดลอกฉบับปัจจุบันมาเพิ่มการตรวจแต้มที่ถูกกันไว้ใหม่'],
   ['A points transfer is never deleted', 'รายการโอนแต้มลบไม่ได้'],
