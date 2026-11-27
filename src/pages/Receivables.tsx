@@ -12,8 +12,11 @@ import type { ID, PayMethod } from '../domain/types';
 import { OrderDrawer } from './OrderDetail';
 import { useMemo as _um } from 'react';
 import { t as tl } from '../lib/i18n';
+import { useCentralAr } from '../finance/centralAr';
+import { CentralLedgerPanel, CentralReceiveModal } from '../finance/CentralReceivables';
+import { centralOwing } from '../domain/centralAr';
 
-type Tab = 'aging' | 'opening' | 'slips' | 'receipts' | 'credit';
+type Tab = 'aging' | 'central' | 'opening' | 'slips' | 'receipts' | 'credit';
 
 export default function Receivables() {
   const db = useDB();
@@ -22,10 +25,15 @@ export default function Receivables() {
   const canCreate = useHas('receivables:create');
   const [recv, setRecv] = useState<ID | 'new' | null>(sp.get('c') ?? null);
   const [openOrder, setOpenOrder] = useState<ID | null>(null);
+  // central receivables (Supabase): when usable from this session, payments are received there and store credit sales are billed there
+  const centralReady = useCentralAr((s) => s.status === 'ready');
+  const waitingCentral = useCentralAr((s) => Object.keys(s.items).length);
+  const [centralRecv, setCentralRecv] = useState<ID | 'new' | null>(null);
+  const receive = (cid: ID | 'new') => (centralReady ? setCentralRecv(cid) : setRecv(cid));
   const alloc = useMemo(() => allocatedMap(db), [db.allocations]);
   const aging = useMemo(() => agingFor(db, new Date().toISOString(), (cid) => db.customers.find((c) => c.id === cid)?.creditDays ?? 0), [db.orders, db.allocations]);
-  const rows = useMemo(() => db.customers.map((c) => ({ c, out: customerOutstanding(db, c.id, alloc), buckets: aging[c.id] || [0, 0, 0, 0, 0], credit: customerCredit(db, c.id) })).filter((r) => r.out > 0.004 || r.credit > 0.004), [db.orders, db.allocations, db.receipts, db.customers, aging]); // eslint-disable-line
-  const total = rows.reduce((s, r) => s + r.out, 0);
+  const rows = useMemo(() => db.customers.map((c) => ({ c, out: customerOutstanding(db, c.id, alloc), central: centralOwing(db, c.id), buckets: aging[c.id] || [0, 0, 0, 0, 0], credit: customerCredit(db, c.id) })).filter((r) => r.out > 0.004 || r.credit > 0.004 || r.central > 0.004), [db.orders, db.allocations, db.receipts, db.customers, aging]); // eslint-disable-line
+  const total = rows.reduce((s, r) => s + r.out + r.central, 0);
   const overdue = rows.reduce((s, r) => s + r.buckets.slice(1).reduce((a, b) => a + b, 0), 0);
   const pendingSlips = db.slips.filter((s) => s.status === 'pending');
   const setTab = (t: Tab) => setSp({ tab: t });
@@ -33,27 +41,29 @@ export default function Receivables() {
   return (
     <>
       <PageHead title="Receivables & payments" desc="Order value, payment received, customer credit and platform settlement are separate records. One receipt can be allocated across many orders — automatically (FIFO) or manually."
-        actions={canCreate && <Button variant="primary" onClick={() => setRecv('new')}><Wallet size={15} />{' '}<Tx>Receive payment</Tx></Button>} />
+        actions={canCreate && <Button variant="primary" onClick={() => receive('new')}><Wallet size={15} />{' '}<Tx>Receive payment</Tx></Button>} />
       <div className="grid g4 mb16">
-        <Kpi label="Outstanding (customers)" value={money0(total)} sub={<Tx vars={{ n: rows.filter((r) => r.out > 0).length }}>{'{n} customers'}</Tx>} />
+        <Kpi label="Outstanding (customers)" value={money0(total)} sub={<Tx vars={{ n: rows.filter((r) => r.out + r.central > 0.004).length }}>{'{n} customers'}</Tx>} />
         <Kpi label="Overdue" value={money0(overdue)} tone={overdue > 0 ? 'bad' : undefined} sub="past credit terms" />
         <Kpi label="Slips awaiting review" value={pendingSlips.length} sub="payment evidence uploaded" />
         <Kpi label="Customer credit held" value={money0(db.customers.reduce((s, c) => s + customerCredit(db, c.id), 0))} sub="unapplied receipts" />
       </div>
-      <Tabs value={tab} onChange={setTab} tabs={[{ v: 'aging', label: 'Outstanding & aging' }, { v: 'opening', label: 'Opening balances' }, { v: 'slips', label: 'Payment slips', count: pendingSlips.length || '' }, { v: 'receipts', label: 'Receipts' }, { v: 'credit', label: 'Customer credit' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ v: 'aging', label: 'Outstanding & aging' }, ...(centralReady ? [{ v: 'central' as Tab, label: 'Central ledger', count: waitingCentral || '' }] : []), { v: 'opening', label: 'Opening balances' }, { v: 'slips', label: 'Payment slips', count: pendingSlips.length || '' }, { v: 'receipts', label: 'Receipts' }, { v: 'credit', label: 'Customer credit' }]} />
 
       {tab === 'aging' && (
         <Card flush>
-          <DataTable rows={rows.filter((r) => r.out > 0.004)} rowKey={(r) => r.c.id} pageSize={12} search={(r) => r.c.name + r.c.code}
+          <DataTable rows={rows.filter((r) => r.out > 0.004 || r.central > 0.004)} rowKey={(r) => r.c.id} pageSize={12} search={(r) => r.c.name + r.c.code}
             empty={<Empty icon={<Check size={22} />} title="No outstanding balances" hint="Everything is paid up." />}
             cols={[
               { key: 'c', header: 'Customer', sort: (r) => r.c.name, render: (r) => <><b>{r.c.name}</b><div className="sub"><Tx>{r.c.group}</Tx>{' '}<Tx>· terms</Tx>{' '}{r.c.creditDays || 0}{' '}<Tx>days · limit</Tx>{' '}{money0(r.c.creditLimit)}</div></> },
               ...AGING_BUCKETS.map((b, i) => ({ key: 'b' + i, header: b, num: true, render: (r: { buckets: number[] }) => (r.buckets[i] > 0 ? <span className={i >= 2 ? 'bad' : ''}>{money0(r.buckets[i])}</span> : <span className="muted">–</span>) })),
               { key: 'o', header: 'Total', num: true, sort: (r: { out: number }) => r.out, render: (r: { out: number }) => <b>{money(r.out)}</b> },
-              { key: 'a', header: '', render: (r: { c: { id: ID } }) => canCreate && <Button size="sm" onClick={() => setRecv(r.c.id)}><Tx>Receive</Tx></Button> },
+              { key: 'ce', header: 'Central ledger', num: true, render: (r: { central: number }) => (r.central > 0.004 ? <b>{money(r.central)}</b> : <span className="muted">–</span>) },
+              { key: 'a', header: '', render: (r: { c: { id: ID } }) => canCreate && <Button size="sm" onClick={() => receive(r.c.id)}><Tx>Receive</Tx></Button> },
             ]} />
         </Card>
       )}
+      {tab === 'central' && centralReady && <CentralLedgerPanel onReceive={(cid) => setCentralRecv(cid)} />}
       {tab === 'opening' && <OpeningReceivables />}
       {tab === 'slips' && <Slips />}
       {tab === 'receipts' && <Receipts openOrder={setOpenOrder} />}
@@ -68,6 +78,7 @@ export default function Receivables() {
         </div>
       )}
       {recv && <ReceiveModal customerId={recv === 'new' ? undefined : recv} onClose={() => { setRecv(null); if (sp.get('c')) setSp({ tab }); }} />}
+      {centralRecv && <CentralReceiveModal localCustomerId={centralRecv === 'new' ? undefined : centralRecv} onClose={() => setCentralRecv(null)} />}
       {openOrder && <OrderDrawer id={openOrder} onClose={() => setOpenOrder(null)} />}
     </>
   );

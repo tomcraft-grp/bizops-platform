@@ -12,12 +12,14 @@ export function allocatedMap(d: DB): Record<ID, number> {
 /** What the customer still owes on an order (negative = we owe them a refund) */
 export function orderBalance(o: Order, allocated: number): number {
   if (o.collectedBy === 'platform' || o.status === 'cancelled') return 0;
+  if (o.central) return 0; // billed by a central invoice: the receivable left this device's books (what is still owed: o.central.outstanding)
   return r2(o.total - o.creditNoted - allocated + o.refundsPaid);
 }
-export type PayStatus = 'unpaid' | 'partial' | 'paid' | 'overpaid' | 'platform' | 'void';
+export type PayStatus = 'unpaid' | 'partial' | 'paid' | 'overpaid' | 'platform' | 'void' | 'central';
 export function payStatus(o: Order, allocated: number): PayStatus {
   if (o.status === 'cancelled') return 'void';
   if (o.collectedBy === 'platform') return 'platform';
+  if (o.central) return o.central.cancelled || o.central.outstanding > 0.004 ? 'central' : 'paid';
   const bal = orderBalance(o, allocated);
   if (bal < -0.004) return 'overpaid';
   if (bal <= 0.004) return 'paid';
@@ -115,6 +117,8 @@ export function voidReceipt(d: DB, ctx: Ctx, id: ID, reason: string) {
   const r = d.receipts.find((x) => x.id === id) || fail('NOT_FOUND', 'Receipt not found');
   if (r.status === 'void') fail('ALREADY', 'Receipt is already void');
   if (d.allocations.some((a) => a.receiptId === id && a.active && a.kind !== 'payment')) fail('INVALID', 'Credit from this receipt has been applied or refunded — reverse that first');
+  const central = d.allocations.filter((a) => a.receiptId === id && a.active).map((a) => d.orders.find((o) => o.id === a.orderId)).find((o) => o?.central);
+  if (central) fail('CENTRAL_INVOICE', `${central.no} is billed by central invoice ${central.central!.invoiceNo}; voiding this receipt would change what it owes after it was sent. Ask a finance manager to adjust the central invoice instead.`);
   for (const a of d.allocations) if (a.receiptId === id) a.active = false;
   if (r.journalId) reverseJournal(d, ctx, r.journalId, reason);
   r.status = 'void';

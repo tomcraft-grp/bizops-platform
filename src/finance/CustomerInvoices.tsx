@@ -71,7 +71,10 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
   useEffect(() => () => { if (pickedUrl.current) URL.revokeObjectURL(pickedUrl.current); }, []);
   const [qr, setQr] = useState<QrRequest | null>(null);
   // how the customer pays: a bank account, the wallet or the PromptPay QR (all from the database-driven payment methods)
-  const { methods, reload: reloadMethods } = useMethods();
+  const { methods: allMethods, reload: reloadMethods } = useMethods();
+  // a store invoice is never paid from the wallet (the owner's rule; the database refuses it too): offer banks and QR only
+  const noWallet = inv.origin === 'store';
+  const methods = allMethods && noWallet ? { ...allMethods, wallet: { ...allMethods.wallet, balance: 0 } } : allMethods;
   const [picked0, setChoice] = useState<Choice>(null);
   const hasMethods = !!methods && (methods.banks.length > 0 || methods.wallet.balance > 0);
   // the customer's choice at checkout (when it is still available) comes first, then the first bank
@@ -156,7 +159,7 @@ export function InvoiceCard({ inv, onChanged, lang: langProp, defaultOpen, prefe
         <div className="col gap-8" style={{ marginTop: 10 }}>
           {hasMethods && <>
             <div className="dev-sub">{lang === 'th' ? 'เลือกช่องทางการชำระเงิน' : 'Choose how to pay'}</div>
-            <MethodCards methods={methods!} value={choice} onChange={setChoice} qr />
+            <MethodCards methods={methods!} value={choice} onChange={setChoice} qr wallet={!noWallet} />
           </>}
           {choice?.kind === 'wallet' && methods && <WalletPayPanel inv={inv} balance={methods.wallet.balance} onPaid={() => { reloadMethods(); onChanged(); void loadHistory(); }} />}
           {bankChoice && <TransferAmount amount={inv.outstanding} reference={inv.invoice_no} />}

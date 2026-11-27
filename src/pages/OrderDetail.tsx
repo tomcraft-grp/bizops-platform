@@ -87,6 +87,7 @@ export function OrderDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
               ...(meta.collectedBy === 'merchant' ? [['Paid', money(paid)] as [string, string], [<b key="b"><Tx>Balance due</Tx></b>, <b key="bb" className={balance > 0 ? 'bad' : balance < 0 ? 'warn' : 'good'}>{money(balance)}</b>] as [React.ReactNode, React.ReactNode]] : []),
             ]} />
             {meta.collectedBy === 'merchant' && <div className="mt8"><Badge tone={ps === 'paid' ? 'good' : ps === 'partial' ? 'warn' : ps === 'unpaid' ? 'bad' : 'info'} dot>{ps}</Badge></div>}
+            {o.central && <div className="mt8" data-testid="order-central"><Banner tone="info"><Tx>Billed in the central ledger by invoice</Tx>{' '}<b className="mono">{o.central.invoiceNo}</b>{' · '}{o.central.cancelled ? <Tx>the invoice was cancelled</Tx> : <><Tx>still owed</Tx>{' '}<b>{money(o.central.outstanding)}</b>{o.central.pending > 0 && <>{' · '}<Tx>waiting to post</Tx>{' '}{money(o.central.pending)}</>}</>}{'. '}<Tx>Receive payments for it in Receivables → Receive payment.</Tx></Banner></div>}
           </div>
           <div className="card card-b">
             <div className="col gap-6">

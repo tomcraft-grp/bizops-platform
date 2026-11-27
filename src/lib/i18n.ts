@@ -10,6 +10,7 @@ import { TH_SHOP } from './i18n.shop';
 import { TH_REWARDS } from './i18n.rewards';
 import { TH_SKUSYNC } from './i18n.skusync';
 import { TH_CATEGORIES } from './i18n.categories';
+import { TH_CENTRAL_AR } from './i18n.centralAr';
 
 export type Lang = 'en' | 'th';
 
@@ -137,6 +138,7 @@ for (const [k, v] of Object.entries(TH_SHOP)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_REWARDS)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_SKUSYNC)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_CATEGORIES)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_CENTRAL_AR)) if (!(k in TH)) TH[k] = v;
 
 /** Translate an English source string. `{name}` placeholders are filled from `vars` AFTER lookup, so the
  *  dictionary key is the template (e.g. 'Type {word} to confirm') and dynamic values are never translated. */

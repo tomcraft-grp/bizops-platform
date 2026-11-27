@@ -80,7 +80,7 @@ export default function Orders() {
             { key: 'ch', header: 'Channel', render: (o) => <ChannelChip c={o.channel} /> },
             { key: 'cust', header: 'Customer', hideSm: true, render: (o) => db.customers.find((c) => c.id === o.customerId)?.name ?? <span className="muted"><Tx>Walk-in</Tx></span> },
             { key: 'st', header: 'Status', render: (o) => <StatusBadge status={o.status as OrderStatus} /> },
-            { key: 'pay', header: 'Payment', hideSm: true, render: (o) => { const s = payStatus(o, alloc[o.id] || 0); return s === 'platform' ? <Badge><Tx>via</Tx>{' '}{CHANNELS[o.channel].short}</Badge> : s === 'void' ? <span className="muted">–</span> : <Badge tone={s === 'paid' ? 'good' : s === 'partial' ? 'warn' : s === 'overpaid' ? 'info' : 'bad'} dot>{s}</Badge>; } },
+            { key: 'pay', header: 'Payment', hideSm: true, render: (o) => { const s = payStatus(o, alloc[o.id] || 0); return s === 'platform' ? <Badge><Tx>via</Tx>{' '}{CHANNELS[o.channel].short}</Badge> : s === 'void' ? <span className="muted">–</span> : s === 'central' ? <Badge tone="info" dot><Tx>central ledger</Tx></Badge> : <Badge tone={s === 'paid' ? 'good' : s === 'partial' ? 'warn' : s === 'overpaid' ? 'info' : 'bad'} dot>{s}</Badge>; } },
             { key: 'tot', header: 'Total', num: true, sort: (o) => o.total, render: (o) => money(o.total) },
           ]} />
       </Card>

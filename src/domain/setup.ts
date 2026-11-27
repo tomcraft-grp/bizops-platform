@@ -352,8 +352,13 @@ export function reconciliationMatrix(d: DB): ReconRow[] {
     rows.push({ key, title, accounts, gl: g, sub: s, diff, status: Math.abs(diff) < 0.05 ? 'ok' : 'diff', subLabel, note });
   };
   let ar = 0;
-  for (const o of d.orders) if (o.collectedBy === 'merchant') ar += (o.recognizedAt ? o.total - o.creditNoted : 0) - (alloc[o.id] || 0) + o.refundsPaid;
+  let arCentral = 0;
+  for (const o of d.orders) if (o.collectedBy === 'merchant') {
+    ar += (o.recognizedAt ? o.total - o.creditNoted : 0) - (alloc[o.id] || 0) + o.refundsPaid - (o.central?.amount ?? 0);   // a central invoice took that part out of these books
+    arCentral += o.central?.amount ?? 0;
+  }
   add('ar', 'Customer receivables', codes('ar'), gl('ar'), r2(ar), 'Σ order balances (customer ledger)');
+  if (arCentral > 0.004 || d.accounts.some(isControl('ar_central')) && Math.abs(gl('ar_central')) > 0.004) add('ar_central', 'Due from the central ledger', codes('ar_central'), gl('ar_central'), r2(arCentral), 'Σ orders billed by a central invoice');
   let plat = 0;
   for (const o of d.orders) if (o.collectedBy === 'platform' && o.recognizedAt) plat += o.total - o.creditNoted;
   for (const s of d.settlements) if (s.status === 'received') for (const id of s.orderIds) { const o = d.orders.find((x) => x.id === id); if (o) plat -= o.settledAmount ?? 0; }
