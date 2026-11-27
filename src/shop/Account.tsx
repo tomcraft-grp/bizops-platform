@@ -1,16 +1,19 @@
 // The top of the Account tab: who the customer is, how many orders / payments are open, shortcuts and the language choice.
 // (The name / phone / consent form and the feedback centre below it stay in pages/CustomerApp.tsx.)
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, ClipboardList, Gift, ShoppingBag, ShoppingCart, Wallet as WalletIcon } from 'lucide-react';
+import { ChevronRight, ClipboardList, Coins, Gift, ShoppingBag, ShoppingCart, Wallet as WalletIcon } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 import { cx } from '../lib/util';
 import { shop } from './api';
 import { wallet } from '../wallet/api';
 import { rewards } from '../rewards/api';
+import { transfers, type TransferOverview } from '../rewards/transferApi';
+import { PointTransferView } from './PointTransfer';
+import * as PV from './pointsView';
 import { RewardsView } from './Rewards';
 import { baht } from './format';
 import { useCartCount } from './cart';
-import { useShopHost } from './nav';
+import { useShopHost, useShopNav } from './nav';
 import { useShopLangStore, useT } from './i18n';
 
 export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } = {}) {
@@ -27,6 +30,11 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
   const [inRewards, setInRewards] = useState(false);
   const rewardsRow = useRef<HTMLButtonElement>(null);
   const wasInRewards = useRef(false);
+  const [tov, setTov] = useState<TransferOverview | null>(null);   // the "Transfer points" row: only when the server says transfers are on (they ship off)
+  const [inTransfer, setInTransfer] = useState(() => useShopNav.getState().pendingTransfer);
+  const pendingTransfer = useShopNav((s) => s.pendingTransfer);   // the Home banner sends the customer straight here
+  const transferRow = useRef<HTMLButtonElement>(null);
+  const wasInTransfer = useRef(false);
   const picture = (session?.user.user_metadata as { picture?: string } | undefined)?.picture;
 
   useEffect(() => {
@@ -37,6 +45,14 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
     rewards.settings().then((r) => { if (on) setRewardsOn(!!r.enabled); }).catch(() => undefined);   // hidden when rewards are off or the call fails
     return () => { on = false; };
   }, []);
+  useEffect(() => {
+    if (inTransfer) return;
+    let on = true;                                       // on the first visit and every time the customer comes back from the transfer screen
+    transfers.overview().then((o) => { if (on) setTov(o); }).catch(() => undefined);   // hidden when transfers are off, the call fails or the database is older
+    return () => { on = false; };
+  }, [inTransfer]);
+  useEffect(() => { if (pendingTransfer) { setInTransfer(true); useShopNav.setState({ pendingTransfer: false }); } }, [pendingTransfer]);
+  useEffect(() => { if (wasInTransfer.current && !inTransfer) transferRow.current?.focus(); wasInTransfer.current = inTransfer; }, [inTransfer]);
 
   useEffect(() => { if (wasInRewards.current && !inRewards) rewardsRow.current?.focus(); wasInRewards.current = inRewards; }, [inRewards]);   // Back lands on the row that opened the screen
 
@@ -50,6 +66,7 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
   );
   // The Rewards screen takes the place of this page (shop.css hides what the host renders after it: the member form, the feedback centre).
   if (inRewards) return <div className="sp-account rw-open"><RewardsView onBack={() => setInRewards(false)} /></div>;
+  if (inTransfer) return <div className="sp-account rw-open"><PointTransferView onBack={() => setInTransfer(false)} /></div>;
   return (
     <div className="sp-account">
       <div className="sp-me">
@@ -75,6 +92,14 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
           <button type="button" className="sp-linkrow" ref={rewardsRow} onClick={() => setInRewards(true)} data-testid="rewards-row">
             <span className="sp-linkrow-ic"><Gift size={20} /></span>
             <span className="grow"><b>{t('acc.rewards')}</b><small>{t('acc.rewardsHint')}</small></span>
+            <ChevronRight size={18} aria-hidden />
+          </button>
+        )}
+        {tov?.enabled && (
+          <button type="button" className="sp-linkrow" ref={transferRow} onClick={() => setInTransfer(true)} data-testid="transfer-row">
+            <span className="sp-linkrow-ic"><Coins size={20} /></span>
+            <span className="grow"><b>{t('pt.title')}</b><small>{PV.waitingForMe(tov) > 0 ? t('pt.rowWaiting', { n: PV.waitingForMe(tov) }) : t('pt.rowHint')}</small></span>
+            {PV.entryBadge(tov) > 0 && <span className="sp-count-badge" data-testid="transfer-badge">{PV.entryBadge(tov)}</span>}
             <ChevronRight size={18} aria-hidden />
           </button>
         )}
