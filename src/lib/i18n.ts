@@ -8,8 +8,13 @@ import { TH_BACKOFFICE } from './i18n.backoffice';
 import { TH_FEEDBACK } from './i18n.feedback';
 import { TH_SHOP } from './i18n.shop';
 import { TH_REWARDS } from './i18n.rewards';
+import { TH_TRANSFERS } from './i18n.transfers';
 import { TH_SKUSYNC } from './i18n.skusync';
 import { TH_CATEGORIES } from './i18n.categories';
+import { TH_POLICY } from './i18n.policy';
+import { TH_PURCHASING } from './i18n.purchasing';
+import { TH_LINE } from './i18n.line';
+import { TH_PRODUCTION } from './i18n.production';
 import { TH_CENTRAL_AR } from './i18n.centralAr';
 
 export type Lang = 'en' | 'th';
@@ -108,7 +113,7 @@ export const TH: Record<string, string> = {
   'Optional — any extra context for the team.': 'ไม่บังคับ — ข้อมูลเพิ่มเติมสำหรับทีม',
   Cancel: 'ยกเลิก', Submit: 'ส่ง', Close: 'ปิด', 'Open page': 'เปิดหน้า', 'Add note': 'เพิ่มบันทึก',
   'Total submitted': 'ส่งทั้งหมด', Open: 'เปิดอยู่', 'Critical priority': 'ความสำคัญฉุกเฉิน', Completed: 'เสร็จสมบูรณ์',
-  Issue: 'ปัญหา', Page: 'หน้า', Status: 'สถานะ', Priority: 'ความสำคัญ', Submitted: 'ส่งเมื่อ',
+  Issue: 'ปัญหา', Page: 'หน้า', Status: 'สถานะ', Priority: 'ความสำคัญ', Submitted: 'ส่งแล้ว',
   'All statuses': 'ทุกสถานะ', 'All priorities': 'ทุกระดับความสำคัญ',
   New: 'ใหม่', Reviewing: 'กำลังตรวจสอบ', 'In progress': 'กำลังดำเนินการ', 'Need more information': 'ต้องการข้อมูลเพิ่ม',
   Rejected: 'ปฏิเสธ', Low: 'ต่ำ', Medium: 'กลาง', High: 'สูง', Critical: 'ฉุกเฉิน',
@@ -120,6 +125,7 @@ export const TH: Record<string, string> = {
   'Your role cannot update issues — ask an Owner or Manager.': 'บทบาทของคุณไม่สามารถอัปเดตรายการได้ — กรุณาติดต่อ Owner หรือ Manager',
   'Thanks — your feedback was recorded.': 'ขอบคุณ — บันทึกความคิดเห็นของคุณแล้ว',
   'Status updated': 'อัปเดตสถานะแล้ว', 'Priority updated': 'อัปเดตความสำคัญแล้ว', 'Note added': 'เพิ่มบันทึกแล้ว',
+  'Dismiss message': 'ปิดข้อความ',
   Category: 'ประเภท', 'All categories': 'ทุกประเภท',
   'Feature request / requirement': 'ขอฟีเจอร์ / ความต้องการใหม่', 'Bug report': 'แจ้งบั๊ก',
   'UI/UX feedback': 'ความคิดเห็นเรื่อง UI/UX', 'Performance problem': 'ปัญหาประสิทธิภาพ',
@@ -137,7 +143,12 @@ for (const [k, v] of Object.entries(TH_SHOP)) if (!(k in TH)) TH[k] = v;
 // Rewards (promotion rules, packs, event boards) and SKU sync screens — lib/i18n.rewards.ts, lib/i18n.skusync.ts.
 for (const [k, v] of Object.entries(TH_REWARDS)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_SKUSYNC)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_TRANSFERS)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_CATEGORIES)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_POLICY)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_PURCHASING)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_LINE)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_PRODUCTION)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_CENTRAL_AR)) if (!(k in TH)) TH[k] = v;
 
 /** Translate an English source string. `{name}` placeholders are filled from `vars` AFTER lookup, so the

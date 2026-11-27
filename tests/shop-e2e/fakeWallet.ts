@@ -4,6 +4,7 @@
 // the balance or the invoice's outstanding amount; the same key never creates a second deposit or a second charge; adjustments
 // need a manager. This file proves the SCREENS. It proves nothing about the database.
 import type { FakeShop } from './fakeBackend';
+import { promptPayPayload } from '../../src/lib/promptpay';
 
 export const NOT_HANDLED = Symbol('not handled');
 export interface FBank { id: string; code: string; bank_name_en: string; bank_name_th: string; account_no: string; account_name: string; logo_url: string | null; instructions_th: string | null; instructions_en: string | null; branch: string | null; gl_account_code: string | null; sort_order: number; active: boolean }
@@ -30,6 +31,13 @@ export class FakeWallet {
   /** cash received at the back office and posted today (the CASH line of the daily bank report); 0 = none */
   cashToday = 0;
   invoiceBank = new Map<string, string>();       // invoice slip -> bank id (what the customer chose)
+  /** customer payment policy (migration 20261127100000): 'partial' (default) or 'full'. policyEnabled=false = an old database without the migration. */
+  policy: 'partial' | 'full' = 'partial';
+  policyEnabled = true;
+  policyLog: { to: string; reason: string }[] = [];
+  /** the bank account the shop's QR pays into (migration 20261127110000); null = not linked, so no QR top-up */
+  qrBankId: string | null = null;
+  calls: { fn: string; args: Record<string, unknown> }[] = [];
   private keys = new Map<string, { hash: string; out: unknown }>();
   private n = 0;
   private slips: { id: string; invoice_id: string; no: string; amount: number; status: string; created_at: string; bank_id: string | null }[] = [];
@@ -75,8 +83,46 @@ export class FakeWallet {
   /** test control: a customer who already has money in the wallet */
   seedBalance(amount: number) { this.apply('DEPOSIT', 'credit', amount, { payment_method: 'bank_transfer', bank_id: SCB.id, ref_no: 'DEP-SEED', approved_by_email: 'staff@example.test' }); }
 
+  /** the policy rule of finance_pay_invoice_with_wallet / finance_submit_evidence (mirrors supabase/tests/payment_policy.sql, which proves it on the real database) */
+  fullPolicyWallet(amount: number, outstanding: number) { if (this.policyEnabled && this.policy === 'full' && Math.round(amount * 100) !== Math.round(outstanding * 100)) this.err(`FULL_PAYMENT_REQUIRED: this account must pay the whole outstanding amount (${outstanding}) in one payment`); }
+  fullPolicySlip(claimed: number, outstanding: number, waiting: boolean) {
+    if (!this.policyEnabled || this.policy !== 'full') return;
+    if (claimed < outstanding) this.err(`FULL_PAYMENT_REQUIRED: this account must pay the whole outstanding amount (${outstanding}) in one payment`);
+    if (waiting) this.err('PAYMENT_ALREADY_PENDING: a payment for this invoice is already waiting to be checked');
+  }
   rpc(fn: string, a: Record<string, unknown>): unknown {
+    this.calls.push({ fn, args: a });
     switch (fn) {
+      case 'finance_my_payment_policy':
+        if (!this.policyEnabled) this.err('Could not find the function public.finance_my_payment_policy');
+        return this.policy;
+      case 'finance_customer_policies':
+        this.need('viewer'); if (!this.policyEnabled) this.err('Could not find the function public.finance_customer_policies');
+        if (Array.isArray(a.p_ids)) return (a.p_ids as string[]).map((id) => ({ id, code: 'LINE-TEST', name: NAME, payment_policy: this.policy, open_invoices: 1, open_amount: 100 }));
+        return [{ id: 'cust-1', code: 'LINE-TEST', name: NAME, payment_policy: this.policy, open_invoices: this.shop.orders.filter((o) => !o.invoice.cancelled && o.invoice.amount - o.invoice.paid > 0).length, open_amount: this.shop.orders.filter((o) => !o.invoice.cancelled).reduce((s, o) => s + o.invoice.amount - o.invoice.paid, 0) }];
+      case 'finance_set_payment_policy': {
+        this.need('manager'); if (!this.policyEnabled) this.err('Could not find the function public.finance_set_payment_policy');
+        if (a.p_policy !== 'partial' && a.p_policy !== 'full') this.err('INVALID_POLICY: choose partial or full');
+        if (String(a.p_reason ?? '').trim().length < 3) this.err('REASON_REQUIRED: say why the policy changes');
+        const changed = this.policy !== a.p_policy; this.policy = a.p_policy as 'partial' | 'full'; if (changed) this.policyLog.push({ to: this.policy, reason: String(a.p_reason).trim() });
+        return { id: 'cust-1', payment_policy: this.policy, changed };
+      }
+      case 'finance_deposit_qr_bank': {
+        if (!this.policyEnabled) this.err('Could not find the function public.finance_deposit_qr_bank');
+        const b = this.bank(this.qrBankId); return b && b.active && this.promptpay ? { bank_account_id: b.id, account_label: 'Test shop', merchant_name: 'Test shop' } : null;
+      }
+      case 'finance_deposit_qr': {
+        if (!this.policyEnabled) this.err('Could not find the function public.finance_deposit_qr');
+        const d = this.deposits.find((x) => x.id === a.p_deposit); if (!d) this.err('Deposit not found');
+        if (d.status !== 'pending') this.err(`DEPOSIT_NOT_PAYABLE: this deposit is ${d.status}`);
+        if (!this.qrBankId) this.err('QR_NOT_LINKED: not linked'); if (d.bank_id !== this.qrBankId) this.err('QR_NOT_FOR_THIS_BANK: another bank account');
+        return { amount: d.amount, qr_payload: promptPayPayload('0812345678', d.amount), deposit_no: d.deposit_no, account_label: 'Test shop', merchant_name: 'Test shop' };
+      }
+      case 'finance_set_payment_account_bank': {
+        this.need('manager'); if (!this.bank(a.p_bank as string | null) && a.p_bank) this.err('BANK_NOT_AVAILABLE'); this.qrBankId = (a.p_bank as string | null) ?? null;
+        const acc = this.shop.paymentAccounts.find((x) => x.id === a.p_account); if (acc) acc.bank_account_id = this.qrBankId;
+        return { id: String(a.p_account), bank_account_id: this.qrBankId, changed: true };
+      }
       // ---------------------------------------------------------------- customer
       case 'finance_payment_methods':
         if (!this.enabled) this.err('Could not find the function public.finance_payment_methods');
@@ -128,6 +174,7 @@ export class FakeWallet {
           if (inv.evidence.some((e) => e.status === 'submitted')) this.err('PAYMENT_UNDER_REVIEW');
           if (!(amount > 0) || Math.round(amount * 100) !== amount * 100) this.err('AMOUNT_OUT_OF_RANGE');
           if (amount > outstanding + 0.004) this.err('AMOUNT_EXCEEDS_OUTSTANDING');
+          this.fullPolicyWallet(amount, outstanding);
           const x = this.apply('INVOICE_PAYMENT', 'debit', amount, { ref_no: inv.invoice_no, ref_id: inv.id, payment_method: 'wallet' });   // throws INSUFFICIENT_FUNDS
           inv.paid = Math.round((inv.paid + amount) * 100) / 100;
           this.queue.push({ id: `q-${++this.n}`, seq: this.n, event_type: 'WALLET_PAYMENT', ref_no: x.txn_no, amount, plan: [{ side: 'dr', role: 'customer_credit', amount, wallet: true }, { side: 'cr', role: 'ar', amount }], status: 'pending', journal_no: null, event_date: x.txn_date });

@@ -3,15 +3,18 @@
 // The AI is a reader and a risk flagger, never the decision maker: its result is a hint (shown to staff only), nothing it says is ever ticked, filled in as a decision or
 // sent for a person, and every amount a person confirms is typed (or checked) by that person. What a role may do is decided by the database; the buttons only mirror it.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, ExternalLink, Play, Plus, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Play, Plus, ScanLine, XCircle } from 'lucide-react';
 import { toast, useLang } from '../domain/store';
 import { t as tl } from '../lib/i18n';
 import { cx, money } from '../lib/util';
 import { Badge, Banner, Button, Card, Check, Empty, Field, Input, Kpi, KV, Modal, Select, Switch, Textarea, Tx, useConfirm } from '../ui/kit';
 import { canFinance, finance, type FinanceRole } from './api';
+import { ReaderCard } from '../slipReader/ReaderCard';
+import { isPicture, ownReader, readEvidence, type OwnReaderStatus } from '../slipReader/store';
+import { readerAvailable, ReaderError } from '../slipReader/engine';
 import RecordPayment, { type RecordTarget } from './RecordPayment';
 import {
-  AI_RESULT, REASON_CODES, REASON_TEXT, review, STAGE, type AiResult, type Bilingual, type PostResult, type ReviewDetail, type ReviewFilter, type ReviewItem, type ReviewPage, type ReviewSettings,
+  AI_RESULT, isDuplicateSuspect, REASON_CODES, REASON_TEXT, refOk, review, STAGE, type AiResult, type Bilingual, type PostResult, type ReviewDetail, type ReviewFilter, type ReviewItem, type ReviewPage, type ReviewSettings,
   type ReviewStage, type ReviewSummary, type SlipAnalysis,
 } from './review';
 import {
@@ -20,8 +23,8 @@ import {
 } from './reviewUi';
 
 const PAGE = 50;
-type Filters = { stage: '' | ReviewStage; ai: '' | AiResult; suspicious: boolean; from: string; to: string; reason: string; source: '' | 'customer_slip' | 'staff_entry'; method: '' | 'transfer' | 'cash'; showAll: boolean; search: string };
-const NO_FILTER: Filters = { stage: '', ai: '', suspicious: false, from: '', to: '', reason: '', source: '', method: '', showAll: false, search: '' };
+type Filters = { stage: '' | ReviewStage; ai: '' | AiResult; suspicious: boolean; from: string; to: string; reason: string; source: '' | 'customer_slip' | 'staff_entry'; method: '' | 'transfer' | 'cash'; showAll: boolean; search: string; lineQuick: boolean };
+const NO_FILTER: Filters = { stage: '', ai: '', suspicious: false, from: '', to: '', reason: '', source: '', method: '', showAll: false, search: '', lineQuick: false };
 const isActive = (f: Filters) => JSON.stringify(f) !== JSON.stringify(NO_FILTER);
 
 /** The filter the database gets. Unresolved payments are the default, so the list is small; a chosen stage, or "Show all", replaces it. */
@@ -32,6 +35,7 @@ function toFilter(f: Filters): ReviewFilter {
   if (f.from) o.from = f.from; if (f.to) o.to = f.to;
   if (f.reason) o.reason = f.reason; if (f.source) o.source = [f.source]; if (f.method) o.method = [f.method];
   if (f.search.trim()) o.search = f.search.trim();
+  if (f.lineQuick) o.via = ['line_quick'];
   return o;
 }
 const newestDone = (as: SlipAnalysis[]) => as.find((a) => a.status === 'done') ?? null;     // analyses come newest first
@@ -40,16 +44,27 @@ const ACTION_LABEL: Record<string, string> = {
   'evidence.confirm': 'Confirmed', 'evidence.post': 'Posted', 'evidence.reject': 'Rejected', 'evidence.request_more': 'Asked for more evidence', 'evidence.record': 'Recorded by staff', 'evidence.verify': 'Verified in one step',
   'evidence.superseded': 'Replaced by a newer slip',
 };
-interface Target { id: string; invoiceNo: string; amount: number; outstanding?: number }
+interface Target { id: string; invoiceNo: string; amount: number; outstanding?: number; /** confirmed without a bank reference: Post may add one */ noRef?: boolean }
 /** The old verify form's hint, back where the money is decided: an amount above what the invoice owes is credited to the customer's wallet. Empty when it is not above. */
 const overOwed = (lang: 'en' | 'th', amount: number, outstanding: number | undefined) =>
   outstanding != null && amount > outstanding + 0.004 ? tl(lang, 'More than the invoice still owes ({n} over): the extra is credited to the customer’s wallet when the payment is posted.', { n: money(amount - outstanding) }) : '';
 interface BulkRow { id: string; label: string; ok: boolean; text: string }
+/** "Same amount, same account, within a minute as a recorded payment": asks the person whether the bank statement shows two transfers (their yes is recorded). */
+function useAskDistinct() {
+  const ask = useConfirm();
+  const lang = useLang();
+  return async (e: unknown) => (await ask({
+    title: tl(lang, 'Possible duplicate'),
+    body: `${reviewErrorLine(lang, e)} ${tl(lang, 'Only if the bank statement shows two separate transfers. Your answer is recorded.')}`,
+    confirmLabel: tl(lang, 'They are two different transfers'),
+  })).ok;
+}
 
 // ================================================================================================ the dashboard
-export default function SlipReview({ role, onChanged }: { role: FinanceRole; onChanged: () => void }) {
+export default function SlipReview({ role, onChanged, initialOpenId }: { role: FinanceRole; onChanged: () => void; /** a link from LINE: open this slip's detail */ initialOpenId?: string | null }) {
   const lang = useLang();
   const ask = useConfirm();
+  const askDistinct = useAskDistinct();
   const L = (b: Bilingual) => (lang === 'th' ? b.th : b.en);
   const canAct = canFinance(role, 'verify');
   const [settings, setSettings] = useState<ReviewSettings | null>(null);
@@ -60,7 +75,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
   const [f, setF] = useState<Filters>(NO_FILTER);
   const [box, setBox] = useState('');
   const [offset, setOffset] = useState(0);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
   const [record, setRecord] = useState<RecordTarget | null>(null);
   const [busy, setBusy] = useState('');
   const [bulk, setBulk] = useState<BulkRow[] | null>(null);
@@ -94,6 +109,8 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
   useEffect(() => { void loadList(); }, [loadList]);
   useEffect(() => { void loadSummary(); }, [loadSummary, f.from, f.to]);
   useEffect(() => { review.settings().then((s) => setSettings(s ?? null)).catch(() => setSettings(null)); }, []);
+  const [reader, setReader] = useState<OwnReaderStatus | null>(null);       // the shop's own slip reader; null = a database without it: nothing of it is shown
+  useEffect(() => { ownReader.status().then(setReader).catch(() => setReader(null)); }, []);
   useEffect(() => {                                                        // typing waits 300 ms; the page goes back to the first only when the text really changed (opening the screen must not undo a Next press)
     const h = setTimeout(() => { if (appliedSearch.current === box) return; appliedSearch.current = box; setF((x) => ({ ...x, search: box })); setOffset(0); }, 300);
     return () => clearTimeout(h);
@@ -126,9 +143,17 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
   /** Post one confirmed payment, after a dialog that says how much. Returns true when it is done (or was already). */
   const postOne = (g: Target): Promise<boolean> => once(false, async () => {
     const over = overOwed(lang, g.amount, g.outstanding);
-    const a = await ask({ title: tl(lang, 'Post {a} to {n}?', { a: money(g.amount), n: g.invoiceNo }), body: [tl(lang, 'This makes the payment official: a receipt and a ledger entry are created. It cannot be undone, only reversed.'), over].filter(Boolean).join(' '), confirmLabel: tl(lang, 'Post Invoice') });
+    const a = await ask({ title: tl(lang, 'Post {a} to {n}?', { a: money(g.amount), n: g.invoiceNo }), body: [tl(lang, 'This makes the payment official: a receipt and a ledger entry are created. It cannot be undone, only reversed.'), over].filter(Boolean).join(' '), confirmLabel: tl(lang, 'Post Invoice'),
+      ...(g.noRef ? { reason: tl(lang, 'Bank transaction reference (optional, from the bank statement)'), reasonOptional: true } : {}) });
     if (!a.ok) return false;
-    const r = await run(g.id, async () => { try { const x = await review.post(g.id); toastPosted(x); return true; } catch (e) { toast('error', reviewErrorText(lang, e)); return false; } });
+    const r = await run(g.id, async () => {
+      const send = (distinct: boolean) => review.post(g.id, undefined, g.noRef ? a.reason : undefined, distinct);
+      try { toastPosted(await send(false)); return true; } catch (e) {
+        if (!isDuplicateSuspect(e)) { toast('error', reviewErrorText(lang, e)); return false; }
+        if (!(await askDistinct(e))) return false;
+        try { toastPosted(await send(true)); return true; } catch (y) { toast('error', reviewErrorText(lang, y)); return false; }
+      }
+    });
     if (r) await refresh();
     return !!r;
   });
@@ -194,6 +219,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
           <option value="">{tl(lang, 'All AI results')}</option>{(Object.keys(AI_RESULT) as AiResult[]).map((k) => <option key={k} value={k}>{L(AI_RESULT[k])}</option>)}
         </Select>
         <button type="button" className="chip sr-chip" aria-pressed={f.suspicious} onClick={() => set({ suspicious: !f.suspicious })}>{tl(lang, 'Suspicious')}{s ? ` (${s.suspicious})` : ''}</button>
+        <button type="button" className="chip sr-chip" aria-pressed={f.lineQuick} onClick={() => set({ lineQuick: !f.lineQuick })}>{tl(lang, 'LINE quick approvals')}</button>
         <Input sm type="date" style={{ width: 'auto' }} value={f.from} onChange={(e) => set({ from: e.target.value })} aria-label={tl(lang, 'From date')} />
         <Input sm type="date" style={{ width: 'auto' }} value={f.to} onChange={(e) => set({ to: e.target.value })} aria-label={tl(lang, 'To date')} />
         <Select sm style={{ width: 'auto', maxWidth: 200 }} value={f.reason} onChange={(e) => set({ reason: e.target.value })} aria-label={tl(lang, 'Reason')}>
@@ -238,7 +264,7 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
               </tr></thead>
               <tbody>
                 {items.map((i) => (
-                  <Row key={i.evidence_id} i={i} lang={lang} L={L} canAct={canAct} canPostNow={canPostRow(i)} busy={busy} onOpen={() => setOpenId(i.evidence_id)} onPost={() => postOne({ id: i.evidence_id, invoiceNo: i.invoice_no, amount: amountOf(i), outstanding: i.outstanding })} />
+                  <Row key={i.evidence_id} i={i} lang={lang} L={L} canAct={canAct} canPostNow={canPostRow(i)} busy={busy} onOpen={() => setOpenId(i.evidence_id)} onPost={() => postOne({ id: i.evidence_id, invoiceNo: i.invoice_no, amount: amountOf(i), outstanding: i.outstanding, noRef: i.method === 'transfer' && !i.confirmed_bank_ref })} />
                 ))}
               </tbody>
             </table>
@@ -250,10 +276,11 @@ export default function SlipReview({ role, onChanged }: { role: FinanceRole; onC
         </div>
       )}
 
+      {reader && (reader.can_manage || (reader.enabled && reader.can_read)) && <ReaderCard status={reader} onStatus={setReader} onRead={refresh} />}
       {role === 'manager' && settings && <SettingsCard settings={settings} onSaved={setSettings} />}
 
       {openId && (
-        <Detail id={openId} role={role} settings={settings} busy={busy} run={run} postOne={postOne} rejectOne={rejectOne} onClose={() => setOpenId(null)} onRefresh={refresh}
+        <Detail id={openId} role={role} settings={settings} reader={reader} busy={busy} run={run} postOne={postOne} rejectOne={rejectOne} onClose={() => setOpenId(null)} onRefresh={refresh}
           onRecord={(t) => setRecord(t)} />
       )}
       {record && <RecordPayment target={record} onClose={() => setRecord(null)} onDone={() => { setRecord(null); setOpenId(null); void refresh(); }} />}
@@ -291,7 +318,10 @@ function Row({ i, lang, L, canAct, canPostNow, busy, onOpen, onPost }: { i: Revi
         )}
       </td>
       <td className="num">{i.ai_confidence != null ? percent(i.ai_confidence) : '—'}</td>
-      <td><Badge tone={st.tone} dot>{L(st)}</Badge></td>
+      <td><Badge tone={st.tone} dot>{L(st)}</Badge>
+        {i.confirmed_via === 'line_quick' && <div className="sub"><Badge tone="info">{tl(lang, 'LINE quick approve')}</Badge></div>}
+        {i.no_ref && (i.status === 'confirmed' || i.status === 'verified') && <div className="sub"><Badge tone="warn">{tl(lang, 'No bank reference')}</Badge></div>}
+      </td>
       <td><div className="row gap-4" style={{ flexWrap: 'wrap' }}>
         <Button size="sm" variant={canAct && i.status !== 'confirmed' ? 'primary' : undefined} onClick={onOpen}>{canAct ? <Tx>Review</Tx> : <Tx>View</Tx>}</Button>
         {i.status === 'confirmed' && canPostNow && <Button size="sm" variant="primary" disabled={!!busy} loading={busy === i.evidence_id} onClick={onPost}><Tx>Post Invoice</Tx></Button>}
@@ -302,12 +332,13 @@ function Row({ i, lang, L, canAct, canPostNow, busy, onOpen, onPost }: { i: Revi
 
 // ================================================================================================ the detail: the slip beside its order
 interface DetailProps {
-  id: string; role: FinanceRole; settings: ReviewSettings | null; busy: string; run: <T>(key: string, fn: () => Promise<T>) => Promise<T | undefined>;
+  id: string; role: FinanceRole; settings: ReviewSettings | null; reader: OwnReaderStatus | null; busy: string; run: <T>(key: string, fn: () => Promise<T>) => Promise<T | undefined>;
   postOne: (g: Target) => Promise<boolean>; rejectOne: (g: Target) => Promise<boolean>; onClose: () => void; onRefresh: () => Promise<void>; onRecord: (t: RecordTarget) => void;
 }
-function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, onRefresh, onRecord }: DetailProps) {
+function Detail({ id, role, settings, reader, busy, run, postOne, rejectOne, onClose, onRefresh, onRecord }: DetailProps) {
   const lang = useLang();
   const ask = useConfirm();
+  const askDistinct = useAskDistinct();
   const L = (b: Bilingual) => (lang === 'th' ? b.th : b.en);
   const [d, setD] = useState<ReviewDetail | null>(null);
   const [url, setUrl] = useState<string | null>(null);
@@ -327,6 +358,21 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
   useEffect(() => { setUrl(null); if (path) finance.slipUrl(path).then(setUrl).catch((e: Error) => toast('error', e.message)); }, [path]);
   useEffect(() => { if (mode !== 'view') panel.current?.scrollIntoView({ block: 'nearest' }); }, [mode]);
 
+  // a slip nobody has read yet is read when a verifier opens it (in this browser, no AI service); a failed reading changes nothing and can be tried again with the button
+  const [reading, setReading] = useState(false);
+  const autoRead = useRef('');
+  const ev = d?.evidence;
+  const mayRead = !!ev && canAct && reader?.enabled === true && reader.can_read && isPicture(ev.file_type) && !!ev.file_path && (ev.status === 'submitted' || ev.status === 'confirmed') && ev.source !== 'staff_entry';
+  const nowRunning = d?.analyses[0]?.status === 'queued' || d?.analyses[0]?.status === 'running';
+  const readNow = useCallback(async (quiet: boolean) => {
+    if (!ev) return;
+    setReading(true);
+    try { await readEvidence(ev); if (!quiet) toast('success', tl(lang, 'The slip was read')); }
+    catch (x) { if (!quiet) toast('error', x instanceof ReaderError ? tl(lang, 'The slip could not be read. A person has to check it.') : reviewErrorText(lang, x)); }
+    finally { setReading(false); await load(); await onRefresh(); }
+  }, [ev, lang, load, onRefresh]);
+  useEffect(() => { if (mayRead && readerAvailable() && d && d.analyses.length === 0 && autoRead.current !== id) { autoRead.current = id; void readNow(true); } }, [mayRead, d, id, readNow]);
+
   const done = async () => { onClose(); await onRefresh(); };
   const thenDone = (p: Promise<boolean>) => { void p.then((ok) => (ok ? done() : undefined)); };
   if (!d) return <Modal size="xl" title={tl(lang, 'Payment')} onClose={onClose}><div className="spinner" /></Modal>;
@@ -337,7 +383,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
   const label = o?.order_no ?? inv.invoice_no;
   const stage = STAGE[e.stage];
   const amount = e.confirmed_amount ?? last?.extracted?.amount ?? e.claimed_amount;
-  const g: Target = { id: e.id, invoiceNo: inv.invoice_no, amount, outstanding: inv.outstanding };
+  const g: Target = { id: e.id, invoiceNo: inv.invoice_no, amount, outstanding: inv.outstanding, noRef: e.method === 'transfer' && !e.confirmed_bank_ref };
   const reasons = uniqueReasons(newest?.reasons);
   const info = reasons.filter((r) => r.severity === 'info'), rest = reasons.filter((r) => r.severity !== 'info');
   const cmp = compareRows(last, e.expected_amount);
@@ -355,7 +401,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
   const amtOk = form.amount.trim() !== '' && amt > 0 && Math.abs(Math.round(amt * 100) - amt * 100) < 1e-6;
   const sentAt = fromLocalInput(form.when);                                 // what was typed is Bangkok time, sent with an explicit +07:00
   const future = isFutureInput(form.when);                                  // the database refuses more than 10 minutes ahead: say so here, before sending
-  const formOk = amtOk && form.ref.replace(/[^0-9A-Za-z]/g, '').length >= 4 && sentAt != null && !future;
+  const formOk = amtOk && refOk(form.ref) && sentAt != null && !future;     // the bank reference is optional (owner's decision, 2026-11-22)
   const overHint = amtOk ? overOwed(lang, amt, inv.outstanding) : '';
 
   const submitConfirm = async (post: boolean) => {
@@ -364,7 +410,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
     try { await submitConfirmNow(post); } finally { asking.current = false; }
   };
   const submitConfirmNow = async (post: boolean) => {
-    if (!formOk) return toast('error', tl(lang, 'Enter the amount, the bank transaction reference and the transfer date and time from your bank record'));
+    if (!formOk) return toast('error', tl(lang, 'Enter the amount and the transfer date and time from your bank record'));
     if (e.expected_amount && Math.abs(amt - e.expected_amount) > 0.004) {
       const r = await ask({ title: tl(lang, 'The amount differs from what the order expects'), body: tl(lang, 'The order expects {e}, you entered {a}. The amount from the bank record is the one that will be recorded.', { e: money(e.expected_amount), a: money(amt) }), confirmLabel: tl(lang, 'Record bank amount') });
       if (!r.ok) return;
@@ -374,9 +420,14 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
       if (!r.ok) return;
     }
     const ok = await run('confirm', async () => {
-      try { await review.confirm({ evidenceId: e.id, amount: amt, bankRef: form.ref.trim(), transferAt: sentAt!, note: form.note }); } catch (x) { toast('error', reviewErrorText(lang, x)); return false; }
+      const send = (distinct: boolean) => review.confirm({ evidenceId: e.id, amount: amt, bankRef: form.ref.trim(), transferAt: sentAt!, note: form.note, distinct });
+      try { await send(false); } catch (x) {
+        if (!isDuplicateSuspect(x)) { toast('error', reviewErrorText(lang, x)); return false; }
+        if (!(await askDistinct(x))) return false;                                       // same amount, account and minute as a recorded payment: the person decides, after the statement
+        try { await send(true); } catch (y) { toast('error', reviewErrorText(lang, y)); return false; }
+      }
       if (!post) { toast('success', tl(lang, 'Payment confirmed. It is not posted yet: the invoice still owes the money until it is posted.')); return true; }
-      try { await review.post(e.id); toast('success', tl(lang, 'Confirmed and posted')); } catch (x) { toast('error', `${tl(lang, 'Confirmed, but not posted:')} ${reviewErrorLine(lang, x)}`); }
+      try { await review.post(e.id); toast('success', tl(lang, 'Confirmed and posted')); } catch (x) { toast('error', `Confirmed, but not posted: ${x instanceof Error ? x.message : String(x)}`); }
       return true;
     });
     if (ok) await done();
@@ -403,7 +454,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
     <>
       {(e.status === 'submitted' || e.status === 'confirmed' || e.status === 'more_evidence') && <Button variant="danger" disabled={off} onClick={() => thenDone(rejectOne(g))}><XCircle size={15} /> <Tx>Reject</Tx></Button>}
       {(e.status === 'submitted' || e.status === 'confirmed') && !staffEntry && <Button disabled={off} onClick={() => { setMessage(''); setMode('more'); }}><Tx>Request more evidence</Tx></Button>}
-      {inv.invoice_status === 'open' && room > 0 && <Button disabled={off} onClick={() => onRecord({ invoiceId: inv.id, invoiceNo: inv.invoice_no, customer: d.customer.name, outstanding: inv.outstanding, confirmedPending: inv.confirmed_pending })}><Plus size={15} /> <Tx>Record payment</Tx></Button>}
+      {inv.invoice_status === 'open' && room > 0 && <Button disabled={off} onClick={() => onRecord({ invoiceId: inv.id, invoiceNo: inv.invoice_no, customer: d.customer.name, customerId: d.customer.id, outstanding: inv.outstanding, confirmedPending: inv.confirmed_pending })}><Plus size={15} /> <Tx>Record payment</Tx></Button>}
       {e.status === 'submitted' && <Button variant={canPostNow ? undefined : 'primary'} disabled={off} onClick={() => openConfirm('confirm')}><Tx>Confirm</Tx></Button>}
       {e.status === 'submitted' && canPostNow && <Button variant="primary" disabled={off} onClick={() => openConfirm('post')}><Tx>Confirm & Post</Tx></Button>}
       {e.status === 'confirmed' && canPostNow && <Button variant="primary" disabled={off} onClick={() => thenDone(postOne(g))}><CheckCircle2 size={15} /> <Tx>Post Invoice</Tx></Button>}
@@ -458,9 +509,9 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
           </div>
         </div>
 
-        {(d.analyses.length > 0 || canRunAi) && (
+        {(d.analyses.length > 0 || canRunAi || mayRead) && (
           <div>
-            <h3 className="rv-h"><Tx>AI reading</Tx></h3>
+            <h3 className="rv-h">{newest?.engine?.startsWith('browser-ocr/') || (!newest && mayRead) ? <Tx>Slip reading (no AI)</Tx> : <Tx>AI reading</Tx>}</h3>
             <Banner tone="warn"><Tx>AI result is a hint, not proof that money arrived. Check your bank record.</Tx></Banner>
             {newest && (newest.status === 'queued' || newest.status === 'running') && <div style={{ marginTop: 8 }}><Banner tone="info"><Tx>AI check in progress</Tx></Banner></div>}
             {newest?.status === 'failed' && <div style={{ marginTop: 8 }}><Banner tone="bad"><div><Tx>The AI could not read this slip. A person has to check it.</Tx>{newest.error && <div className="mono" style={{ marginTop: 2 }}>{newest.error}</div>}</div></Banner></div>}
@@ -472,6 +523,8 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
               </div>
             )}
             {canRunAi && <div style={{ marginTop: 8 }}><Button size="sm" disabled={off || mode !== 'view'} loading={busy === 'ai'} onClick={runAi}><Play size={13} /> <Tx>Run AI check</Tx></Button></div>}
+            {reading && <div style={{ marginTop: 8 }}><Banner tone="info"><Tx>Reading the slip in this browser…</Tx></Banner></div>}
+            {mayRead && !reading && !nowRunning && d.analyses.length < 5 && <div style={{ marginTop: 8 }}><Button size="sm" disabled={off || mode !== 'view' || !readerAvailable()} onClick={() => void readNow(false)}><ScanLine size={13} /> <Tx>{newest ? 'Read the slip again' : 'Read the slip'}</Tx></Button></div>}
 
             {/* a resent transfer's "found" is an internal id, so only its sentence is shown */}
             {info.map((r) => <div key={r.code} style={{ marginTop: 8 }}><Banner tone="info"><div><b>{L(REASON_TEXT(r.code))}</b>{r.code !== 'RESUBMITTED_TRANSFER' && reasonValue(r, r.found) && <div className="muted">{reasonValue(r, r.found)}</div>}</div></Banner></div>)}
@@ -518,7 +571,7 @@ function Detail({ id, role, settings, busy, run, postOne, rejectOne, onClose, on
             {form.aiRef && <div className="muted" style={{ fontSize: 12 }} data-note="ai-ref">{tl(lang, 'AI read from the slip: {r} — type the reference from your bank record.', { r: form.aiRef })}</div>}
             <div className="row wrap gap-8" style={{ alignItems: 'flex-start' }}>
               <Field label="Amount received (฿)"><Input type="number" inputMode="decimal" min={0} step="0.01" value={form.amount} onChange={(x) => setForm({ ...form, amount: x.target.value })} /></Field>
-              <Field label="Bank transaction reference"><Input maxLength={80} value={form.ref} onChange={(x) => setForm({ ...form, ref: x.target.value })} /></Field>
+              <Field label="Bank transaction reference" hint={tl(lang, 'Optional')}><Input maxLength={80} value={form.ref} onChange={(x) => setForm({ ...form, ref: x.target.value })} /></Field>
               <Field label="Transfer date and time"><Input type="datetime-local" value={form.when} onChange={(x) => setForm({ ...form, when: x.target.value })} /></Field>
             </div>
             {future && <div className="exp-err" role="status" data-note="future">{tl(lang, 'This time is in the future. Check the date and time.')}</div>}

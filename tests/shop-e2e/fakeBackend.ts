@@ -9,6 +9,8 @@ import { promptPayPayload } from '../../src/lib/promptpay';
 import { FakeWallet, NOT_HANDLED } from './fakeWallet';
 import { FakeReview } from './fakeReview';
 import { FakeRewards } from './fakeRewards';
+import { FakeLine } from './fakeLine';
+import { FakeTransfers } from './fakeTransfers';
 
 export const USER_ID = '11111111-1111-4111-8111-111111111111';
 const HOST = 'hlvravynjalculvplrxc.supabase.co';
@@ -42,6 +44,10 @@ export class FakeShop {
   rv = new FakeReview(this);
   /** points, per-bill board picks and the event boards (fakeRewards.ts) */
   rw = new FakeRewards(this);
+  /** the LINE notifications settings (fakeLine.ts) */
+  ln = new FakeLine(this);
+  /** customer-to-customer points transfers and their staff audit (fakeTransfers.ts) */
+  tr = new FakeTransfers(this);
   private fail = new Map<string, number>();
   private drop = new Set<string>();
   private seq = 0;
@@ -74,6 +80,30 @@ export class FakeShop {
   failEvidenceReads = false;
   /** true = shop_place_order answers without the invoice object: the app must not depend on it once the order exists */
   placeWithoutInvoice = false;
+  /** what finance_my_slip_check answers, one after another (the last one stays) */
+  slipCheck: Record<string, unknown>[] = [];
+  /** true = a database WITHOUT the slip check migration */
+  noSlipCheck = false;
+  /** the name a manager wrote for the QR account (null = not written yet) */
+  merchantName: string | null = 'TEST SHOP';
+  /** the picture behind every signed slip link (a real picture for the slip reader) */
+  slipPicture: Buffer | null = null;
+  /** the stored picture paths of each SKU (shop_sku_content.image_paths) */
+  shopPaths = new Map<string, string[]>();
+  /** true = the staff list shows only stored pictures (not the catalogue's sample ones) */
+  /** the files of the bucket shop-products: path -> when; and the SKUs whose folder was listed */
+  stored = new Map<string, string>(); listed: string[] = [];
+  shopPathsOnly = false;
+  /** the shop's payment accounts (staff screen) */
+  paymentAccounts: Record<string, unknown>[] = [];
+  /** every file the browser put into storage: bucket/path, its type and size */
+  uploads: { path: string; type: string | null; size: number; upsert: string | null }[] = [];
+  /** true = a database WITHOUT the checkout QR migration */
+  noCheckoutQr = false;
+  /** true = the answer to shop_checkout_qr waits until `releaseCheckoutQr()` */
+  holdCheckoutQr = false;
+  releaseCheckoutQr: () => void = () => undefined;
+  private qrGate = new Promise<void>((resolve) => { this.releaseCheckoutQr = resolve; });
   failNext(fn: string, times = 1) { this.fail.set(fn, times); }
   /** the server handles the call, but the answer never reaches the phone (dropped connection) */
   dropResponseOnce(fn: string) { this.drop.add(fn); }
@@ -160,6 +190,13 @@ export class FakeShop {
           popular: [...sold].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([s]) => this.itemJson(this.item(s))) };
       }
       case 'shop_quote': return this.quote(a.p_items, String(a.p_fulfilment));
+      case 'shop_checkout_qr': {       // migration 20261123100000: the same pricing as the order, the shop's own account, nothing written
+        if (this.noCheckoutQr) this.err('Could not find the function public.shop_checkout_qr(p_fulfilment, p_items) in the schema cache');
+        if (!this.settings.shop_open) this.err('SHOP_CLOSED');
+        const q = this.quote(a.p_items, String(a.p_fulfilment)); if (!q.ok) this.err('CART_INVALID', JSON.stringify(q.problems));
+        if (!this.w.promptpay) this.err('NO_PAYMENT_ACCOUNT');
+        return { amount: q.total, qr_payload: promptPayPayload('0812345678', q.total), account_label: 'Test shop', merchant_name: this.merchantName };
+      }
       case 'shop_place_order': {
         const r = this.place(a, viaHttp);
         if (!(viaHttp && this.placeWithoutInvoice)) return r;
@@ -184,17 +221,29 @@ export class FakeShop {
         const o = this.orders.find((x) => x.invoice.id === a.p_invoice); if (!o) this.err('Invoice not found');
         const amt = o.invoice.amount - o.invoice.paid;
         o.invoice.req = { ref: 'PR' + (1000 + ++this.seq), amount: amt, qr_payload: promptPayPayload('0812345678', amt), expires_at: new Date(Date.now() + 24 * 3600e3).toISOString() };
-        return { ...o.invoice.req, account_label: 'Test shop', merchant_name: 'TEST SHOP' };
+        return { ...o.invoice.req, account_label: 'Test shop', merchant_name: this.merchantName };
+      }
+      case 'finance_my_slip_check': {       // migration 20261124100000: the customer's own newest slip; nothing while the reader is off
+        if (this.noSlipCheck) this.err('Could not find the function public.finance_my_slip_check(p_invoice) in the schema cache');
+        const o = this.orders.find((x) => x.invoice.id === a.p_invoice); if (!o) this.err('Invoice not found');
+        const seq = this.slipCheck; return seq.length > 1 ? seq.shift() : seq[0] ?? { state: 'none' };
+      }
+      case 'finance_set_payment_account_name': {
+        if (this.w.role !== 'manager') this.err('You are not allowed to change the shop payment account');
+        const acc = this.paymentAccounts.find((x) => x.id === a.p_account); if (!acc) this.err('Account not found');
+        if (String(a.p_name ?? '').trim().replace(/^(นาย|นางสาว|นาง|คุณ)s*/, '').length < 3) this.err('INVALID_NAME');
+        Object.assign(acc, { merchant_name: String(a.p_name).trim(), slip_name_alt: a.p_name_alt ?? null }); return acc;
       }
       case 'finance_submit_evidence': {
         const o = this.orders.find((x) => x.invoice.id === a.p_invoice); if (!o) this.err('Invoice not found');
+        this.w.fullPolicySlip(Number(a.p_claimed_amount), o.invoice.amount - o.invoice.paid, o.invoice.evidence.some((e) => e.status === 'submitted'));
         // the trigger finance_evidence_supersede_old: a customer's new slip closes the older "more evidence" slips of the same invoice (rejected, with this reason)
         for (const e of o.invoice.evidence) if (e.status === 'more_evidence') Object.assign(e, { status: 'rejected', reject_reason: 'Replaced by a newer slip', reviewed_at: new Date().toISOString() });
         const id = 'ev-' + ++this.seq; o.invoice.evidence.unshift({ id, status: 'submitted', claimed_amount: Number(a.p_claimed_amount), created_at: new Date().toISOString() }); this.w.noteSlip(id, (a.p_bank_account as string | null) ?? null); return id;
       }
       case 'finance_role': return this.w.role;
       case 'finance_staff': return null;
-      default: { const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
+      default: { const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const pt = this.tr.rpc(fn, a); if (pt !== NOT_HANDLED) return pt; const ln = this.ln.rpc(fn, a); if (ln !== NOT_HANDLED) return ln; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
     }
   }
 
@@ -240,16 +289,20 @@ export class FakeShop {
       case 'shop_admin_products': {
         this.staff(); const q = String(a.p_search ?? '').toLowerCase();
         const rows = this.items.filter((i) => !q || [i.sku_code, i.name, i.brand ?? ''].some((f) => f.toLowerCase().includes(q))).map((i) => ({
-          sku_code: i.sku_code, name: i.name, brand: i.brand, status: 'active', category: i.category, price: i.price, description_th: i.description_th, description_en: i.description_en, image_paths: [], image_urls: i.image_urls,
+          sku_code: i.sku_code, name: i.name, brand: i.brand, status: 'active', category: i.category, price: i.price, description_th: i.description_th, description_en: i.description_en, image_paths: this.shopPaths.get(i.sku_code) ?? [], image_urls: this.shopPaths.has(i.sku_code) ? i.image_urls : this.shopPathsOnly ? [] : i.image_urls,
           specs: i.specs, family: i.family, badge: i.badge, featured: i.featured, visible: !this.hidden.has(i.sku_code), available: i.available, max_qty: i.max_qty, sort_order: 100,
           on_sale: !this.hidden.has(i.sku_code), why_hidden: this.hidden.has(i.sku_code) ? 'hidden_by_staff' : null }));
         const f = String(a.p_filter ?? 'all'); const xs = rows.filter((r) => (f === 'visible' ? r.on_sale : f === 'hidden' ? !r.on_sale : f === 'no_image' ? r.on_sale && !r.image_urls.length : true));
-        return { total: xs.length, items: xs.slice(0, Number(a.p_limit ?? 40)) };
+        return { total: xs.length, items: xs.slice(Number(a.p_offset ?? 0), Number(a.p_offset ?? 0) + Math.min(Number(a.p_limit ?? 40), 100)) };
       }
       case 'shop_admin_save_content': {
         this.staff(); const it = this.item(String(a.p_sku)); const p = a.p_patch as Record<string, unknown>;
         if (!it) this.err('Unknown product');
         for (const k of ['description_th', 'description_en', 'family', 'badge', 'featured', 'available', 'specs'] as const) if (k in p) (it as unknown as Record<string, unknown>)[k] = p[k] === '' ? null : p[k];
+        if ('image_paths' in p) {       // like shop_admin_save_content: only this SKU's own folder, at most six
+          const imgs = p.image_paths as string[]; if (imgs.length > 6) this.err('At most 6 pictures'); if (imgs.some((x) => !new RegExp(`^${it.sku_code}/[A-Za-z0-9._-]{1,80}[.](webp|jpg|jpeg|png)$`).test(x))) this.err('Invalid picture');
+          this.shopPaths.set(it.sku_code, imgs); it.image_urls = imgs.map((x) => `${IMG}/${x}`);
+        }
         if ('max_qty' in p) it.max_qty = p.max_qty === '' ? null : Number(p.max_qty);
         if ('visible' in p) { if (p.visible) this.hidden.delete(it.sku_code); else this.hidden.add(it.sku_code); }
         return null;
@@ -352,6 +405,7 @@ export class FakeShop {
         try { body = JSON.parse(req.postData() || '{}') as Record<string, unknown>; } catch { /* no body */ }
         const name = p.slice('/functions/v1/'.length);
         this.invokes.push({ name, body });
+        if (name === 'line-dispatch') return json(route, this.ln.test());
         if (name !== 'slip-analyze') return json(route, { error: `Unknown function ${name}` }, 404);
         const answer = this.rv.analyze(body);                                          // the staff dashboard specs read this record too
         if (this.invokeMode === 'hang') await this.gate;                               // never answers (until the test opens the gate)
@@ -366,6 +420,7 @@ export class FakeShop {
         if (left > 0) { this.fail.set(fn, left - 1); return json(route, { code: 'P0001', message: 'boom', details: null, hint: null }, 500); }
         try {
           const out = this.rpc(fn, args, true);
+          if (fn === 'shop_checkout_qr' && this.holdCheckoutQr) await this.qrGate;
           if (this.drop.delete(fn)) return route.abort('connectionreset');   // handled by the server, never answered
           return json(route, out);
         } catch (e) { const er = e as Error & { details?: string }; return json(route, { code: 'P0001', message: er.message, details: er.details ?? null, hint: null }, 400); }
@@ -387,14 +442,29 @@ export class FakeShop {
         if (unknown) return json(route, { code: '42703', message: `column finance_payment_evidence.${unknown} does not exist`, details: null, hint: null }, 400);
         return json(route, rows.map((r) => Object.fromEntries(cols.map((c) => [c, r[c]]))));
       }
+      if (p === '/rest/v1/finance_payment_accounts') return json(route, this.paymentAccounts);
       if (p === '/rest/v1/finance_receipts') {                                           // the customer's own receipts of one invoice
         const id = url.searchParams.get('invoice_id')?.replace('eq.', '');
         const inv = this.orders.find((o) => o.invoice.id === id)?.invoice;
         return json(route, (inv?.receipts ?? []).map((r, i) => ({ id: `rc-${i}`, receipt_no: r.receipt_no, invoice_id: id, amount: r.amount, bank_trans_ref: null, received_at: r.received_at, needs_review: false, status: 'posted', created_at: r.received_at })));
       }
       if (p.startsWith('/storage/v1/object/sign/') && req.method() === 'POST') return json(route, { signedURL: `/object/sign/${p.slice('/storage/v1/object/sign/'.length)}?token=t` });   // staff open a slip
+      if (p.startsWith('/storage/v1/object/sign/') && this.slipPicture) return route.fulfill({ status: 200, contentType: 'image/jpeg', headers: cors, body: this.slipPicture });
       if (p.startsWith('/storage/v1/object/sign/')) return route.fulfill({ status: 200, contentType: 'image/png', headers: cors, body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') });
-      if (p.startsWith('/storage/v1/')) return json(route, { Key: 'payment-evidence/x', Id: 'x' });
+      if (p === '/storage/v1/object/list/shop-products') {          // what the bucket holds for one SKU, as storage.list answers
+        const sku = String((req.postDataJSON() as { prefix?: string })?.prefix ?? '').replace(/\/$/, '');
+        this.listed.push(sku);
+        return json(route, [...this.stored].filter(([k]) => k.startsWith(`${sku}/`)).map(([k, at]) => ({ name: k.slice(sku.length + 1), id: k, created_at: at, updated_at: at, last_accessed_at: at, metadata: {} })));
+      }
+      if (p.startsWith('/storage/v1/object/shop-products/') && req.method() === 'POST') {
+        const key = decodeURIComponent(p.slice('/storage/v1/object/shop-products/'.length));
+        if (this.stored.has(key)) return json(route, { statusCode: '409', error: 'Duplicate', message: 'The resource already exists' }, 400);      // upsert: false
+        this.stored.set(key, new Date().toISOString());
+      }
+      if (p.startsWith('/storage/v1/')) {
+        if (req.method() === 'POST' || req.method() === 'PUT') this.uploads.push({ path: p.replace('/storage/v1/object/', ''), type: req.headers()['content-type'] ?? null, size: req.postDataBuffer()?.length ?? 0, upsert: req.headers()['x-upsert'] ?? null });
+        return json(route, { Key: 'payment-evidence/x', Id: 'x' });
+      }
       if (p.startsWith('/rest/v1/')) return json(route, this.w.rest(p.slice('/rest/v1/'.length)) ?? []);
       return json(route, {}, 404);
     });

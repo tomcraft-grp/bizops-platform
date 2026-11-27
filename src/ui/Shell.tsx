@@ -14,6 +14,7 @@ import { useAlerts } from './data';
 import { cx, money } from '../lib/util';
 import { CHANNELS } from '../domain/meta';
 import { FeedbackButton } from './FeedbackWidget';
+import { AutoPictures } from '../shop/PicturePanel';
 import { t } from '../lib/i18n';
 import { useAuth } from '../auth/AuthProvider';
 import { DEMO_SEED } from '../domain/demo';
@@ -171,6 +172,7 @@ export function Shell() {
       </div>
       {searchOpen && <SearchPalette onClose={() => setSearchOpen(false)} go={(p) => { setSearchOpen(false); nav(p); }} />}
       <FeedbackButton />
+      {!DEMO_SEED && canSyncSkus && (profile?.role === 'ADMIN' || profile?.role === 'SUPER_ADMIN') && !/^\/(pos|kds)/.test(loc.pathname) && <AutoPictures />}
     </div>
   );
 }

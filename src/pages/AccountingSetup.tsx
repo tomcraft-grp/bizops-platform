@@ -151,6 +151,7 @@ function Coa() {
   );
 }
 function AccountModal({ a, onClose }: { a: Account | null; onClose: () => void }) {
+  const lang = useLang();
   const db = useDB();
   const run = useRun();
   const used = a ? db.journals.some((j) => j.lines.some((l) => l.account === a.code)) : false;
@@ -169,6 +170,7 @@ function AccountModal({ a, onClose }: { a: Account | null; onClose: () => void }
         <Field label="Financial-statement line"><Select value={f.fsLine} onChange={(e) => setF({ ...f, fsLine: e.target.value as FsLine })}>{Object.entries(FS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
         <Field label="Cash-flow class"><Select value={f.cashFlow ?? ''} onChange={(e) => setF({ ...f, cashFlow: (e.target.value || undefined) as Account['cashFlow'] })}><option value="">—</option><option value="cash">Cash</option><option value="operating">Operating</option><option value="investing">Investing</option><option value="financing">Financing</option></Select></Field>
         <Field label="Default tax code"><Select value={f.taxCode ?? ''} onChange={(e) => setF({ ...f, taxCode: e.target.value || undefined })}><option value="">—</option>{Array.from(new Set(db.taxCodes.map((t) => t.code))).map((c) => <option key={c}>{c}</option>)}</Select></Field>
+        {f.fsLine === 'inventory' && (f.control === undefined || f.control === 'wip') && <Field label="Control account"><Select value={f.control ?? ''} disabled={used} onChange={(e) => setF({ ...f, control: e.target.value === 'wip' ? 'wip' : undefined })}><option value="">—</option><option value="wip">{tl(lang, 'Work in progress')}</option></Select></Field>}
         <Field label="Analysis dimensions"><div className="row">{(['branch', 'channel'] as const).map((k) => <Check key={k} checked={!!f.dims?.includes(k)} onChange={(v) => setF({ ...f, dims: v ? [...(f.dims ?? []), k] : (f.dims ?? []).filter((x) => x !== k) })}>{k}</Check>)}</div></Field>
         <div className="full row wrap"><Check checked={f.posting ?? true} onChange={(v) => !used && setF({ ...f, posting: v })}><Tx>Posting allowed (untick for a header/grouping account)</Tx></Check><Check checked={!!f.contra} onChange={(v) => setF({ ...f, contra: v || undefined })}><Tx>Contra account</Tx></Check></div>
       </div>
@@ -185,6 +187,11 @@ const EVENTS: { event: string; dr: string[]; cr: string[]; note: string }[] = [
   { event: 'Purchase of inventory', dr: ['inv_materials|inv_goods', 'input_vat'], cr: ['ap'], note: 'Landed cost is added to inventory, not expensed' },
   { event: 'Supplier payment', dr: ['ap'], cr: ['bank'], note: 'Deposit: Dr supplier_deposit' },
   { event: 'Raw material issued / finished goods completed', dr: ['inv_goods', 'waste'], cr: ['inv_materials', 'conversion_absorbed'], note: 'Production order; waste is expensed' },
+  { event: 'Production order: materials issued', dr: ['wip'], cr: ['inv_materials|inv_goods'], note: 'At weighted average cost; the cost stays in work in progress until the goods are received' },
+  { event: 'Production order: labour, overhead, utilities, other', dr: ['wip'], cr: ['conversion_absorbed'], note: 'The amount recorded on the order' },
+  { event: 'Production order: goods received, rejected units, abnormal loss', dr: ['inv_goods|inv_materials', 'waste'], cr: ['wip'], note: 'A final receipt takes all the cost left; the share of earlier receipts in an excess goes to production variance' },
+  { event: 'Production order: materials returned to stock', dr: ['inv_materials|inv_goods'], cr: ['wip'], note: 'At the average cost the material has in the order' },
+  { event: 'Production order: cost left when closed or cancelled', dr: ['prod_var_material', 'prod_var_labor', 'prod_var_overhead'], cr: ['wip'], note: 'By cost element, either sign' },
   { event: 'Marketplace sale', dr: ['platform_ar', 'sales_discount'], cr: ['sales', 'output_vat'], note: 'Platform-funded vouchers do not reduce revenue' },
   { event: 'Marketplace settlement', dr: ['bank', 'fee_commission', 'fee_payment', 'fee_shipping', 'settlement_variance'], cr: ['platform_ar'], note: 'Fees and differences posted separately' },
   { event: 'Sales return / credit note', dr: ['sales_returns', 'output_vat', 'inv_goods'], cr: ['ar|platform_ar', 'cogs'], note: 'Restocked goods reverse cost of sales' },

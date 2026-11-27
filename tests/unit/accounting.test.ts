@@ -286,7 +286,7 @@ describe('reconciliation and report integrity (§23.7, §23.11–12)', () => {
     tx((d) => {
       const b = balancesBetween(d.journals);
       const td = Object.values(b).reduce((s, x) => s + x.debit, 0), tc = Object.values(b).reduce((s, x) => s + x.credit, 0);
-      expect(r2(td - tc)).toBe(0);
+      expect(r2(td - tc) + 0).toBe(0);                                     // + 0: a tiny negative float residual rounds to -0, which Object.is does not treat as 0
       // signed balances so that contra accounts (discounts, returns, drawings, absorbed cost) reduce their section
       const assets = sumNetDebit(d, b, (a) => a.type === 'asset' && a.posting), liab = -sumNetDebit(d, b, (a) => a.type === 'liability' && a.posting), eq = -sumNetDebit(d, b, (a) => a.type === 'equity' && a.posting);
       const earnings = -sumNetDebit(d, b, (a) => (a.type === 'revenue' || a.type === 'expense') && a.posting);

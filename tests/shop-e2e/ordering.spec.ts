@@ -5,6 +5,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { tr, type K } from '../../src/shop/i18n';
 import { FakeShop } from './fakeBackend';
+import { chosen, openFold, openMethods, pickMethod } from './methods';
 
 const t = (k: K, v?: Record<string, string | number>) => tr('th', k, v);
 const SHOTS = process.env.SHOP_SHOTS ?? 'test-results/shop';
@@ -33,7 +34,7 @@ async function toCheckout(page: Page, sku = 'FG-000001') {
   await expect(page.getByRole('heading', { name: t('co.payment') })).toBeVisible();
 }
 async function fillAndPlace(page: Page) {
-  await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
+  await openFold(page, 'contact'); await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
   await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
   await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
   await expect(page.locator('.sp-order-detail')).toBeVisible();
@@ -42,10 +43,10 @@ const noOverflow = async (page: Page) => expect(await page.evaluate(() => docume
 
 test.describe('checkout: how to pay', () => {
   test('banks come from the database, the wallet only when it holds money, the first bank is pre-selected', async ({ page }) => {
-    const fake = new FakeShop(); fake.decorate(); await open(page, fake); await toCheckout(page);
+    const fake = new FakeShop(); fake.decorate(); await open(page, fake); await toCheckout(page); await openMethods(page);
     await expect(page.locator('[data-bank="SCB"]')).toContainText('519-4-02625-1'); await expect(page.locator('[data-bank="BBL"]')).toContainText('938-0-31954-2');
     await expect(page.locator('[data-bank="SCB"]')).toHaveClass(/on/);
-    await expect(page.locator('[data-method="qr"]')).toHaveCount(0);                              // the QR needs an invoice: it is on the payment screen, not at checkout
+    await expect(page.locator('[data-method="qr"]')).toBeVisible();                                // the QR is a way to pay at checkout too (checkout-ux.spec.ts)
     await expect(page.locator('[data-method="wallet"]')).toHaveCount(0);                            // a zero wallet is not offered
     await page.screenshot({ path: `${SHOTS}/checkout-payment-mobile.png`, fullPage: true });
     await noOverflow(page);
@@ -54,14 +55,13 @@ test.describe('checkout: how to pay', () => {
   test('with the slip rule switched off (pay later): the choice travels with the order and is pre-selected on the payment screen, with the invoice number as the reference', async ({ page, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:4179' });
     const fake = new FakeShop(); fake.decorate(); fake.settings.require_payment_slip = false; await open(page, fake); await toCheckout(page);
-    await page.locator('[data-bank="BBL"] label').click();
-    await expect(page.locator('[data-bank="BBL"]')).toHaveClass(/on/);
+    await pickMethod(page, 'BBL');
     await fillAndPlace(page);
     const call = fake.calls.find((c) => c.fn === 'shop_place_order')!;
     expect(call.args.p_payment_method).toBe('bank:BBL');
     expect(Object.keys(call.args).filter((k) => /price|amount|balance|status/.test(k))).toEqual([]);   // only SKU + quantity + contact + the total the customer saw
     expect(fake.orders[0].payment_pref).toBe('bank:BBL');
-    await expect(page.locator('[data-bank="BBL"]')).toHaveClass(/on/);                               // pre-selected for the transfer
+    await expect(chosen(page)).toHaveAttribute('data-chosen', 'BBL'); await openMethods(page); await expect(page.locator('[data-bank="BBL"]')).toHaveClass(/on/);   // pre-selected for the transfer
     await expect(page.locator('[data-bank="SCB"]')).not.toHaveClass(/on/);
     const inv = fake.orders[0].invoice.invoice_no;
     await expect(page.getByTestId('payment-ref')).toHaveText(inv);
@@ -72,7 +72,7 @@ test.describe('checkout: how to pay', () => {
 
   test('pay by transfer end to end: the slip comes with the order = "awaiting verification", NOT paid; staff verification makes it paid', async ({ page }) => {
     const fake = new FakeShop(); fake.decorate(); await open(page, fake); await toCheckout(page);
-    await page.locator('[data-bank="BBL"] label').click();
+    await pickMethod(page, 'BBL');
     await fillAndPlace(page);                                                                        // attaches the slip, places the order
     await expect(page.locator('.sp-order-detail')).toContainText(t('pay.pending'));
     expect([...fake.w.invoiceBank.values()]).toEqual(['bank-bbl']);                                  // the slip names the bank the customer chose
@@ -85,8 +85,8 @@ test.describe('checkout: how to pay', () => {
 
   test('choosing the wallet: pre-selected on the order, the payment panel opens', async ({ page }) => {
     const fake = new FakeShop(); fake.decorate(); fake.w.seedBalance(1000); await open(page, fake); await toCheckout(page);
-    await expect(page.locator('[data-method="wallet"]')).toContainText('฿1,000');
-    await page.locator('[data-method="wallet"] label').click();
+    await openMethods(page); await expect(page.locator('[data-method="wallet"]')).toContainText('฿1,000');
+    await pickMethod(page, 'wallet');
     await fillAndPlace(page);
     expect(fake.calls.find((c) => c.fn === 'shop_place_order')!.args.p_payment_method).toBe('wallet');
     await expect(page.getByTestId('wallet-pay')).toBeVisible();
@@ -94,9 +94,9 @@ test.describe('checkout: how to pay', () => {
   });
 
   test('no PromptPay account yet: the QR is not offered anywhere, banks still work', async ({ page }) => {
-    const fake = new FakeShop(); fake.decorate(); fake.w.promptpay = false; fake.settings.require_payment_slip = false; await open(page, fake); await toCheckout(page);
+    const fake = new FakeShop(); fake.decorate(); fake.w.promptpay = false; fake.settings.require_payment_slip = false; await open(page, fake); await toCheckout(page); await openMethods(page);
     await expect(page.locator('[data-method="qr"]')).toHaveCount(0);
-    await fillAndPlace(page);
+    await fillAndPlace(page); await openMethods(page);
     await expect(page.locator('[data-method="qr"]')).toHaveCount(0);
     await expect(page.locator('[data-bank="SCB"]')).toBeVisible();
     await expect(page.getByRole('button', { name: /Create payment QR|สร้าง QR ชำระเงิน/ })).toHaveCount(0);
@@ -113,7 +113,7 @@ test.describe('checkout: how to pay', () => {
 
   test('a double tap on place order still creates ONE order with the choice', async ({ page }) => {
     const fake = new FakeShop(); fake.decorate(); await open(page, fake); await toCheckout(page);
-    await page.locator('[data-bank="BBL"] label').click();
+    await pickMethod(page, 'BBL'); await openFold(page, 'contact');
     await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
     await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).dblclick();
@@ -139,14 +139,14 @@ test.describe('after payment', () => {
     await page.locator('.sp-card[data-sku="FG-000001"]').getByRole('button', { name: en('p.add') }).click();
     await tab(page, en('nav.cart')).click(); await page.getByRole('button', { name: en('cart.checkout') }).click();
     await expect(page.getByRole('heading', { name: en('co.payment') })).toBeVisible();
-    await expect(page.locator('[data-bank="SCB"]')).toContainText('Siam Commercial Bank');
+    await openMethods(page); await expect(page.locator('[data-bank="SCB"]')).toContainText('Siam Commercial Bank');
     await expect(page.getByText(/Pick what suits you/)).toBeVisible();
   });
 });
 
 test.describe('accessible and responsive', () => {
   test('axe: no critical or serious violations on the checkout with payment methods', async ({ page }) => {
-    const fake = new FakeShop(); fake.decorate(); fake.w.seedBalance(500); await open(page, fake); await toCheckout(page);
+    const fake = new FakeShop(); fake.decorate(); fake.w.seedBalance(500); await open(page, fake); await toCheckout(page); await openMethods(page);
     const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
     const bad = r.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious').map((v) => `${v.id}: ${v.nodes.slice(0, 3).map((nn) => nn.target.join(' ')).join(' | ')}`);
     expect(bad, bad.join('\n')).toEqual([]);
@@ -225,7 +225,7 @@ test.describe('pay first: the transfer slip comes with the order', () => {
   test('an order paid from the wallet needs no slip', async ({ page }) => {
     const fake = new FakeShop(); fake.decorate(); fake.w.seedBalance(1000); await open(page, fake); await toCheckout(page);
     await expect(page.getByTestId('slip-section')).toBeVisible();
-    await page.locator('[data-method="wallet"] label').click();
+    await pickMethod(page, 'wallet'); await openFold(page, 'contact');
     await expect(page.getByTestId('slip-section')).toHaveCount(0);
     await page.getByLabel(t('co.address')).fill(addr);
     await placeClick(page).click(); await confirm(page).click();
@@ -253,8 +253,9 @@ test.describe('pay first: the transfer slip comes with the order', () => {
     const fake = new FakeShop(); fake.decorate(); await open(page, fake); await toCheckout(page);
     await page.getByLabel(t('co.address')).fill(addr);
     await page.locator('[data-testid="slip-section"] input[type=file]').setInputFiles({ name: 'notes.png', mimeType: 'image/png', buffer: Buffer.from('this is plain text, not a picture') });
-    await placeClick(page).click(); await confirm(page).click();
-    await expect(page.getByText(t('err.slipBad'))).toBeVisible();
+    await expect(page.getByText(t('err.slipBad'))).toBeVisible();                                      // told the moment it is picked
+    await expect(page.getByTestId('slip-preview')).toHaveCount(0);
+    await placeClick(page).click(); await expect(page.locator('.sp-sheet')).toHaveCount(0);
     expect(fake.count('shop_place_order')).toBe(0); expect(fake.orders).toHaveLength(0);
   });
 

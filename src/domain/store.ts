@@ -2,12 +2,13 @@ import { create } from 'zustand';
 import { produce, setAutoFreeze } from 'immer';
 import type { DB } from './types';
 import { Ctx, AppError, currentUser, hasPerm, userPerms } from './core';
+import { ensureProductionAccounts } from './accounting';
 import { buildSeed } from './seed';
 import { buildLiveDB, LIVE_DB_VERSION } from './seedData';
 import { DEMO_SEED } from './demo';
 import { kvDel, kvGet, kvSet } from '../lib/idb';
 import { t, type Lang } from '../lib/i18n';
-import { errorToastText } from '../lib/errorText';
+import { customerErrorText, errorToastText } from '../lib/errorText';
 
 // Structural sharing needs frozen state: with auto-freeze OFF immer re-walks the whole (multi-MB) ledger on every transaction.
 // Measured (qa/PERFORMANCE_TEST_REPORT.md): posting one POS sale ≈195 ms with freeze OFF vs ≈20 ms with freeze ON on the seeded dataset.
@@ -65,7 +66,17 @@ export async function boot() {
     if (seedErrors.length) console.warn('[bizops] seed warnings', seedErrors.slice(0, 20));
     await kvSet(KEY, db);
   }
-  useStore.setState({ db, ready: true, seedErrors });
+  const ready = withNewAccounts(db);
+  useStore.setState({ db: ready, ready: true, seedErrors });
+  if (ready !== db) persist(ready);
+}
+/** A database saved by an earlier build opens as it is; only the accounts added since then are put beside the existing ones (see ensureProductionAccounts). */
+function withNewAccounts(db: DB): DB {
+  if (!db.accounts || !db.postingMap || !db.audit) return db; // a backup older than the accounting setup: left as it is
+  // copies of just the parts that can change, not produce(): that would deep-freeze the whole database at every start (and the loaded one is not in the store yet)
+  const next: DB = { ...db, accounts: [...db.accounts], postingMap: { ...db.postingMap }, audit: [...db.audit], meta: { ...db.meta, seq: { ...db.meta.seq } } };
+  ensureProductionAccounts(next);
+  return Object.keys(next.postingMap).some((k) => next.postingMap[k] !== db.postingMap[k]) ? next : db;
 }
 
 export async function resetDemoData() {
@@ -79,8 +90,9 @@ export function exportBackup(): string {
   return JSON.stringify(useStore.getState().db);
 }
 export async function importBackup(json: string) {
-  const db = JSON.parse(json) as DB;
-  if (!db.version || !db.orders || !db.journals) throw new Error('This is not a valid backup file');
+  const file = JSON.parse(json) as DB;
+  if (!file.version || !file.orders || !file.journals) throw new Error('This is not a valid backup file');
+  const db = withNewAccounts(file);
   useStore.setState({ db });
   await kvSet(KEY, db);
   // The SKU sync cursor belongs to the database that was just replaced: forget it (a dynamic import, because skuSync itself imports this store).
@@ -110,10 +122,15 @@ export function toast(kind: 'success' | 'error' | 'info', text: string) {
   const id = toastId++;
   // errors show the Thai and the English message together, so staff can tell what went wrong in either language (FB-001004)
   const lang = useStore.getState().ui.lang;
-  const text2 = kind === 'error' ? errorToastText(lang, text) : t(lang, text);
+  // the customer app keeps its own one-language sentences (shop/i18n.ts); everywhere else staff get both languages, and an unknown reason says in Thai that it failed
+  const text2 = kind !== 'error' ? t(lang, text) : inCustomerApp() ? customerErrorText(lang, text) : errorToastText(lang, text, { unknownNote: true });
   setUI({ toasts: [...useStore.getState().ui.toasts, { id, kind, text: text2 }] });
-  setTimeout(() => setUI({ toasts: useStore.getState().ui.toasts.filter((x) => x.id !== id) }), kind === 'error' ? 7000 : 3500);
+  setTimeout(() => dismissToast(id), kind === 'error' ? errorToastMs(text2) : 3500);
 }
+export const dismissToast = (id: number) => setUI({ toasts: useStore.getState().ui.toasts.filter((x) => x.id !== id) });
+export const inCustomerApp = () => typeof document !== 'undefined' && document.body.classList.contains('customer-app');
+/** Two languages take longer to read: 7 s for a short error, up to 20 s for a long one (it can be closed at once with its X). */
+export const errorToastMs = (text: string) => Math.min(20_000, Math.max(7_000, 4_000 + text.length * 70));
 export function setTheme(th: Theme) {
   try { localStorage.setItem('bizops.theme', th); } catch { /* ignore */ }
   setUI({ theme: th });

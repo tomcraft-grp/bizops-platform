@@ -7,7 +7,7 @@ import { Languages, LogOut, X } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 import { setLang, toast, useDB, useLang } from '../domain/store';
 import { claimJournal, planExpensePosting } from '../domain/expenseLedger';
-import { Badge, Banner, Button, Card, PageHead, Tabs } from '../ui/kit';
+import { Badge, Banner, Button, Card, ErrText, PageHead, Tabs } from '../ui/kit';
 import { BrandMark } from '../ui/Brand';
 import { BRAND } from '../brand';
 import { dayKey } from '../lib/util';
@@ -40,7 +40,7 @@ export default function ExpensesPage({ mode }: { mode: 'backoffice' | 'standalon
   useEffect(() => { load(); }, [load]);
 
   const body = (() => {
-    if (err) return <Banner tone="bad"><b>{err}</b> <Button size="sm" onClick={load}>{T('Try again', 'ลองอีกครั้ง')}</Button></Banner>;
+    if (err) return <Banner tone="bad"><ErrText>{err}</ErrText> <Button size="sm" onClick={load}>{T('Try again', 'ลองอีกครั้ง')}</Button></Banner>;
     if (!boot) return <div className="card-b"><div className="spinner" /></div>;
     if (!boot.role || !boot.settings) return <Banner tone="warn"><b>{T('You do not have access to Daily expenses yet.', 'คุณยังไม่มีสิทธิ์ใช้รายจ่ายประจำวัน')}</b> {T('Ask an administrator to give you a role (employee, manager or accountant).', 'กรุณาขอผู้ดูแลระบบกำหนดสิทธิ์ให้ (พนักงาน ผู้จัดการ หรือนักบัญชี)')}</Banner>;
     const role = boot.role;

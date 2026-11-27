@@ -20,3 +20,23 @@ export function promptPayPayload(id: string, amount?: number): string {
   p += tlv('58', 'TH') + '6304';
   return p + crc16(p);
 }
+
+export interface ThaiQr { crcOk: boolean; amount: number | null; target: string | null }
+/** Reads a Thai payment QR text: is its checksum right, for how much, to which account. null = not a payment QR at all. */
+export function parseThaiQr(p: string): ThaiQr | null {
+  const fields = (s: string): Map<string, string> | null => {
+    const m = new Map<string, string>(); let i = 0;
+    while (i < s.length) {
+      const head = s.slice(i, i + 4); if (!/^\d{4}$/.test(head)) return null;
+      const n = Number(head.slice(2)); const v = s.slice(i + 4, i + 4 + n); if (v.length !== n) return null;
+      m.set(head.slice(0, 2), v); i += 4 + n;
+    }
+    return m;
+  };
+  const f = typeof p === 'string' ? fields(p) : null;
+  if (!f || f.get('00') !== '01' || f.get('53') !== '764' || f.get('58') !== 'TH') return null;
+  const acct = f.get('29') ?? f.get('30'); const sub = acct ? fields(acct) : null;
+  if (!sub) return null;
+  const amt = f.get('54');
+  return { crcOk: p.slice(-8, -4) === '6304' && crc16(p.slice(0, -4)) === p.slice(-4), amount: amt && /^\d+(\.\d{1,2})?$/.test(amt) ? Number(amt) : null, target: sub.get('01') ?? sub.get('02') ?? sub.get('03') ?? null };
+}

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ImagePlus, Plus, Star, Trash2 } from 'lucide-react';
+import { Boxes, ChefHat, EyeOff, ImagePlus, Package, Plus, ShoppingBag, Star, Trash2, X } from 'lucide-react';
 import { useDB, useLang } from '../domain/store';
 import { saveProduct, setProductActive } from '../domain/master';
 import { newSkuDetails, pushSkuDetails, saveProductEdit, setSkuActive, syncAgeLabel, syncSkusIfStale, useSkuSync } from '../domain/skuSync';
@@ -8,13 +8,17 @@ import { rewardsAdmin } from '../rewards/api';
 import { DEMO_SEED } from '../domain/demo';
 import { PRODUCT_KIND_LABEL, CHANNEL_LIST } from '../domain/meta';
 import { globalAvgCost, lotsFor } from '../domain/inventory';
+import { sellable } from '../domain/orders';
+import { EMPTY_PRODUCT_FILTER, PRODUCT_CARDS, STATUS_LABEL, cardCounts, filterProducts, pressProductCard, selectedCard, type ProductCardId, type ProductFilter } from '../domain/productFilters';
 import { bomForProduct, rollup, versionAt } from '../domain/bom';
 import { priceHistory } from '../domain/purchasing';
 import { Badge, Button, Card, ChannelChip, Check, DataTable, Drawer, Empty, Field, Input, KV, Kpi, Modal, NumInput, PageHead, Select, Switch, Tabs, Textarea, useConfirm, useHas, useRun, Tx } from '../ui/kit';
 import { LineChart } from '../ui/charts';
 import { MediaImg, ProductEmoji } from '../ui/shared';
 import { uploadMedia } from '../ui/upload';
-import { toast } from '../domain/store';
+import { isShopSku, MAX_PICTURES, sendPictures } from '../shop/productPictures';
+import { LocalShopStatus, ShopPictures, useShopPictures } from '../shop/PicturePanel';
+import { toast, useStore } from '../domain/store';
 import { cx, dateFmt, money, money0, pct, qtyFmt, shortDay, dayKey } from '../lib/util';
 import type { DB, ID, Product, ProductKind } from '../domain/types';
 import { t as tl } from '../lib/i18n';
@@ -33,16 +37,15 @@ export default function Products() {
   const canCreate = useHas('catalog:create');
   const canEdit = useHas('catalog:edit');
   const canCost = useHas('finance:cost');
-  const [kind, setKind] = useState<string>('');
-  const [status, setStatus] = useState<'' | 'active' | 'inactive' | 'unsynced'>('');
-  const [skuType, setSkuType] = useState<'' | SkuCategory>('');
+  const [f, setF] = useState<ProductFilter>(EMPTY_PRODUCT_FILTER);
+  const set = (patch: Partial<ProductFilter>) => setF((x) => ({ ...x, ...patch }));
+  const listRef = useRef<HTMLDivElement>(null);
   const [adding, setAdding] = useState(false);
   const sync = useSkuSync();
   const packs = usePackCodes();
   const cats = useCategories(!DEMO_SEED);
   const catsOn = cats.status === 'ready';
   const catById = useMemo(() => new Map(cats.items.map((c) => [c.id, c])), [cats.items]);
-  const [catF, setCatF] = useState('');
   const catLabel = (p: Product) => { const c = p.categoryId ? catById.get(p.categoryId) : undefined; return c ? categoryName(c, lang === 'en' ? 'en' : 'th') : p.category; };
   // Opening the page brings in what changed in the central registry (one small call when nothing did), unless that already happened within the last 5 minutes.
   useEffect(() => { if (canEdit && !DEMO_SEED) void syncSkusIfStale(); }, [canEdit]);
@@ -50,21 +53,36 @@ export default function Products() {
   const stock = useMemo(() => { const m: Record<ID, number> = {}; for (const k in db.balances) { const pid = k.split('|')[1]; m[pid] = (m[pid] || 0) + db.balances[k].qty; } return m; }, [db.balances]);
   // "Not synced yet": no registry code (the product exists only on this device), or its price and details are still waiting to be uploaded.
   const notSynced = (p: Product) => !isStandardSku(p.sku) || sync.waiting.includes(p.sku);
-  const rows = db.products.filter((p) => (!catF || (catF === '__none__' ? !p.categoryId : p.categoryId === catF || catById.get(p.categoryId ?? '')?.parent_id === catF)) && (!kind || p.kind === kind) && (!skuType || skuCategoryOf(p.kind) === skuType) && (!status || (status === 'unsynced' ? notSynced(p) : (status === 'active') === p.active)));
+  const inCategory = (p: Product, c: string) => (c === '__none__' ? !p.categoryId : p.categoryId === c || catById.get(p.categoryId ?? '')?.parent_id === c);
+  const text = (p: Product) => `${p.name} ${p.sku} ${p.legacySku ?? ''} ${p.barcode ?? ''} ${p.brand ?? ''} ${p.category} ${catLabel(p)} ${p.description ?? ''}`;
+  const rows = filterProducts(db.products, f, { notSynced, inCategory, text });
+  const counts = useMemo(() => cardCounts(db.products), [db.products]);
+  const card = selectedCard(f);
+  const key = JSON.stringify(f);
+  const pickCard = (id: ProductCardId) => {
+    setF((x) => pressProductCard(x, id));
+    if (window.matchMedia('(max-width: 900px)').matches) setTimeout(() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);   // the cards fill a phone: show what was filtered
+  };
   return (
     <>
       <PageHead title="Products" desc="One catalog for resale goods, manufactured goods, menu items (recipes), raw materials and packaging — with channel prices, images and cost history."
         actions={<>{canEdit && <SkuCodesButton />}{canCreate && <Button variant="primary" onClick={() => setAdding(true)}><Plus size={15} />{' '}<Tx>New product</Tx></Button>}</>} />
       {canEdit && !DEMO_SEED && <SyncBanner sync={sync} />}
-      <div className="grid g4 mb16">
-        <Kpi label="Products" value={db.products.length} sub={<Tx vars={{ n: db.products.filter((p) => ['resale', 'finished', 'menu'].includes(p.kind)).length }}>{'{n} sellable'}</Tx>} />
-        <Kpi label="Menu items (recipes)" value={db.products.filter((p) => p.kind === 'menu').length} sub="stock deducted by BOM" />
-        <Kpi label="Raw & packaging" value={db.products.filter((p) => p.kind === 'material' || p.kind === 'packaging').length} sub="inventory-only items" />
-        <Kpi label="Inactive" value={db.products.filter((p) => !p.active).length} sub="hidden from POS" />
+      <div className="grid prod-cards mb16" role="group" aria-label={tl(lang, 'Filter by summary card')} data-testid="product-cards">
+        {PRODUCT_CARDS.map((c) => (
+          <Kpi key={c.id} label={c.label} icon={CARD_ICON[c.id]} value={counts[c.id]} active={card === c.id} onClick={() => pickCard(c.id)}
+            sub={c.id === 'all' ? <Tx vars={{ n: db.products.filter(sellable).length }}>{'{n} sellable'}</Tx> : c.sub} />
+        ))}
+      </div>
+      <div ref={listRef} style={{ scrollMarginTop: 70 }}>
+      <div className="row between wrap mb8" style={{ gap: 8, minHeight: 30 }} role="status" data-testid="products-showing">
+        <span>{tl(lang, 'Showing')}: <b>{tl(lang, !card ? 'Filtered products' : card === 'all' ? 'All products' : PRODUCT_CARDS.find((c) => c.id === card)!.label)}</b> · {tl(lang, '{n} of {m} products', { n: rows.length, m: db.products.length })}</span>
+        {key !== JSON.stringify(EMPTY_PRODUCT_FILTER) && <Button size="sm" onClick={() => setF(EMPTY_PRODUCT_FILTER)}><X size={13} />{' '}<Tx>Show all products</Tx></Button>}
       </div>
       <Card flush>
-        <DataTable rows={rows} rowKey={(p) => p.id} pageSize={14} onRow={(p) => setSp({ p: p.id })} search={(p) => `${p.name} ${p.sku} ${p.legacySku ?? ''} ${p.barcode ?? ''} ${p.brand ?? ''} ${p.category} ${catLabel(p)} ${p.description ?? ''}`}
-          toolbar={<><Select sm style={{ width: 'auto' }} value={skuType} onChange={(e) => setSkuType(e.target.value as typeof skuType)}><option value="">All SKU types</option>{SKU_CATEGORIES.map((c) => <option key={c} value={c}>{SKU_CATEGORY_LABEL[c]}</option>)}</Select><Select sm style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}><option value="">All types</option>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select><Select sm style={{ width: 'auto' }} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="unsynced">Not synced yet</option></Select>{catsOn && <Select sm style={{ width: 'auto' }} value={catF} onChange={(e) => setCatF(e.target.value)} aria-label={tl(lang, 'Category')}><option value="">{tl(lang, 'All categories')}</option>{cats.items.filter((c) => c.is_group || c.product_count > 0 || c.is_active).map((c) => <option key={c.id} value={c.id}>{c.is_group ? '▸ ' : c.parent_id ? '\u00a0\u00a0' : ''}{categoryName(c, lang === 'en' ? 'en' : 'th')}{c.is_active ? '' : ` (${tl(lang, 'inactive')})`}</option>)}<option value="__none__">{tl(lang, 'No category yet')}</option></Select>}</>}
+        <DataTable rows={rows} rowKey={(p) => p.id} pageSize={14} onRow={(p) => setSp({ p: p.id })} query={f.q} onQuery={(q) => set({ q })} resetKey={key}
+          empty={!db.products.length ? undefined : <Empty title="No products match" hint="Clear the search or choose another card." />}
+          toolbar={<><Select sm style={{ width: 'auto' }} value={f.skuType} onChange={(e) => set({ skuType: e.target.value as ProductFilter['skuType'] })} aria-label={tl(lang, 'SKU type')}><option value="">All SKU types</option>{SKU_CATEGORIES.map((c) => <option key={c} value={c}>{SKU_CATEGORY_LABEL[c]}</option>)}</Select><Select sm style={{ width: 'auto' }} value={f.kind} onChange={(e) => set({ kind: e.target.value as ProductFilter['kind'] })} aria-label={tl(lang, 'Type')}><option value="">All types</option>{Object.entries(PRODUCT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}<option value="raw">Raw & packaging</option></Select><Select sm style={{ width: 'auto' }} value={f.status} onChange={(e) => set({ status: e.target.value as ProductFilter['status'] })} aria-label={tl(lang, 'Status')}><option value="">All statuses</option>{Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>{catsOn && <Select sm style={{ width: 'auto' }} value={f.category} onChange={(e) => set({ category: e.target.value })} aria-label={tl(lang, 'Category')}><option value="">{tl(lang, 'All categories')}</option>{cats.items.filter((c) => c.is_group || c.product_count > 0 || c.is_active).map((c) => <option key={c.id} value={c.id}>{c.is_group ? '▸ ' : c.parent_id ? '\u00a0\u00a0' : ''}{categoryName(c, lang === 'en' ? 'en' : 'th')}{c.is_active ? '' : ` (${tl(lang, 'inactive')})`}</option>)}<option value="__none__">{tl(lang, 'No category yet')}</option></Select>}</>}
           cols={[
             { key: 'n', header: 'Product', sort: (p) => p.name, render: (p) => <div className="row"><ProductEmoji p={p} size={36} /><div><b>{p.name}</b>{packs.has(p.sku) && <>{' '}<span title={tl(lang, 'Promotion pack')}><Badge tone="info">Pack</Badge></span></>}<div className="sub">{p.sku}{p.barcode ? ` · ${p.barcode}` : ''}</div></div></div> },
             { key: 'k', header: 'Type', hideSm: true, render: (p) => <Badge><Tx>{PRODUCT_KIND_LABEL[p.kind]}</Tx></Badge> },
@@ -75,11 +93,13 @@ export default function Products() {
             { key: 'a', header: 'Status', sort: (p) => (p.active ? 1 : 0), render: (p) => <ProductStatus p={p} /> },
           ]} />
       </Card>
+      </div>
       {adding && <NewProduct onClose={() => setAdding(false)} onCreated={(id) => { setAdding(false); setSp({ p: id }); }} />}
       {openId && <ProductDrawer id={openId} onClose={() => setSp({})} />}
     </>
   );
 }
+const CARD_ICON: Record<ProductCardId, ReactNode> = { all: <Package size={15} />, onsale: <ShoppingBag size={15} />, menu: <ChefHat size={15} />, raw: <Boxes size={15} />, inactive: <EyeOff size={15} /> };
 /** Products that are packs of the online shop's promotions (rewardsAdmin.packs). Failure-silent: without the list there is simply no badge. */
 function usePackCodes(): Set<string> {
   const [codes, setCodes] = useState<Set<string>>(() => new Set());
@@ -261,6 +281,8 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const onShop = !DEMO_SEED && isShopSku(p?.sku);
+  const pics = useShopPictures(onShop && tab === 'images' ? p!.sku : null);
   if (!p) return null;
   const cur = f ?? p;
   const set = (patch: Partial<Product>) => setF({ ...cur, ...patch });
@@ -278,7 +300,7 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
     if (!f || saving) return;
     setSaving(true);
     try {
-      const r = await saveProductEdit(p, f);
+      const r = await saveProductEdit(p, { ...f, mediaIds: p.mediaIds });      // pictures are saved on their own: an edit begun before one was added must not take it away again
       if (!r.ok) { toast('error', tl(lang, r.error)); return; }
       toast('success', tl(lang, 'Product saved'));
       if (f.active && !p.active && r.localActive === false) toast('info', tl(lang, 'Activated in the central database, but it has no price there, so it stays inactive on this device until a price is set.'));
@@ -318,20 +340,32 @@ function ProductDrawer({ id, onClose }: { id: ID; onClose: () => void }) {
         <div className="col">
           <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={async (e) => {
             const files = Array.from(e.target.files ?? []);
+            e.target.value = '';
             setBusy(true);
+            const added: string[] = [];
             for (const file of files) {
-              try { const mid = await uploadMedia(file, 'product_image', { type: 'product', id: p.id }); run((d) => { d.products.find((x) => x.id === p.id)!.mediaIds.push(mid); }, { ok: `${file.name} uploaded — thumbnails generated` }); } catch (err) { toast('error', (err as Error).message); }
+              try { const mid = await uploadMedia(file, 'product_image', { type: 'product', id: p.id }); added.push(mid); run((d) => { d.products.find((x) => x.id === p.id)!.mediaIds.push(mid); }, { ok: `${file.name} uploaded — thumbnails generated` }); } catch (err) { toast('error', (err as Error).message); }
+            }
+            // customers see the pictures of the online shop, not the ones of this browser: put them there too, and say so when that did not work
+            if (onShop && added.length) {
+              try {
+                const r = await sendPictures(p.sku, useStore.getState().db.media.filter((m) => added.includes(m.id)));
+                if (r.added) toast('success', tl(lang, '{n} pictures are now in the online shop', { n: r.added }));
+                if (r.full) toast('error', tl(lang, 'The online shop keeps at most {n} pictures for a product: the rest stay in this browser', { n: MAX_PICTURES }));
+              } catch (err) { toast('error', tl(lang, 'Saved in this browser only. The online shop did not take the picture: {e}', { e: (err as Error).message })); }
             }
             setBusy(false);
-            e.target.value = '';
           }} />
+          {onShop ? <ShopPictures sku={p.sku} pics={pics} canEdit={canEdit} /> : !DEMO_SEED && <div className="muted" style={{ fontSize: 12.5 }}><Tx>This product has no finished-goods SKU code, so it is not in the online shop: pictures stay in this browser.</Tx></div>}
           {canMedia && <div className="dropzone" onClick={() => fileRef.current?.click()}><ImagePlus size={26} /><div><b>{busy ? <Tx>{'Processing…'}</Tx> : <Tx>{'Add images'}</Tx>}</b></div><div className="muted" style={{ fontSize: 12 }}><Tx>JPEG / PNG / WebP · max 8 MB · content type is verified, thumbnails & optimised WebP are generated automatically</Tx></div></div>}
-          {imgs.length === 0 && <Empty title="No images yet" hint="The product shows its emoji until a picture is uploaded." />}
+          {onShop && imgs.length > 0 && <b className="mt8"><Tx>Pictures in this browser (POS and back office)</Tx></b>}
+          {imgs.length === 0 && !onShop && <Empty title="No images yet" hint="The product shows its emoji until a picture is uploaded." />}
           <div className="grid g2" style={{ gap: 10 }}>
             {imgs.map((m, i) => m && (
               <div key={m.id} className="card card-b">
                 <MediaImg m={m} variant="web" size={140} />
                 <div className="row between mt8"><span style={{ fontSize: 12 }}>{m.name}<div className="muted">{(m.size / 1024).toFixed(0)}{' '}<Tx>KB ·</Tx>{' '}{m.width}×{m.height} · <Badge tone={m.status === 'available' ? 'good' : m.status === 'scanning' ? 'warn' : 'bad'}>{m.status}</Badge></div></span></div>
+                {onShop && <LocalShopStatus m={m} pics={pics} canEdit={canEdit} />}
                 <div className="row mt8">{i === 0 ? <Badge tone="info"><Star size={11} />{' '}<Tx>main</Tx></Badge> : canEdit && <Button size="sm" onClick={() => run((d) => { const pr = d.products.find((x) => x.id === p.id)!; pr.mediaIds = [m.id, ...pr.mediaIds.filter((x) => x !== m.id)]; }, { ok: 'Main image changed' })}><Tx>Make main</Tx></Button>}
                   {canEdit && <Button size="sm" variant="ghost" onClick={async () => { const x = await confirm({ title: 'Remove image?', body: 'The file record is kept in Media & documents for audit; it is just unlinked from this product.', danger: true }); if (x.ok) run((d) => { const pr = d.products.find((y) => y.id === p.id)!; pr.mediaIds = pr.mediaIds.filter((y) => y !== m.id); }, { ok: 'Image unlinked' }); }}><Trash2 size={14} /></Button>}</div>
               </div>))}

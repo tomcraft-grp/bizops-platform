@@ -9,12 +9,13 @@ import { cx } from '../lib/util';
 import { Empty } from '../ui/kit';
 import { OrderFilter, OrdersPage, ShopError, ShopOrder, shop } from './api';
 import { baht } from './format';
-import { useCart } from './cart';
+import { cartCount, useCart } from './cart';
 import { shopDate, shopDateTime } from './format';
 import { K, useShopLang, useT } from './i18n';
 import { useShopHost, useShopNav } from './nav';
 import { CANCEL_CODES, OPEN_CODES } from './pay';
-import { ConfirmSheet, ErrorBox, errText, OrderBadge, orderSteps, PayBadge, PayNotes, ProductImage } from './ui';
+import { recentAction, reorderPlan } from './orderAgain';
+import { ConfirmSheet, ErrorBox, errText, Fold, OrderBadge, orderSteps, PayBadge, PayNotes, ProductImage } from './ui';
 
 const FILTERS: OrderFilter[] = ['all', 'unpaid', 'to_ship', 'to_receive', 'done', 'cancelled'];
 const PAGE = 20;
@@ -82,6 +83,8 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const [error, setError] = useState<unknown>(null);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
+  // the order's own details are one tap away: what the customer has to do (pay) or to know (the progress) comes first. undefined = the customer has not tapped yet
+  const [sec, setSec] = useState<'progress' | 'items' | 'delivery' | null | undefined>(undefined);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);   // set on mount too: StrictMode mounts, unmounts and mounts again
 
@@ -107,10 +110,14 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const canCancel = o.status === 'new' && CANCEL_CODES.includes(code);   // never while a slip waits (3, also one the shop confirmed) or more evidence is requested (10)
   const steps = orderSteps(o.fulfilment);
   const at = steps.indexOf(o.status);
+  const mustPay = OPEN_CODES.includes(code) && o.status !== 'cancelled';
+  const openSec = sec === undefined ? (mustPay ? null : 'progress') : sec;
+  const fold = (id: 'progress' | 'items' | 'delivery') => ({ id, open: openSec === id, onToggle: () => setSec(openSec === id ? null : id) });
   const orderAgain = () => {
-    const added = useCart.getState().reorder(o.items);
+    const plan = reorderPlan(o.items);          // free gift / reward lines are never ordered again
+    const added = plan.ok.length ? useCart.getState().reorder(plan.ok) : 0;
     if (!added) { toast('error', t('od.againNone')); return; }
-    toast('success', t('od.againDone'));
+    toast('success', plan.skipped ? t('ro.addedSome', { n: added, skipped: plan.skipped }) : t('od.againDone'));
     host.goTab('cart');
   };
   const cancel = async () => {
@@ -133,16 +140,17 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
       {o.status_note && <section className="sp-sec"><h3>{t('od.shopNote')}</h3><p className="sp-text">{o.status_note}</p></section>}
 
       {o.status !== 'cancelled' && o.status !== 'returned' && (
-        <section className="sp-sec"><h3>{t('od.progress')}</h3>
+        <Fold {...fold('progress')} title={t('od.progress')} summary={at >= 0 ? `${at + 1}/${steps.length} · ${t(`st.${o.status}` as K)}` : t(`st.${o.status}` as K)}>
           <ol className="sp-steps">{steps.map((s, i) => <li key={s} className={cx(i < at && 'done', i === at && 'now')}><span aria-hidden>{i < at ? '✓' : i + 1}</span>{t(`st.${s}` as K)}</li>)}</ol>
-        </section>
+        </Fold>
       )}
 
       <section className="sp-sec"><h3>{t('od.payment')}</h3>
-        <InvoiceCard inv={o.invoice} lang={lang} preferred={o.payment_pref} defaultOpen={OPEN_CODES.includes(code) && o.status !== 'cancelled'} onChanged={() => void load()} />
+        <InvoiceCard compact inv={o.invoice} lang={lang} preferred={o.payment_pref} defaultOpen={mustPay} onChanged={() => void load()} />
       </section>
 
-      <section className="sp-sec"><h3>{t('od.items')}</h3>
+      <Fold {...fold('items')} title={t('od.items')}
+        summary={<span className="sp-fold-row"><span className="sp-thumbs-row" aria-hidden>{o.items.slice(0, 3).map((i) => <ProductImage key={i.line_no} src={i.image_url} alt="" />)}</span><span>{t('ord.n', { n: cartCount(o.items) })} · {baht(o.total)}</span></span>}>
         <ul className="sp-mini">{o.items.map((i) => <li key={i.line_no}><ProductImage src={i.image_url} alt={i.name} /><span className="grow">{i.name}<small> {baht(i.unit_price)} × {i.qty}</small></span><b>{baht(i.line_total)}</b></li>)}</ul>
         <div className="sp-summary flat">
           <div className="row between"><span>{t('od.subtotal')}</span><span>{baht(o.subtotal)}</span></div>
@@ -150,17 +158,17 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
           <div className="row between"><span>{t('cart.shipping')}</span><span>{o.shipping_fee > 0 ? baht(o.shipping_fee) : t('cart.free')}</span></div>
           <div className="row between sp-total"><b>{t('ord.total')}</b><b>{baht(o.total)}</b></div>
         </div>
-      </section>
+      </Fold>
 
-      <section className="sp-sec"><h3>{o.fulfilment === 'pickup' ? t('od.pickup') : t('od.delivery')}</h3>
+      <Fold {...fold('delivery')} title={o.fulfilment === 'pickup' ? t('od.pickup') : t('od.delivery')} summary={`${o.contact_name} · ${o.contact_phone}`}>
         <div className="sp-kv"><span>{o.contact_name}</span><span>{o.contact_phone}</span></div>
         {o.delivery_address && <p className="sp-text">{o.delivery_address}</p>}
         {o.note && <p className="sp-note">{t('od.note')}: {o.note}</p>}
-      </section>
+      </Fold>
 
       {canCancel && <button type="button" className="btn block danger-outline" onClick={() => setAsking(true)}>{t('od.cancel')}</button>}
       {/* a cancelled order (e.g. the shop declined it) can be put back in the cart in one tap (FB-001002); the cart re-checks every price with the server */}
-      {(o.status === 'cancelled' || o.status === 'returned') && o.items.length > 0 && <button type="button" className="btn primary block" onClick={orderAgain}>{t('od.again')}</button>}
+      {recentAction(o) === 'again' && <button type="button" className="btn primary block" data-testid="order-again" onClick={orderAgain}>{t('od.again')}</button>}
       {asking && <ConfirmSheet danger title={t('od.cancelTitle')} body={t('od.cancelBody')} confirmLabel={t('od.confirmYes')} cancelLabel={t('common.cancel')} busy={busy} onConfirm={cancel} onCancel={() => setAsking(false)} />}
     </div>
   );

@@ -21,6 +21,8 @@ export interface REvidence {
   source: 'customer_slip' | 'staff_entry'; method: 'transfer' | 'cash'; recorded_by: string | null;
   confirmed_by: string | null; confirmed_at: string | null; confirmed_amount: number | null; confirmed_bank_ref: string | null; confirmed_transfer_at: string | null; confirm_note: string | null;
   posted_by: string | null; posted_at: string | null; request_message: string | null; requested_by: string | null; requested_at: string | null;
+  /** 20261122140000: where it was confirmed (absent on rows seeded before it) */
+  confirmed_via?: 'web' | 'line_quick' | null;
 }
 interface RInvoice { id: string; invoice_no: string; amount: number; customer_id: string; issue_date: string; created_at: string; order_no: string | null; status: 'open' | 'cancelled' }
 interface RCustomer { id: string; code: string; name: string; phone: string }
@@ -42,6 +44,8 @@ export const RECEIVERS = [{ label: 'SCB · ณัฐพล อยู่ยิ้
 export class FakeReview {
   /** false = a database without the slip-review migration: every review function is "not found" */
   enabled = true;
+  /** a refusal the next Confirm answers with (e.g. DUPLICATE_SUSPECT, which needs a same-minute twin the seed data does not have) */
+  forceConfirmError: string | null = null;
   settings: RSettings = { ai_review_enabled: true, post_requires_manager: false, ai_min_confidence: 0.8, slip_window_before_min: 120, slip_future_tolerance_min: 10 };
   customers: RCustomer[] = [];
   invoices: RInvoice[] = [];
@@ -160,6 +164,7 @@ export class FakeReview {
       customer_name: c.name, customer_phone: c.phone, expected_amount: this.expected(e), claimed_amount: e.claimed_amount,
       ai_amount: this.aiAmount(e), ai_transfer_at: (d?.extracted?.transfer_at as string | undefined) ?? null, ai_result: a?.result ?? null, ai_confidence: d?.overall_confidence ?? null, ai_status: a?.status ?? null,
       reasons: (a?.reasons ?? []).map((r) => r.code), confirmed_amount: e.confirmed_amount, confirmed_bank_ref: e.confirmed_bank_ref, posted_at: e.posted_at,
+      confirmed_via: e.confirmed_via ?? null, no_ref: e.method === 'transfer' && !e.confirmed_bank_ref && !e.bank_trans_ref,
     };
   }
   private detail(e: REvidence) {
@@ -185,6 +190,7 @@ export class FakeReview {
       case 'finance_confirm_evidence': case 'finance_post_evidence': case 'finance_request_more_evidence': case 'finance_record_payment': case 'finance_request_analysis':
         if (!this.enabled) this.err(`Could not find the function public.${fn} in the schema cache`);
         break;
+      case 'finance_set_checkout_check': case 'finance_own_reader': case 'finance_set_own_reader': case 'finance_store_reading': if (this.ownReader === null) this.err(`Could not find the function public.${fn} in the schema cache`); break;
       case 'finance_reject_evidence': break;
       case 'finance_invoice_overview': break;
       default: return NOT_HANDLED;
@@ -201,6 +207,10 @@ export class FakeReview {
       case 'finance_request_more_evidence': return this.requestMore(a);
       case 'finance_record_payment': return this.record(a);
       case 'finance_request_analysis': return this.requestAnalysis(a);
+      case 'finance_own_reader': return this.readerStatus();
+      case 'finance_set_own_reader': { this.need('manage', 'change the review settings'); this.ownReader = !!a.p_on; return this.readerStatus(); }
+      case 'finance_set_checkout_check': { this.need('manage', 'change the review settings'); this.checkout = !!a.p_on; return this.readerStatus(); }
+      case 'finance_store_reading': return this.storeReading(a);
       case 'finance_invoice_overview': {
         this.need('view', 'see invoices');
         return this.invoices.filter((i) => a.p_status == null || this.state(i).status_code === Number(a.p_status)).map((i) => ({ id: i.id, invoice_no: i.invoice_no, issue_date: i.issue_date, due_date: i.issue_date, description: i.order_no ? `Online order ${i.order_no}` : null,
@@ -230,8 +240,9 @@ export class FakeReview {
     this.need('view', 'see the slip review');
     const f = (a.p_filter ?? {}) as Record<string, unknown>;
     if (typeof f !== 'object' || Array.isArray(f)) this.err('INVALID_FILTER: the filter must be an object');
-    for (const k of Object.keys(f)) if (!['stage', 'ai_result', 'from', 'to', 'reason', 'source', 'method', 'search'].includes(k)) this.err(`INVALID_FILTER: unknown filter ${k}`);
+    for (const k of Object.keys(f)) if (!['stage', 'ai_result', 'from', 'to', 'reason', 'source', 'method', 'search', 'via'].includes(k)) this.err(`INVALID_FILTER: unknown filter ${k}`);
     const stage = this.arr(f.stage, 'stage', STAGES), result = this.arr(f.ai_result, 'ai_result', RESULTS), source = this.arr(f.source, 'source', ['customer_slip', 'staff_entry']), method = this.arr(f.method, 'method', ['transfer', 'cash']);
+    const via = this.arr(f.via, 'via', ['web', 'line_quick']);
     const from = this.date(f.from, 'from'), to = this.date(f.to, 'to');
     if ((f.reason != null && typeof f.reason !== 'string') || (f.search != null && typeof f.search !== 'string')) this.err('INVALID_FILTER: reason and search must be text');
     const reason = String(f.reason ?? '').trim() || null; const q = String(f.search ?? '').trim().toLowerCase() || null; const qref = q && norm(q).length >= 4 ? norm(q) : null;
@@ -240,6 +251,7 @@ export class FakeReview {
       const i = this.inv(e.invoice_id); const c = this.cust(e.customer_id); const n = this.newest(e); const d = this.newestDone(e);
       if (from && bkkDay(e.created_at) < from) return false; if (to && bkkDay(e.created_at) > to) return false;
       if (source && !source.includes(e.source)) return false; if (method && !method.includes(e.method)) return false;
+      if (via && !(e.confirmed_via && via.includes(e.confirmed_via))) return false;
       if (stage && !stage.includes(this.stage(e))) return false; if (result && !(n?.result && result.includes(n.result))) return false;
       if (reason && !(n?.reasons ?? []).some((r) => r.code === reason)) return false;
       if (q) {
@@ -286,16 +298,17 @@ export class FakeReview {
     this.need('verify', 'confirm payments');
     const amount = Number(a.p_amount); const ref = String(a.p_bank_trans_ref ?? '').trim(); const note = String(a.p_note ?? '').trim() || null;
     if (a.p_amount == null || !(amount > 0) || r2(amount) !== amount) this.err('Enter the amount shown by the bank');
-    if (!ref) this.err('The bank transaction reference is required');
-    if (norm(ref).length < 4 || ref.length > 80) this.err('The bank transaction reference must have 4 to 80 letters or digits');
+    if (this.forceConfirmError && a.p_distinct !== true) this.err(this.forceConfirmError);     // "two different transfers" (p_distinct) gets past it, as in the SQL
+    // 20261122140000: the reference is optional; when typed it is checked as before
+    if (ref && (norm(ref).length < 4 || ref.length > 80)) this.err('The bank transaction reference must have 4 to 80 letters or digits');
     if (!a.p_transfer_at) this.err('The transfer date and time are required');
     if (new Date(String(a.p_transfer_at)).getTime() > Date.parse(this.clockIso) + 10 * 60e3) this.err('The payment time is in the future');         // the same limit and words as Record payment
     if ((note ?? '').length > 500) this.err('The note is too long (500 characters at most)');
     const e = this.ev(a.p_evidence);
     if (e.status !== 'submitted') this.err(`This slip is already ${e.status}`);
     const i = this.inv(e.invoice_id); if (i.status !== 'open') this.err(`The invoice is ${i.status}`);
-    if (this.refInUse(ref, e.id)) this.err(`Bank transaction ${ref} was already recorded (reused slip?)`);
-    Object.assign(e, { status: 'confirmed', confirmed_by: 'u-me', confirmed_at: this.now(), confirmed_amount: amount, confirmed_bank_ref: ref, confirmed_transfer_at: new Date(String(a.p_transfer_at)).toISOString(), confirm_note: note });
+    if (ref && this.refInUse(ref, e.id)) this.err(`Bank transaction ${ref} was already recorded (reused slip?)`);
+    Object.assign(e, { status: 'confirmed', confirmed_by: 'u-me', confirmed_at: this.now(), confirmed_amount: amount, confirmed_bank_ref: ref || null, confirmed_transfer_at: new Date(String(a.p_transfer_at)).toISOString(), confirm_note: note, confirmed_via: 'web' });
     this.log(e, 'evidence.confirm', { amount, claimed: e.claimed_amount, trans_ref: ref });
     return { status: 'confirmed', evidence_id: e.id, amount };
   }
@@ -306,6 +319,8 @@ export class FakeReview {
     if (e.status === 'verified') { const rc = this.receipts.find((r) => r.evidence_id === e.id); if (rc) return { replay: true, result: 'already_posted', receipt_no: rc.receipt_no, credited_to_wallet: 0, state: this.state(i) }; }
     if (e.status !== 'confirmed') this.err(`NOT_CONFIRMED: this slip is ${e.status} (it must be confirmed before it is posted)`);
     if (i.status !== 'open') this.err(`The invoice is ${i.status}`);
+    const add = String(a.p_bank_ref ?? '').trim();                                 // 20261122140000: a reference typed at Post fills in a missing one
+    if (e.method === 'transfer' && !e.confirmed_bank_ref && add) e.confirmed_bank_ref = add;
     const amount = e.confirmed_amount ?? 0; const outstanding = r2(i.amount - this.paid(i));
     if (e.method === 'cash' && amount > outstanding) this.err(`CASH_OVERPAY: cash of ${amount} is more than the ${outstanding} this invoice still owes; cash never makes a wallet credit`);
     const credited = Math.max(r2(amount - outstanding), 0);
@@ -359,6 +374,21 @@ export class FakeReview {
       confirmed_bank_ref: cash ? null : ref, confirmed_transfer_at: when, confirm_note: note, posted_by: null, posted_at: null, request_message: null, requested_by: null, requested_at: null });
     this.log(this.evidence.at(-1)!, 'evidence.record', { invoice: i.id, method, amount, trans_ref: cash ? null : ref, note });
     return { evidence_id: id, status: 'confirmed' };
+  }
+  /** migration 20261124110000 (the shop's own slip reader): null = a database without it */
+  ownReader: boolean | null = null;
+  /** migration 20261124120000 (the customer's own switch); undefined = a database without it */
+  checkout: boolean | undefined = undefined;
+  private readerStatus() { const may = (n: 'verify' | 'manage') => !!this.shop.w.role && RANK[this.shop.w.role as keyof typeof RANK] >= NEED[n]; return { enabled: !!this.ownReader, can_read: may('verify'), can_manage: may('manage'), ...(this.checkout === undefined ? {} : { checkout: this.checkout, before_min: 120, after_min: 10 }) }; }
+  /** what finance_store_reading answers about the amount only (the real rules are proved in the database) */
+  private storeReading(a: Record<string, unknown>) {
+    this.need('verify', 'read a payment slip');
+    if (!this.ownReader) this.err('READER_OFF: the slip reader is switched off');
+    const e = this.ev(a.p_evidence); const x = a.p_extracted as Record<string, unknown>; const inv = this.invoices.find((i) => i.id === e.invoice_id)!;
+    const result = x.amount === null ? 'manual_review' : r2(Number(x.amount)) !== r2(inv.amount) ? 'amount_mismatch' : 'match'; const last = this.newest(e);
+    this.analyses.push({ id: `an-${e.id}-own-${this.analyses.length}`, evidence_id: e.id, attempt: (last?.attempt ?? 0) + 1, status: 'done', engine: String(a.p_engine), prompt_version: 'own-v1', extracted: x, qr: a.p_qr as Record<string, unknown>, expected: { amount: inv.amount },
+      overall_confidence: Number(a.p_confidence), signals: [], result, reasons: result === 'amount_mismatch' ? [{ code: 'AMOUNT_OVER', severity: 'high', field: 'amount', expected: inv.amount, found: x.amount, message: 'x' }] : [], error: null, requested_by: 'me', created_at: new Date().toISOString(), started_at: null, finished_at: new Date().toISOString() });
+    return { result, receiver_found: true };
   }
   private requestAnalysis(a: Record<string, unknown>) {
     this.need('verify', 'ask for a new slip analysis');

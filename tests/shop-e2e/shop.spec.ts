@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { defaultLayout } from '../../src/devapp/schema';
 import { tr, type K } from '../../src/shop/i18n';
 import { FakeShop } from './fakeBackend';
+import { openFold, pickMethod } from './methods';
 
 const t = (k: K, v?: Record<string, string | number>) => tr('th', k, v);
 const SHOTS = process.env.SHOP_SHOTS ?? 'test-results/shop';
@@ -292,15 +293,14 @@ test.describe('checkout and payment', () => {
     const order = await placeOrder(page, fake, [['FG-000001', 2], ['FG-000020', 1]]);        // 960 + 50
     expect(order.total).toBe(1010);
     await expect(page.locator('.sp-order-detail')).toContainText(t('pay.unpaid'));
-    await expect(page.locator('.sp-steps li.now')).toContainText(t('st.new'));
-    await page.locator('[data-method="qr"] label').click();                                  // the invoice offers SCB, BBL, the wallet and the PromptPay QR: pick the QR
-    await page.getByRole('button', { name: /Create payment QR|สร้าง QR ชำระเงิน/ }).click();
-    await expect(page.locator('.qr-box svg').first()).toBeVisible();
+    await openFold(page, 'progress'); await expect(page.locator('.sp-steps li.now')).toContainText(t('st.new'));
+    await pickMethod(page, 'qr');                                                            // the invoice offers SCB, BBL, the wallet and the PromptPay QR: picking the QR shows it
+    await expect(page.getByTestId('pay-qr')).toBeVisible();
     await expect(page.locator('.sp-order-detail')).toContainText('฿1,010');
     const qrCall = fake.calls.find((c) => c.fn === 'finance_request_payment')!;
     expect(Object.keys(qrCall.args)).toEqual(['p_invoice']);                                  // the amount is not sent: the server owns it
-    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Save QR image|บันทึกรูป QR/ }).click()]);
-    expect(dl.suggestedFilename()).toMatch(/^QR-INV-.*\.png$/);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: t('qr.save') }).click()]);
+    expect(dl.suggestedFilename()).toBe(`payment-qr-${order.order_no}.png`);
     await page.screenshot({ path: `${SHOTS}/payment-mobile.png`, fullPage: true });
 
     // slip: choosing a picture only shows a preview; nothing is sent until the customer confirms

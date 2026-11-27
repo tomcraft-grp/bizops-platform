@@ -184,7 +184,7 @@ test.describe('more evidence requested (state 10)', () => {
     const banner = page.getByTestId('more-evidence-message');
     await expect(banner).toBeVisible(); await expect(banner).toContainText(MESSAGE);                  // the staff words, exactly, as text
     await expect(banner.locator('b')).toHaveCount(0);                                                 // a tag in the message is text, never markup
-    await expect(page.getByRole('button', { name: /Upload payment slip|อัปโหลดสลิปการโอนเงิน/ })).toBeVisible();   // open by itself: the upload is there without a tap
+    await expect(page.getByRole('button', { name: /Upload payment slip|แนบรูปภาพสลีปการโอนเงิน/ })).toBeVisible();   // open by itself: the upload is there without a tap
     expect(await detail(page).innerText()).not.toContain(PENDING_TH);
 
     // the new slip goes to the same invoice

@@ -21,38 +21,52 @@ export async function decodeQrFromImage(file: File): Promise<string> {
   throw new Error('No QR code was found in this picture. Use a sharp, straight-on picture with the whole QR inside.');
 }
 
-export interface QrCard { payload: string; amount: number; ref: string; merchant: string; invoiceNo: string; expiresAt: string; lang: 'th' | 'en' }
+/** `orderNo`, `ref` and `expiresAt` exist only for an invoice's QR; the QR at checkout has none of them yet. */
+export interface QrCard { payload: string; amount: number; merchant: string; account?: string; orderNo?: string; ref?: string; expiresAt?: string; lang: 'th' | 'en' }
 
-/** A 1080px-wide PNG: QR with a white quiet zone, amount, reference, merchant and expiry, so the saved picture is self-explanatory. */
+const FONT = '"Noto Sans Thai", "Sarabun", system-ui, sans-serif';
+/** The font size at which the text fits the width (a long name must not run off the card). */
+function fit(g: CanvasRenderingContext2D, text: string, weight: number, size: number, max: number): void {
+  let px = size;
+  do { g.font = `${weight} ${px}px ${FONT}`; px -= 2; } while (px > 24 && g.measureText(text).width > max);
+}
+/** A 1080px-wide PNG: the QR black on white with its quiet zone on a dark card, so the saved picture explains itself and still scans. */
 export async function renderQrCard(c: QrCard): Promise<Blob> {
-  const W = 1080, H = 1500, qr = 760;
+  const W = 1080, H = 1600, plate = 800, px = (W - plate) / 2, py = 250, th = c.lang === 'th';
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const g = canvas.getContext('2d')!;
-  g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
-  g.fillStyle = '#0b2a4a'; g.fillRect(0, 0, W, 150);
-  g.fillStyle = '#fff'; g.textAlign = 'center';
-  g.font = '700 56px "Noto Sans Thai", "Sarabun", system-ui, sans-serif';
-  g.fillText(c.lang === 'th' ? 'สแกนเพื่อชำระเงิน' : 'Scan to pay', W / 2, 95);
-  const dataUrl = await QRCode.toDataURL(c.payload, { errorCorrectionLevel: 'M', margin: 4, width: qr, color: { dark: '#000000', light: '#ffffff' } });
-  const img = new Image(); img.src = dataUrl; await img.decode();
-  g.drawImage(img, (W - qr) / 2, 190, qr, qr);
-  g.fillStyle = '#0b0b0b';
-  g.font = '800 120px "Noto Sans Thai", system-ui, sans-serif';
-  g.fillText('฿' + c.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), W / 2, 1105);
-  g.font = '600 46px "Noto Sans Thai", system-ui, sans-serif';
-  g.fillStyle = '#333'; g.fillText(c.merchant, W / 2, 1180);
-  g.font = '500 42px "Noto Sans Thai", system-ui, sans-serif';
-  g.fillText(`${c.lang === 'th' ? 'ใบแจ้งหนี้' : 'Invoice'} ${c.invoiceNo}`, W / 2, 1250);
-  g.fillText(`${c.lang === 'th' ? 'อ้างอิง' : 'Ref'} ${c.ref}`, W / 2, 1312);
-  g.fillStyle = '#b42318';
-  g.font = '500 36px "Noto Sans Thai", system-ui, sans-serif';
-  g.fillText(`${c.lang === 'th' ? 'ใช้ได้ถึง' : 'Valid until'} ${new Date(c.expiresAt).toLocaleString(c.lang === 'th' ? 'th-TH' : 'en-GB')}`, W / 2, 1375);
-  g.fillStyle = '#666'; g.font = '400 32px "Noto Sans Thai", system-ui, sans-serif';
-  g.fillText(c.lang === 'th' ? 'เปิดแอปธนาคารใดก็ได้ แล้วเลือกสแกนจากรูปในเครื่อง' : 'Open any banking app and scan from your photo gallery', W / 2, 1440);
+  // straight down on purpose: every row is one colour, so the PNG stays small
+  const bg = g.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, '#0b1d36'); bg.addColorStop(0.55, '#14315a'); bg.addColorStop(1, '#091628');
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  const gold = g.createLinearGradient(0, 0, W, 0); gold.addColorStop(0, '#b98f45'); gold.addColorStop(0.5, '#f1dca7'); gold.addColorStop(1, '#b98f45');
+  g.fillStyle = gold; g.fillRect(0, 0, W, 10); g.fillRect(0, H - 10, W, 10);
+  g.textAlign = 'center';
+  g.fillStyle = '#f1dca7'; g.font = `600 40px ${FONT}`; g.fillText(th ? 'พร้อมเพย์ · Thai QR' : 'PromptPay · Thai QR', W / 2, 105);
+  g.fillStyle = '#ffffff'; g.font = `800 60px ${FONT}`; g.fillText(th ? 'สแกนเพื่อชำระเงิน' : 'Scan to pay', W / 2, 190);
+  // the QR: pure black on white, its own quiet zone inside a white plate; nothing decorative touches it
+  g.fillStyle = gold; roundRect(g, px - 8, py - 8, plate + 16, plate + 16, 44); g.fill();
+  g.fillStyle = '#ffffff'; roundRect(g, px, py, plate, plate, 38); g.fill();
+  const qr = 740;
+  const img = new Image(); img.src = await QRCode.toDataURL(c.payload, { errorCorrectionLevel: 'M', margin: 4, width: qr, color: { dark: '#000000', light: '#ffffff' } }); await img.decode();
+  g.imageSmoothingEnabled = false; g.drawImage(img, px + (plate - qr) / 2, py + (plate - qr) / 2, qr, qr);
+  g.fillStyle = '#c7d3e6'; g.font = `500 38px ${FONT}`; g.fillText(th ? 'ยอดที่ต้องชำระ' : 'Amount to pay', W / 2, 1140);
+  g.fillStyle = '#ffffff'; fit(g, '฿' + fmt(c.amount), 800, 124, W - 120); g.fillText('฿' + fmt(c.amount), W / 2, 1262);
+  if (c.merchant) { g.fillStyle = '#f1dca7'; fit(g, c.merchant, 700, 48, W - 140); g.fillText(c.merchant, W / 2, 1340); }
+  if (c.account) { g.fillStyle = '#c7d3e6'; fit(g, c.account, 500, 36, W - 140); g.fillText(c.account, W / 2, 1396); }
+  const line = [c.orderNo, c.ref ? `${th ? 'อ้างอิง' : 'Ref'} ${c.ref}` : ''].filter(Boolean).join('  ·  ');
+  g.fillStyle = '#c7d3e6';
+  if (line) { fit(g, line, 500, 34, W - 140); g.fillText(line, W / 2, 1458); }
+  g.font = `500 32px ${FONT}`;
+  if (c.expiresAt) g.fillText(`${th ? 'ใช้ได้ถึง' : 'Valid until'} ${new Date(c.expiresAt).toLocaleString(th ? 'th-TH' : 'en-GB', { timeZone: 'Asia/Bangkok' })}`, W / 2, 1506);
+  g.fillText(th ? 'ตรวจสอบชื่อผู้รับและยอดเงินก่อนยืนยันการโอน' : 'Check the recipient and the amount before you confirm', W / 2, 1556);
   return await new Promise<Blob>((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('Could not draw the QR picture'))), 'image/png'));
 }
+const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
 
-/** Save a PNG. In-app browsers (LINE) often ignore downloads, so the caller also shows the picture to long-press. */
+/** A normal file download (desktop and Android browsers; in-app browsers ignore it, see wallet/qrSave.ts). */
 export function downloadBlob(b: Blob, name: string) {
   const url = URL.createObjectURL(b);
   const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();

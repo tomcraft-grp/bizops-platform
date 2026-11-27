@@ -1,5 +1,6 @@
 import type { DB, DocType, ID, Order, OrderType, PrintJob, Station } from './types';
 import { Ctx, audit, fail, nid, guard } from './core';
+import { lineNet, poTotal } from './purchasing';
 import { dateTimeFmt, money, qtyFmt, r2 } from '../lib/util';
 
 // ---------- routing: Organization → Branch → Station → Order type → Document type
@@ -157,13 +158,13 @@ export function renderDoc(d: DB, docType: DocType, refId: ID, opts: { station?: 
     case 'purchase_order': {
       const po = d.purchaseOrders.find((x) => x.id === refId) || fail('NOT_FOUND', 'PO not found');
       const sup = d.suppliers.find((s) => s.id === po.supplierId);
-      const total = po.lines.reduce((s, l) => s + l.qty * l.unitCost, 0);
+      const total = poTotal(po);                                                   // after each line's discount
       return {
         title: `PO ${po.no}`, paper: 'A4',
         blocks: [
           { t: 'title', text: 'Purchase order', sub: org.legalName }, { t: 'row', l: `PO ${po.no}`, r: dateTimeFmt(po.createdAt), bold: true },
           { t: 'text', text: `Supplier: ${sup?.name} · ${sup?.contact} · ${sup?.phone}` }, { t: 'text', text: `Deliver to: ${d.warehouses.find((w) => w.id === po.warehouseId)?.name}` },
-          { t: 'table', head: ['Item', 'Qty', 'Unit cost', 'Amount'], align: ['l', 'r', 'r', 'r'], rows: po.lines.map((l) => { const p = d.products.find((x) => x.id === l.productId); return [p?.name ?? l.productId, `${qtyFmt(l.qty)} ${p?.unit ?? ''}`, money(l.unitCost), money(l.qty * l.unitCost)]; }) },
+          { t: 'table', head: ['Item', 'Qty', 'Unit cost', 'Amount'], align: ['l', 'r', 'r', 'r'], rows: po.lines.map((l) => { const p = d.products.find((x) => x.id === l.productId); return [p?.name ?? l.productId, `${qtyFmt(l.qty)} ${p?.unit ?? ''}`, l.discountPct ? `${money(l.unitCost)} −${l.discountPct}%` : money(l.unitCost), money(lineNet(l))]; }) },
           { t: 'row', l: 'Total (excl. VAT)', r: money(total), bold: true },
         ],
       };

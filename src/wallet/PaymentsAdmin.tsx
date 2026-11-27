@@ -16,9 +16,10 @@ import { CustomerPaymentHistory } from '../finance/PaymentHistory';
 import { ShopError } from '../shop/api';
 import { BankAccountRow, BankReportRow, FinanceSettings, GlRow, LedgerRow, newKey, PaymentRow, Reconciliation, walletAdmin, WalletReconcile, WalletRow } from './api';
 import { BankBadge } from './ui';
+import { PoliciesPanel, QrBankCard } from './PolicyAdmin';
 import { formatAccountNo } from './bank';
 
-type Tab = 'payments' | 'wallets' | 'banks' | 'ledger' | 'reports';
+type Tab = 'payments' | 'wallets' | 'customers' | 'banks' | 'ledger' | 'reports';
 type TFn = (s: string, v?: Record<string, string | number>) => string;
 const msg = (e: unknown) => (e instanceof ShopError ? e.message.replace(/^[A-Z_]{3,}:\s*/, '') : e instanceof Error ? e.message : String(e));
 const STATUS_TONE: Record<string, 'good' | 'warn' | 'bad' | 'info' | ''> = { pending: 'warn', submitted: 'info', under_review: 'info', verified: 'good', rejected: 'bad', cancelled: '', reversed: 'bad', confirmed: 'info', more_evidence: 'warn' };
@@ -39,9 +40,10 @@ export default function PaymentsAdmin() {
     <>
       <PageHead title="Payments & wallet" desc="Customer payments, wallets and their ledger, bank accounts, and the entries that go to the accounting ledger. A slip never adds money: staff verify it against the bank record first." />
       {roleLoaded && !role && <Banner tone="warn">{T('You can look around, but you have no finance role. Ask a manager to give you one (Payment review → Access).')}</Banner>}
-      <Tabs<Tab> value={tab} onChange={setTab} tabs={[{ v: 'payments', label: 'Payments' }, { v: 'wallets', label: 'Wallets' }, { v: 'banks', label: 'Bank accounts' }, { v: 'ledger', label: 'Accounting ledger' }, { v: 'reports', label: 'Reports' }]} />
+      <Tabs<Tab> value={tab} onChange={setTab} tabs={[{ v: 'payments', label: 'Payments' }, { v: 'wallets', label: 'Wallets' }, { v: 'customers', label: 'Customers' }, { v: 'banks', label: 'Bank accounts' }, { v: 'ledger', label: 'Accounting ledger' }, { v: 'reports', label: 'Reports' }]} />
       {tab === 'payments' && <PaymentsPanel T={T} role={role} />}
       {tab === 'wallets' && <WalletsPanel T={T} role={role} />}
+      {tab === 'customers' && <PoliciesPanel T={T} role={role} />}
       {tab === 'banks' && <BanksPanel T={T} role={role} />}
       {tab === 'ledger' && <LedgerPanel T={T} role={role} />}
       {tab === 'reports' && <ReportsPanel T={T} />}
@@ -295,6 +297,7 @@ function BanksPanel({ T, role }: { T: TFn; role: FinanceRole | null }) {
               <td>{b.gl_account_code ?? <span className="muted">{T('default bank account')}</span>}</td><td><Badge tone={b.active ? 'good' : ''} dot>{b.active ? T('Active') : T('Inactive')}</Badge></td>
               <td>{manage && <Button size="sm" onClick={() => setEdit(b)}>{T('Edit')}</Button>}</td></tr>))}</tbody></table></div>
       )}
+      <QrBankCard T={T} role={role} />
       {settings && manage && <SettingsCard s={settings} T={T} onSaved={load} />}
       {edit && <BankEditor b={edit} T={T} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} />}
     </div>

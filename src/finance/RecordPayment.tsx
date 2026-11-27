@@ -8,9 +8,10 @@ import { money } from '../lib/util';
 import { Banner, Button, Field, Input, Modal, Select, Textarea, Tx } from '../ui/kit';
 import { walletAdmin, type BankAccountRow } from '../wallet/api';
 import { review } from './review';
+import { type PaymentPolicy, normalizePolicy } from './paymentPolicy';
 import { fromLocalInput, isFutureInput, localInput, reviewErrorText } from './reviewUi';
 
-export interface RecordTarget { invoiceId: string; invoiceNo: string; customer?: string | null; outstanding: number; confirmedPending?: number }
+export interface RecordTarget { invoiceId: string; invoiceNo: string; customer?: string | null; /** lets the form show the customer's payment policy */ customerId?: string | null; outstanding: number; confirmedPending?: number }
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const refLen = (s: string) => s.replace(/[^0-9A-Za-z]/g, '').length;
@@ -28,6 +29,9 @@ export default function RecordPayment({ target, onClose, onDone }: { target: Rec
   const [banksReady, setBanksReady] = useState(false);                     // the list of bank accounts has answered (a transfer must not be sent before it is known whether a bank has to be chosen)
   const [busy, setBusy] = useState(false);
   useEffect(() => { walletAdmin.banks().then((b) => setBanks(b.filter((x) => x.active))).catch(() => setBanks([])).finally(() => setBanksReady(true)); }, []);
+  // the customer's payment policy: a full-payment customer's invoice can only be paid in full from the customer app; staff may still record what was really received, so this only warns
+  const [policy, setPolicy] = useState<PaymentPolicy>('partial');
+  useEffect(() => { if (target.customerId) void walletAdmin.policies(undefined, [target.customerId]).then((rows) => { const r = rows.find((x) => x.id === target.customerId); if (r) setPolicy(normalizePolicy(r.payment_policy)); }).catch(() => undefined); }, [target.customerId]);
 
   const pending = target.confirmedPending ?? 0;
   const limit = Math.max(r2(target.outstanding - pending), 0);          // what the invoice can still take: what it owes less what is confirmed and waits to be posted
@@ -55,6 +59,7 @@ export default function RecordPayment({ target, onClose, onDone }: { target: Rec
       footer={<><Button onClick={onClose} disabled={busy}><Tx>Cancel</Tx></Button><Button variant="primary" loading={busy} disabled={busy || !valid} onClick={save}><Tx>Record payment</Tx></Button></>}>
       <div className="col gap-8">
         <Banner tone="info"><Tx>Use this for money that did not come with the customer’s own slip: a transfer you found in the bank statement, or cash received at the shop. It is saved as Payment Confirmed and still has to be posted.</Tx></Banner>
+        {policy === 'full' && <Banner tone="warn"><span data-testid="policy-staff-warning"><Tx>This customer must pay in full. The customer app refuses part payments for them. Record a part payment only for money you really received (for example cash at the counter): it is noted in the history.</Tx></span></Banner>}
         <div className="col gap-4" style={{ fontSize: 13 }}>
           <div className="row between"><span className="muted"><Tx>Outstanding on this invoice</Tx></span><b>{money(target.outstanding)}</b></div>
           <div className="row between"><span className="muted"><Tx>Confirmed, waiting to be posted</Tx></span><b>{money(pending)}</b></div>

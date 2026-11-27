@@ -26,6 +26,7 @@ export const CHART: Account[] = [
   H('1030', 'Inventory', 'สินค้าคงเหลือ', 'asset', 'debit', 'Inventory', 'inventory', '1000'),
   A('1200', 'Inventory – raw materials & packaging', 'สินค้าคงเหลือ – วัตถุดิบและบรรจุภัณฑ์', 'asset', 'debit', 'Inventory', 'inventory', { parent: '1030', control: 'inventory', system: true }),
   A('1210', 'Inventory – merchandise & finished goods', 'สินค้าคงเหลือ – สินค้าสำเร็จรูป/สินค้าซื้อมาขาย', 'asset', 'debit', 'Inventory', 'inventory', { parent: '1030', control: 'inventory', system: true }),
+  A('1220', 'Work in progress', 'งานระหว่างทำ', 'asset', 'debit', 'Inventory', 'inventory', { parent: '1030', control: 'wip', system: true }),
   A('1250', 'Inventory in transit', 'สินค้าระหว่างทาง', 'asset', 'debit', 'Inventory', 'inventory', { parent: '1030', control: 'inventory', system: true }),
   H('1040', 'Tax assets', 'สินทรัพย์ภาษี', 'asset', 'debit', 'Tax', 'tax_asset', '1000'),
   A('1300', 'Input VAT', 'ภาษีซื้อ', 'asset', 'debit', 'Tax', 'tax_asset', { parent: '1040', control: 'tax', system: true, taxCode: 'VAT7' }),
@@ -52,6 +53,9 @@ export const CHART: Account[] = [
   A('5010', 'Cost of goods sold', 'ต้นทุนสินค้าที่ขาย', 'expense', 'debit', 'Cost of sales', 'cogs', { parent: '5000', dims: ['branch', 'channel'] }),
   A('5100', 'Production waste & spoilage', 'ของเสียและสินค้าเสียหายจากการผลิต', 'expense', 'debit', 'Cost of sales', 'cogs', { parent: '5000' }),
   A('5200', 'Inventory adjustments & shrinkage', 'ปรับปรุง/สูญหายของสินค้าคงเหลือ', 'expense', 'debit', 'Cost of sales', 'cogs', { parent: '5000' }),
+  A('5310', 'Production variance: material', 'ผลต่างการผลิต: วัตถุดิบ', 'expense', 'debit', 'Cost of sales', 'cogs', { parent: '5000', system: true }),
+  A('5320', 'Production variance: labour', 'ผลต่างการผลิต: ค่าแรง', 'expense', 'debit', 'Cost of sales', 'cogs', { parent: '5000', system: true }),
+  A('5330', 'Production variance: overhead', 'ผลต่างการผลิต: ค่าโสหุ้ย', 'expense', 'debit', 'Cost of sales', 'cogs', { parent: '5000', system: true }),
   A('5400', 'Labor & overhead absorbed (contra)', 'ค่าแรงและค่าโสหุ้ยที่ปันส่วนเข้าต้นทุน', 'expense', 'credit', 'Cost of sales', 'cogs', { parent: '5000', contra: true }),
   H('6000', 'OPERATING EXPENSES', 'ค่าใช้จ่ายในการดำเนินงาน', 'expense', 'debit', 'Operating expenses', 'opex'),
   A('6100', 'Marketplace commission', 'ค่าคอมมิชชันมาร์เก็ตเพลส', 'expense', 'debit', 'Channel costs', 'channel_costs', { parent: '6000', dims: ['channel'] }),
@@ -85,6 +89,7 @@ export const ROLE_DEFS: RoleDef[] = [
   { key: 'inv_materials', label: 'Inventory – raw & packaging', def: '1200', expect: ['inventory'], events: 'Purchases of materials, consumption' },
   { key: 'inv_goods', label: 'Inventory – goods & finished', def: '1210', expect: ['inventory'], events: 'Purchases for resale, production output, sales' },
   { key: 'inv_transit', label: 'Inventory in transit', def: '1250', expect: ['inventory'], events: 'Warehouse transfers' },
+  { key: 'wip', label: 'Work in progress', def: '1220', expect: ['inventory'], events: 'Materials, labour and overhead of production orders until the goods are received' },
   { key: 'input_vat', label: 'Input VAT', def: '1300', expect: ['tax_asset'], events: 'Purchases, expenses' },
   { key: 'ap', label: 'Accounts payable', def: '2100', expect: ['payables'], events: 'Goods receipts, supplier payments, supplier returns' },
   { key: 'output_vat', label: 'Output VAT', def: '2200', expect: ['tax_payable'], events: 'Sales, returns' },
@@ -99,6 +104,9 @@ export const ROLE_DEFS: RoleDef[] = [
   { key: 'waste', label: 'Waste & spoilage', def: '5100', expect: ['cogs'], events: 'Production waste, wasted stock' },
   { key: 'inv_adjust', label: 'Inventory adjustments / shrinkage', def: '5200', expect: ['cogs'], events: 'Counts, corrections, transfer losses' },
   { key: 'conversion_absorbed', label: 'Labor & overhead absorbed', def: '5400', expect: ['cogs'], events: 'Production & recipe conversion cost' },
+  { key: 'prod_var_material', label: 'Production variance: material', def: '5310', expect: ['cogs'], events: 'Material cost left in an order at its last receipt or when it is closed; reversed receipts and returns' },
+  { key: 'prod_var_labor', label: 'Production variance: labour', def: '5320', expect: ['cogs'], events: 'Labour cost left in an order at its last receipt or when it is closed' },
+  { key: 'prod_var_overhead', label: 'Production variance: overhead', def: '5330', expect: ['cogs'], events: 'Overhead left in an order at its last receipt or when it is closed' },
   { key: 'fee_commission', label: 'Marketplace commission', def: '6100', expect: ['channel_costs'], events: 'Settlements' },
   { key: 'fee_payment', label: 'Payment processing fees', def: '6110', expect: ['channel_costs'], events: 'Settlements' },
   { key: 'fee_shipping', label: 'Shipping subsidy', def: '6120', expect: ['channel_costs'], events: 'Settlements' },
@@ -123,6 +131,33 @@ export const invAccount = (kind: ProductKind) => (kind === 'material' || kind ==
 export const cashAccount = (m: PayMethod | 'deposit') => (m === 'cash' ? 'cash' : 'bank');
 export const dr = (account: string, amount: number, memo?: string): JournalLine => ({ account, debit: r2(amount), credit: 0, memo });
 export const cr = (account: string, amount: number, memo?: string): JournalLine => ({ account, debit: 0, credit: r2(amount), memo });
+
+const PRODUCTION_ROLES = ['wip', 'prod_var_material', 'prod_var_labor', 'prod_var_overhead'];
+/**
+ * Gives a database saved before the production module the accounts and posting roles it needs. Only adds what is missing: an account or mapping that exists is never
+ * edited or removed. A code the owner already uses for something else leaves that role unmapped, so posting stops with UNMAPPED_ACCOUNT until someone maps it.
+ */
+export function ensureProductionAccounts(d: DB): string[] {
+  const added: string[] = [], mapped: string[] = [];
+  for (const key of PRODUCTION_ROLES) {
+    if (d.postingMap[key]?.length) continue;
+    const def = CHART.find((a) => a.code === ROLE_DEFS.find((r) => r.key === key)!.def)!;
+    const cur = findAcct(d, def.code);
+    if (cur && !(cur.name === def.name && cur.type === def.type && cur.fsLine === def.fsLine && cur.control === def.control && cur.posting && cur.active)) continue;
+    if (!cur) {
+      const parent = findAcct(d, def.parent!);
+      // beside its neighbour in the standard chart: the order the owner sees does not change
+      let at = -1;
+      for (let i = CHART.indexOf(def) - 1; i >= 0 && at < 0; i--) at = d.accounts.findIndex((a) => a.code === CHART[i].code);
+      d.accounts.splice(at + 1, 0, { ...def, parent: parent && !parent.posting ? def.parent : undefined });
+      added.push(def.code);
+    }
+    d.postingMap[key] = [{ code: def.code, from: D0 }];
+    mapped.push(`${key} → ${def.code}`);
+  }
+  if (mapped.length) audit(d, { now: new Date().toISOString(), userId: 'system' }, 'coa.production', 'account', added.join(', ') || undefined, `Production accounts prepared: ${mapped.join(', ')}`, 'warn');
+  return added;
+}
 
 /** Accounts selectable for expense categories (postable, P&L expense lines, active) */
 export const expenseAccounts = (d: DB) => d.accounts.filter((a) => a.posting && a.active && ['opex', 'other_expense', 'channel_costs'].includes(a.fsLine) && a.type === 'expense');
@@ -207,10 +242,26 @@ export function post(
   return id;
 }
 
-export function reverseJournal(d: DB, ctx: Ctx, journalId: ID, reason: string): ID {
+/** The entries of a production order go with its stock and WIP: only domain/production.ts (fromProduction) may reverse them. A batch of the older single-step flow is not one of them. */
+function ownedByOrder(d: DB, j: Journal) {
+  const po = j.refType === 'production' ? d.productionOrders.find((o) => o.id === j.refId) : undefined;
+  return po && !po.batches.some((b) => b.journalId === j.id) ? po : undefined;
+}
+/** The entries of a goods receipt, a supplier payment or a supplier return go with their stock, invoice and payables: only domain/purchasing.ts (fromPurchasing) may reverse them. */
+function ownedByPurchasing(d: DB, j: Journal) {
+  if (j.refType === 'grn') { const g = d.grns.find((x) => x.id === j.refId); return g && !g.reversal && g.journalId === j.id ? g.no : undefined; }
+  if (j.refType === 'supplier_payment') { const p = d.supplierPayments.find((x) => x.id === j.refId); return p && !p.reversal ? p.no : undefined; }
+  if (j.refType === 'supplier_return') return d.supplierReturns.find((x) => x.id === j.refId)?.no;
+  return undefined;
+}
+export function reverseJournal(d: DB, ctx: Ctx, journalId: ID, reason: string, opts?: { fromProduction?: boolean; fromPurchasing?: boolean }): ID {
   const j = d.journals.find((x) => x.id === journalId) || fail('NOT_FOUND', 'Journal not found');
   if (j.status === 'reversed') fail('ALREADY', 'Journal already reversed');
   if (j.reverses) fail('INVALID', 'A reversal entry cannot itself be reversed');
+  const owner = opts?.fromProduction ? undefined : ownedByOrder(d, j);
+  if (owner) fail('USE_PRODUCTION', `${j.no} belongs to production order ${owner.no}. Reverse it on the production order, so that its stock and cost go with it`);
+  const doc = opts?.fromPurchasing ? undefined : ownedByPurchasing(d, j);
+  if (doc) fail('USE_PURCHASING', `${j.no} belongs to ${doc}. Reverse it in Purchasing, so that its stock, invoice and payables go with it`);
   if (!reason.trim()) fail('REASON', 'A reason is required for a reversal');
   const rid = post(d, ctx, {
     memo: `Reversal of ${j.no}: ${reason}`, refType: 'reversal', refId: j.id, reverses: j.id, dim: j.dim, allowInactive: true,

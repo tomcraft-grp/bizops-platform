@@ -138,13 +138,15 @@ export async function handleRequest(req: Request, d: Deps): Promise<Response> {
     const mediaType = sniffMediaType(bytes);
     if (!mediaType) throw new GenError('UNSUPPORTED_TYPE', 'the slip file is not a JPG, PNG or PDF');
 
+    // the fingerprint of the bytes that are really stored: the database compares it with the one the browser declared, and with every other slip
+    const fileSha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>))].map((x) => x.toString(16).padStart(2, '0')).join('');
     let qr: QrResult = { ...NO_QR };
     try { qr = cleanQr(await d.decodeQr(bytes, mediaType)); } catch { qr = { ...NO_QR }; }      // a QR that cannot be decoded is just "not checked"
 
     const reading = await d.provider.extract({ mediaType, base64: toBase64(bytes) });
     const { extracted, signals, confidence } = normalize(parseRaw(reading), (d.now ?? (() => new Date()))());
     completing = true;
-    await d.complete(analysisId, extracted, qr, confidence, signals, engine, PROMPT_VERSION);
+    await d.complete(analysisId, extracted, { ...qr, file_sha256: fileSha256 }, confidence, signals, engine, PROMPT_VERSION);
     settled = true;
     return reply(200, { status: 'completed' });
   } catch (e) {

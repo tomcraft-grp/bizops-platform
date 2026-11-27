@@ -23,6 +23,8 @@ export interface NewOrderInput {
 }
 
 export const sellable = (p: Product) => p.kind === 'resale' || p.kind === 'finished' || p.kind === 'menu';
+/** Offered for sale now: switched on, priced, and a kind that is sold. What the POS lists, and what "Active Products" counts on the Products page. */
+export const onSale = (p: Product) => p.active && p.price > 0 && sellable(p);
 export const isRecognized = (o: Order) => !!o.recognizedAt;
 
 export function resolveModifiers(p: Product, sel: { group: string; option: string }[] = []) {

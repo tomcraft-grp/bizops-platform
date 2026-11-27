@@ -22,6 +22,10 @@ export interface Deposit {
   id: string; deposit_no: string; status: DepositStatus; amount: number; verified_amount: number | null; created_at: string; submitted_at: string | null; reject_reason: string | null;
   has_slip: boolean; customer_ref: string | null; bank: { id: string; code: string; bank_name_th: string; bank_name_en: string; account_no: string; account_name: string } | null;
 }
+/** The QR option of the wallet top-up (migration 20261127110000): the bank account a QR deposit must be created with. null = the shop has not linked its QR to a bank account: no QR option. */
+export interface DepositQrBank { bank_account_id: string; account_label: string; merchant_name: string | null }
+export interface DepositQr { amount: number; qr_payload: string; deposit_no: string; account_label: string; merchant_name: string | null }
+export interface PolicyRow { id: string; code: string; name: string; payment_policy: 'partial' | 'full'; open_invoices: number; open_amount: number }
 export interface PayWalletResult { replay: boolean; receipt_no: string; txn_no?: string; balance: number; state: { status_code: number; outstanding: number; paid: number } }
 
 // staff
@@ -67,6 +71,11 @@ export async function slipFingerprint(file: File): Promise<{ type: string; sha25
   if (file.size > EVIDENCE_MAX) throw new ShopError('The file must be 5 MB or smaller', 'FILE_TOO_BIG');
   return { type, sha256: await sha256(file), ext: type === 'application/pdf' ? 'pdf' : type === 'image/png' ? 'png' : 'jpg' };
 }
+/** Why a picked file cannot be a slip (its real type by the first bytes, its size), or null: told at once instead of after "place order". */
+export async function slipProblem(file: File): Promise<'err.slipBad' | 'err.slipBig' | null> {
+  if (!(await sniffType(file))) return 'err.slipBad';
+  return file.size > EVIDENCE_MAX ? 'err.slipBig' : null;
+}
 /** Upload the slip into the customer's own folder of the private bucket BEFORE the order is placed. The same order key always gives the same path,
  *  so a retry reuses the file instead of leaving a second one. The order itself is created (with the slip) by one database call. */
 export async function uploadOrderSlip(file: File, key: string, fp: { type: string; ext: string }): Promise<string> {
@@ -87,6 +96,9 @@ export const wallet = {
   deposits: (limit = 20) => rpc<Deposit[]>('finance_my_deposits', { p_limit: limit }),
   createDeposit: (bank: string, amount: number, key: string, ref?: string) => rpc<Deposit>('finance_deposit_create', { p_bank: bank, p_amount: amount, p_key: key, p_customer_ref: ref || null }),
   cancelDeposit: (id: string) => rpc<Deposit>('finance_deposit_cancel', { p_deposit: id }),
+  /** Is there a PromptPay QR for top-ups, and which bank account must the deposit use? Never throws: an old database or any failure reads as "no QR option" (the bank details stay). */
+  async depositQrBank(): Promise<DepositQrBank | null> { try { return (await rpc<DepositQrBank | null>('finance_deposit_qr_bank')) ?? null; } catch { return null; } },
+  depositQr: (id: string) => rpc<DepositQr>('finance_deposit_qr', { p_deposit: id }),
   /** Upload the slip into the customer's own folder of the private bucket, then record it. Credits nothing by itself. */
   async submitSlip(p: { depositId: string; file: File; transferAt: string | null; ref?: string }): Promise<Deposit> {
     const type = await sniffType(p.file);
@@ -107,6 +119,9 @@ export const wallet = {
 
 // ---------------------------------------------------------------- staff
 export const walletAdmin = {
+  policies: (search?: string, ids?: string[]) => rpc<PolicyRow[]>('finance_customer_policies', { p_ids: ids ?? null, p_search: search || null, p_limit: 200 }),
+  setPolicy: (customer: string, policy: 'partial' | 'full', reason: string) => rpc<{ id: string; payment_policy: string; changed: boolean }>('finance_set_payment_policy', { p_customer: customer, p_policy: policy, p_reason: reason }),
+  linkQrBank: (account: string, bank: string | null) => rpc<{ id: string; bank_account_id: string | null; changed: boolean }>('finance_set_payment_account_bank', { p_account: account, p_bank: bank }),
   payments: (p: { kind?: string; status?: string; bank?: string; search?: string; limit?: number; offset?: number }) =>
     rpc<{ total: number; items: PaymentRow[] }>('finance_payments_overview', { p_kind: p.kind || null, p_status: p.status || null, p_bank: p.bank || null, p_search: p.search || null, p_limit: p.limit ?? 50, p_offset: p.offset ?? 0 }),
   wallets: (search?: string, limit = 50, offset = 0) => rpc<{ total: number; sum_balance: number; items: WalletRow[] }>('finance_wallets_overview', { p_search: search || null, p_limit: limit, p_offset: offset }),

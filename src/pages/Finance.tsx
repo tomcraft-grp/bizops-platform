@@ -3,10 +3,11 @@
 // the shop's own QR: the server checks it is a real Thai QR, and every customer QR is generated server-side from it
 // with the exact outstanding amount.
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, QrCode, Upload } from 'lucide-react';
 import { toast, useLang } from '../domain/store';
 import { t as tl } from '../lib/i18n';
-import { Badge, Banner, Button, Card, Empty, Field, Input, Modal, PageHead, Select, Tabs, Tx, useConfirm } from '../ui/kit';
+import { Badge, Banner, Button, Card, Empty, ErrText, Field, Input, Modal, PageHead, Select, Tabs, Tx, useConfirm } from '../ui/kit';
 import { canFinance, finance, FinanceRole, InvoiceRow, PaymentAccount, QrInfo, Receipt, STATUS } from '../finance/api';
 import { review } from '../finance/review';
 import SlipReview from '../finance/SlipReview';
@@ -22,6 +23,9 @@ export default function Finance() {
   const [role, setRole] = useState<FinanceRole | null | undefined>(undefined);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('slips');
+  // a link from LINE: #/payment-review?evidence=<id> opens that slip on "Slips to check"
+  const [params] = useSearchParams();
+  const linkedEvidence = params.get('evidence');
   const [counts, setCounts] = useState({ slips: 0, review: 0 });
   const refreshCounts = useCallback(async () => {
     try {
@@ -40,7 +44,7 @@ export default function Finance() {
   if (!role) return (
     <>
       <PageHead title="Payment review" desc="Verify customer payments and manage invoices." />
-      <Card><Empty title="No access to payment review" hint={err ?? 'Ask a manager to give you a finance role (Viewer, Clerk, Verifier or Manager).'} /></Card>
+      <Card><Empty title="No access to payment review" hint={err ? <ErrText>{err}</ErrText> : 'Ask a manager to give you a finance role (Viewer, Clerk, Verifier or Manager).'} /></Card>
     </>
   );
   return (
@@ -55,7 +59,7 @@ export default function Finance() {
         ]} />
         <div style={{ padding: 14 }}>
           {/* Not dark: this tab, and "Record payment" below, appear as soon as the app is deployed. The two settings only switch the AI reader and the manager-only Post of transfers (docs/slip-review.md, "What is dark and what is not"). */}
-          {tab === 'slips' && <SlipReview role={role} onChanged={refreshCounts} />}
+          {tab === 'slips' && <SlipReview role={role} onChanged={refreshCounts} initialOpenId={linkedEvidence} />}
           {tab === 'review' && <OverpaymentQueue role={role} onChanged={refreshCounts} />}
           {tab === 'invoices' && <Invoices role={role} onChanged={refreshCounts} />}
           {tab === 'account' && <AccountPanel role={role} />}
@@ -118,7 +122,7 @@ function Invoices({ role, onChanged }: { role: FinanceRole; onChanged: () => voi
               <td style={{ textAlign: 'right' }}>{money(r.amount)}</td><td style={{ textAlign: 'right' }}>{money(r.paid)}</td><td style={{ textAlign: 'right' }}><b>{money(r.outstanding)}</b></td>
               <td><Badge tone={s.tone} dot>{lang === 'th' ? s.th : s.en}</Badge></td>
               <td><div className="row gap-4">
-                {canFinance(role, 'verify') && r.status_code !== 8 && r.outstanding > 0 && <Button size="sm" onClick={() => setRecording({ invoiceId: r.id, invoiceNo: r.invoice_no, customer: r.customer_name, outstanding: r.outstanding, confirmedPending: r.confirmed_pending })}><Tx>Record payment</Tx></Button>}
+                {canFinance(role, 'verify') && r.status_code !== 8 && r.outstanding > 0 && <Button size="sm" onClick={() => setRecording({ invoiceId: r.id, invoiceNo: r.invoice_no, customer: r.customer_name, customerId: r.customer_id ?? null, outstanding: r.outstanding, confirmedPending: r.confirmed_pending })}><Tx>Record payment</Tx></Button>}
                 {canFinance(role, 'manage') && r.status_code !== 8 && r.paid === 0 && <Button size="sm" variant="ghost" onClick={() => cancel(r)}><Tx>Cancel</Tx></Button>}</div></td></tr>); })}</tbody></table></div>
       )}
       {adding && <NewInvoice onClose={() => setAdding(false)} onDone={() => { setAdding(false); void load(); }} />}
@@ -197,6 +201,8 @@ function AccountPanel({ role }: { role: FinanceRole }) {
           <div className="row between"><div><b>{a.label}</b> {a.is_default && a.active && <Badge tone="good"><Tx>in use</Tx></Badge>}{!a.active && <Badge><Tx>stopped</Tx></Badge>}
             <div className="muted" style={{ fontSize: 12 }}><Tx>{TARGET_TYPE[a.target_type] ?? a.target_type}</Tx> · <span className="mono">{maskTarget(a.target)}</span>{a.merchant_name && ` · ${a.merchant_name}`}</div></div>
             {manage && a.active && <Button size="sm" variant="ghost" onClick={() => disable(a)}><Tx>Stop using</Tx></Button>}</div>
+          {a.is_default && a.active && !a.merchant_name && <div className="mt8"><Banner tone="warn"><Tx>This account has no recipient name. Customers cannot compare it with their banking app, and the slip check would flag every slip paid by this QR as paid to somebody else.</Tx></Banner></div>}
+          {manage && a.is_default && a.active && <AccountName key={`${a.id}:${a.merchant_name}:${a.slip_name_alt}`} account={a} onSaved={load} />}
         </div>
       ))}
       {manage ? (
@@ -215,6 +221,27 @@ function AccountPanel({ role }: { role: FinanceRole }) {
           )}
         </div>
       ) : <div className="muted" style={{ fontSize: 12 }}><Tx>Only a manager can change the payment account.</Tx></div>}
+    </div>
+  );
+}
+
+/** The name a customer sees in their banking app and on the slip: shown on the payment card and compared with every slip paid by this QR. */
+function AccountName({ account, onSaved }: { account: PaymentAccount; onSaved: () => void }) {
+  const lang = useLang();
+  const [name, setName] = useState(account.merchant_name ?? '');
+  const [alt, setAlt] = useState(account.slip_name_alt ?? '');
+  const [busy, setBusy] = useState(false);
+  const dirty = name.trim() !== (account.merchant_name ?? '') || alt.trim() !== (account.slip_name_alt ?? '');
+  const save = async () => {
+    setBusy(true);
+    try { await finance.setAccountName(account.id, name.trim(), alt.trim()); toast('success', tl(lang, 'Recipient name saved')); onSaved(); }
+    catch (e) { toast('error', /INVALID_NAME/.test((e as Error).message) ? tl(lang, 'Write the full name, at least 3 letters without the title') : (e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="col gap-6 mt8" data-testid="account-name">
+      <Field label="Recipient name as the banking app shows it"><Input maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></Field>
+      <Field label="The same name in English (optional)"><Input maxLength={120} value={alt} onChange={(e) => setAlt(e.target.value)} /></Field>
+      <div><Button size="sm" variant="primary" loading={busy} disabled={busy || !dirty || name.trim().length < 3} onClick={save}><Tx>Save recipient name</Tx></Button></div>
     </div>
   );
 }

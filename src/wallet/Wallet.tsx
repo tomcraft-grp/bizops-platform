@@ -11,8 +11,9 @@ import { K, useShopLang, useT } from '../shop/i18n';
 import { useShopHost } from '../shop/nav';
 import { ConfirmSheet, ErrorBox } from '../shop/ui';
 import { Banner, Empty } from '../ui/kit';
-import { Deposit, DepositStatus, newKey, wallet, WalletSummary, WalletTxn } from './api';
-import { BankCard, CopyButton, useMethods, walletErrText } from './ui';
+import { Deposit, DepositQrBank, DepositStatus, newKey, wallet, WalletSummary, WalletTxn } from './api';
+import { BankCard, CopyButton, QrTopUpCard, useMethods, walletErrText } from './ui';
+import { DepositQrPanel } from './PayTo';
 import { copyableAccountNo, formatAccountNo } from './bank';
 
 const DEP_TONE: Record<DepositStatus, 'good' | 'warn' | 'bad' | 'info' | ''> = { pending: 'warn', submitted: 'info', under_review: 'info', verified: 'good', rejected: 'bad', cancelled: '' };
@@ -144,6 +145,10 @@ export function DepositFlow({ resume, onClose, onChanged }: { resume: Deposit | 
   const [when, setWhen] = useState('');
   const [ref, setRef] = useState('');
   const [askCancel, setAskCancel] = useState(false);
+  // the PromptPay QR as a way to top up (FB-001042): offered only when the shop linked its QR to a bank account, because the deposit is booked to that account
+  const [qrBank, setQrBank] = useState<DepositQrBank | null>(null);
+  const [viaQr, setViaQr] = useState(false);
+  useEffect(() => { let on = true; void wallet.depositQrBank().then((q) => { if (on) setQrBank(q); }); return () => { on = false; }; }, []);
   const inflight = useRef(false);
   const file = useRef<HTMLInputElement>(null);
   const urlRef = useRef<string | null>(null);
@@ -199,6 +204,12 @@ export function DepositFlow({ resume, onClose, onChanged }: { resume: Deposit | 
           <div className="wl-amount"><span className="wl-k">{t('bank.amount')}</span><b data-testid="transfer-amount">{baht(dep.amount)}</b></div>
           <div className="wl-refbox"><span className="wl-k">{t('bank.ref')}</span><b className="mono" data-testid="deposit-ref">{dep.deposit_no}</b><CopyButton text={dep.deposit_no} label={t('bank.copyRef')} doneKey="bank.refCopied" /><small>{t('bank.refHint')}</small></div>
         </div>
+        {active && qrBank && dep.bank?.id === qrBank.bank_account_id && (
+          <section className="sp-sec" data-testid="deposit-qr"><h3>{t('dep.qrTitle')}</h3>
+            <DepositQrPanel depositId={dep.id} amount={dep.amount} />
+            <p className="sp-note">{t('dep.qrOr')}</p>
+          </section>
+        )}
         {bank ? <BankCard bank={bank} readOnly /> : dep.bank && (
           <div className="wl-method on"><div className="wl-card"><span className="wl-card-main"><b>{dep.bank.bank_name_th} ({dep.bank.code})</b><span className="wl-acct"><span className="wl-k">{t('bank.account')}</span> {formatAccountNo(dep.bank.account_no)}</span>
             <span className="wl-holder"><span className="wl-k">{t('bank.holder')}</span> {dep.bank.account_name}</span></span></div><div className="wl-copy"><CopyButton text={copyableAccountNo(dep.bank.account_no)} label={t('bank.copy')} /></div></div>
@@ -234,7 +245,9 @@ export function DepositFlow({ resume, onClose, onChanged }: { resume: Deposit | 
       {err && <Banner tone="bad">{err}</Banner>}
       <section className="sp-sec"><h3>{t('dep.pickBank')}</h3>
         {!methods ? <div className="sp-list-skel" aria-busy="true"><i /><i /></div> : !methods.banks.length ? <Empty title={t('pm.none')} />
-          : <div className="wl-methods" role="radiogroup" aria-label={t('dep.pickBank')}>{methods.banks.map((b) => <BankCard key={b.id} bank={b} selected={bankId === b.id} onSelect={() => setBankId(b.id)} />)}</div>}
+          : <div className="wl-methods" role="radiogroup" aria-label={t('dep.pickBank')}>
+            {qrBank && methods.banks.some((b) => b.id === qrBank.bank_account_id) && <QrTopUpCard selected={viaQr && bankId === qrBank.bank_account_id} onSelect={() => { setViaQr(true); setBankId(qrBank.bank_account_id); }} />}
+            {methods.banks.map((b) => <BankCard key={b.id} bank={b} selected={!viaQr && bankId === b.id} onSelect={() => { setViaQr(false); setBankId(b.id); }} />)}</div>}
       </section>
       <section className="sp-sec"><h3>{t('dep.amount')}</h3>
         <div className="sp-form">

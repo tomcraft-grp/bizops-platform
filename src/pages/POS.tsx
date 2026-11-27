@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Banknote, Check, CreditCard, Gift, Minus, Pause, Percent, Play, Plus, QrCode, Tag, Trash2, UserRound, X, Landmark, MoreHorizontal, Receipt } from 'lucide-react';
 import { useDB, useLang } from '../domain/store';
-import { createOrder, quoteOrder, NewOrderLine } from '../domain/orders';
+import { createOrder, onSale, quoteOrder, NewOrderLine } from '../domain/orders';
 import { onHand } from '../domain/inventory';
 import { servingsPossible } from '../domain/master';
 import { PAY_METHODS } from '../domain/meta';
@@ -47,7 +47,7 @@ export default function POS() {
   const [showManual, setShowManual] = useState(false);
   const now = useMemo(() => new Date().toISOString(), [cart, customerId, promoCode, couponId, manual]); // eslint-disable-line
 
-  const sellables = useMemo(() => db.products.filter((p) => p.active && p.price > 0 && ['resale', 'finished', 'menu'].includes(p.kind)), [db.products]);
+  const sellables = useMemo(() => db.products.filter(onSale), [db.products]);
   const cats = useMemo(() => ['All', ...Array.from(new Set(sellables.map((p) => p.category)))], [sellables]);
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();

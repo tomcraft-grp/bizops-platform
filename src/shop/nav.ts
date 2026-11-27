@@ -8,12 +8,12 @@ export interface CatalogFilter { q: string; category: string; brand: string; sor
 export const EMPTY_FILTER: CatalogFilter = { q: '', category: '', brand: '', sort: 'recommended' };
 
 interface NavState {
-  pendingSku: string | null; pendingOrder: string | null; pendingWallet: boolean; catalog: CatalogFilter;
+  pendingSku: string | null; pendingOrder: string | null; pendingWallet: boolean; pendingTransfer: boolean; catalog: CatalogFilter;
   openProduct: (sku: string) => void; openOrder: (id: string) => void; takeSku: () => string | null; takeOrder: () => string | null;
   setCatalog: (patch: Partial<CatalogFilter>) => void; resetCatalog: () => void;
 }
 export const useShopNav = create<NavState>((set, get) => ({
-  pendingSku: null, pendingOrder: null, pendingWallet: false, catalog: EMPTY_FILTER,
+  pendingSku: null, pendingOrder: null, pendingWallet: false, pendingTransfer: false, catalog: EMPTY_FILTER,
   openProduct: (sku) => set({ pendingSku: sku }), openOrder: (id) => set({ pendingOrder: id }),
   takeSku: () => { const v = get().pendingSku; if (v) set({ pendingSku: null }); return v; },
   takeOrder: () => { const v = get().pendingOrder; if (v) set({ pendingOrder: null }); return v; },
