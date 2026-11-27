@@ -10,6 +10,7 @@ import { cx } from '../lib/util';
 import { shopAdmin } from '../shop/api';
 import { rewards, rewardsAdmin, type CartItem, type Pack, type RewardsSettings, type Rule, type RuleKind, type SimLine } from './api';
 import { PackEditor } from './PackEditor';
+import TransfersPanel from './TransfersPanel';
 import { baht, RuleEditor, SkuChip, SkuSearch, useSkuInfo, useT } from './RuleEditor';
 import { rewardsErrorMessage, ruleSentences, ruleToForm, simulateAmount, toBangkokDate, type Msg, type RuleTemplate } from './ruleForm';
 
@@ -46,7 +47,7 @@ export default function PromotionsOnline() {
   const role = profile?.role;
   const canEdit = role === 'ADMIN' || role === 'SUPER_ADMIN';
   const isSuper = role === 'SUPER_ADMIN';
-  const [tab, setTab] = useState<'rules' | 'packs' | 'try'>('rules');
+  const [tab, setTab] = useState<'rules' | 'packs' | 'try' | 'transfers'>('rules');
   const [ruleEdit, setRuleEdit] = useState<{ rule: Rule | null; template?: RuleTemplate } | null>(null);
   const [packEdit, setPackEdit] = useState<{ pack: Pack | null } | null>(null);
   const settings = useLoad(rewards.settings);
@@ -58,14 +59,15 @@ export default function PromotionsOnline() {
   return (
     <>
       <PageHead title="Promotions" desc="Points, number picks and promotion packs for customers of the online shop. Nothing changes for customers until the master switch is on."
-        actions={canEdit && tab !== 'try' && (tab === 'rules'
+        actions={canEdit && tab !== 'try' && tab !== 'transfers' && (tab === 'rules'
           ? <Button variant="primary" onClick={() => setRuleEdit({ rule: null })}><Plus size={15} />{' '}<Tx>New rule</Tx></Button>
           : <Button variant="primary" onClick={() => setPackEdit({ pack: null })}><Plus size={15} />{' '}<Tx>New pack</Tx></Button>)} />
       <MasterSwitch load={settings} isSuper={isSuper} />
-      <Tabs value={tab} onChange={setTab} tabs={[{ v: 'rules', label: 'Rules', count: rules.data?.length }, { v: 'packs', label: 'Promotion packs', count: packs.data?.length }, { v: 'try', label: 'Try it' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ v: 'rules', label: 'Rules', count: rules.data?.length }, { v: 'packs', label: 'Promotion packs', count: packs.data?.length }, { v: 'transfers', label: 'Point transfers' }, { v: 'try', label: 'Try it' }]} />
       {tab === 'rules' && <RulesPanel load={rules} events={events.data ?? []} canEdit={canEdit} onNew={(template) => setRuleEdit({ rule: null, template })} onEdit={(rule) => setRuleEdit({ rule })} />}
       {tab === 'packs' && <PacksPanel load={packs} canEdit={canEdit} onNew={() => setPackEdit({ pack: null })} onEdit={(pack) => setPackEdit({ pack })} />}
       {tab === 'try' && <TryPanel rules={rules} />}
+      {tab === 'transfers' && <TransfersPanel isSuper={isSuper} />}
       {ruleEdit && <RuleEditor rule={ruleEdit.rule} template={ruleEdit.template} events={events.data ?? []} eventsFailed={!!events.error && !events.data} categories={cats.data ?? []} categoriesFailed={!!cats.error && !cats.data}
         onClose={() => setRuleEdit(null)} onSaved={() => { setRuleEdit(null); rules.reload(); }} />}
       {packEdit && <PackEditor pack={packEdit.pack} onClose={() => setPackEdit(null)} onSaved={() => { setPackEdit(null); packs.reload(); }} />}
