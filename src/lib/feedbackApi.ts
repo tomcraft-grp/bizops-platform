@@ -297,6 +297,13 @@ export async function listFeedback(opts: { includeArchived?: boolean } = {}): Pr
   return (data ?? []) as FeedbackIssue[];
 }
 
+/** One issue by its number, archived ones included (RLS still decides who may read it). Null when it does not exist or the caller may not read it. */
+export async function getIssue(id: string): Promise<FeedbackIssue | null> {
+  const { data, error } = await supabase.from('bizops_feedback_issues').select('*').eq('id', id).limit(1);
+  fail(error);
+  return ((data ?? [])[0] ?? null) as FeedbackIssue | null;
+}
+
 export interface IssueThread { comments: FeedbackComment[]; attachments: FeedbackAttachment[]; events: FeedbackEvent[]; links: FeedbackDevLink[] }
 export async function getThread(issueId: string, staff: boolean): Promise<IssueThread> {
   const [c, a, e, l] = await Promise.all([
@@ -361,6 +368,6 @@ export async function markNotificationsRead(ids?: string[]): Promise<void> {
 export function issuesToCsv(rows: FeedbackIssue[], staffName: (id: string | null) => string): string {
   const head = ['Issue ID', 'Subject', 'Category', 'Priority', 'Status', 'Source', 'Submitted by', 'Assigned to', 'Page', 'Module', 'Created', 'Last updated', 'Resolved', 'Root cause', 'Resolution'];
   const esc = (v: unknown) => { const s = v == null ? '' : String(v); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const lines = rows.map((r) => [r.id, r.title, r.category, r.priority, r.status, r.source, r.submitter_label, staffName(r.assigned_to), r.page_path, r.module_name, r.created_at, r.last_activity_at, r.resolved_at, r.root_cause, r.resolution].map(esc).join(','));
+  const lines = rows.map((r) => [r.id, r.title, r.category, r.priority, r.status, r.source, r.submitter_label, staffName(r.assigned_to) || r.handler_label || '', r.page_path, r.module_name, r.created_at, r.last_activity_at, r.resolved_at, r.root_cause, r.resolution].map(esc).join(','));
   return '﻿' + [head.join(','), ...lines].join('\r\n');
 }

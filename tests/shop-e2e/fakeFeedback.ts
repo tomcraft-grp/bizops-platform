@@ -31,6 +31,9 @@ interface FAtt { id: string; issue_id: string; comment_id: string | null; storag
 export class FakeFeedback {
   issues: FIssue[] = [];
   attachments: FAtt[] = [];
+  /** the active staff the assignee boxes offer (feedback_staff_list) and the notifications the bell lists */
+  staffList: { id: string; display_name: string | null; email: string; role: string }[] = [];
+  notes: { id: string; issue_id: string; kind: string; title: string; body: string | null; read_at: string | null; created_at: string; recipient_id?: string }[] = [];
   events: FEvent[] = [];
   private ev = 0;
   /** files in the storage bucket: path -> bytes and type, as uploaded by the browser */
@@ -131,8 +134,8 @@ export class FakeFeedback {
         i.updated_at = now; i.last_activity_at = now;
         return i;
       }
-      case 'feedback_staff_list': return [];
-      case 'feedback_mark_read': return null;
+      case 'feedback_staff_list': return this.staffList;
+      case 'feedback_mark_read': { const ids = a.p_ids as string[] | null; for (const n of this.notes) if (!ids || ids.includes(n.id)) n.read_at = n.read_at ?? new Date().toISOString(); return null; }
       default: this.err(`Unknown function ${fn}`);
     }
   }
@@ -140,10 +143,11 @@ export class FakeFeedback {
   rest(table: string, url: URL): unknown[] | undefined {
     const eq = (k: string) => url.searchParams.get(k)?.replace(/^eq\./, '');
     switch (table) {
-      case 'bizops_feedback_issues': return this.issues.filter((i) => this.visible(i) && !i.archived_at);
+      case 'bizops_feedback_issues': { const id = eq('id'); const live = url.searchParams.get('archived_at') === 'is.null'; return this.issues.filter((i) => this.visible(i) && (!id || i.id === id) && (!live || !i.archived_at)); }
       case 'feedback_attachments': return this.attachments.filter((a) => a.issue_id === eq('issue_id') && this.visible(this.issue(a.issue_id)!));
       case 'feedback_events': return this.events.filter((e) => e.issue_id === eq('issue_id') && (this.staff || (e.customer_visible && this.visible(this.issue(e.issue_id)!))));
-      case 'feedback_comments': case 'feedback_dev_links': case 'feedback_notifications': return [];
+      case 'feedback_notifications': return this.notes;
+      case 'feedback_comments': case 'feedback_dev_links': return [];
       default: return undefined;
     }
   }

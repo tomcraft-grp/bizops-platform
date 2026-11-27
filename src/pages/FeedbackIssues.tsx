@@ -6,7 +6,7 @@ import { Archive, Bell, Download, GitBranch, Link2, MessageSquarePlus, RefreshCw
 import {
   DEV_LINK_KINDS, DevLinkKind, FEEDBACK_CATEGORIES, FEEDBACK_PRIORITIES, FeedbackCategory, FeedbackIssue, FeedbackNotification,
   FeedbackPriority, FeedbackStatus, IssueThread, NEXT_STATUSES, StaffMember, FEEDBACK_SLA_DAYS, closingNote, isOverdue,
-  addDevLink, archiveIssue, getThread, issuesToCsv, listFeedback, listNotifications, listStaff, markNotificationsRead, staffComment, staffUpdate, statusMeta,
+  addDevLink, archiveIssue, getIssue, getThread, issuesToCsv, listFeedback, listNotifications, listStaff, markNotificationsRead, staffComment, staffUpdate, statusMeta,
 } from '../lib/feedbackApi';
 import { applyFilter, cardCounts, FEEDBACK_CARDS, FeedbackFilter, NO_FILTER, pressCard, STATUS_OPTIONS, StatusFilter, statusLabel } from '../lib/feedbackFilters';
 import { toast, useLang } from '../domain/store';
@@ -46,7 +46,7 @@ export default function FeedbackIssues() {
     return () => clearInterval(i);
   }, [refresh]);
 
-  const staffName = useCallback((id: string | null) => (id ? staff.find((s) => s.id === id)?.display_name || staff.find((s) => s.id === id)?.email || '—' : ''), [staff]);
+  const staffName = useCallback((id: string | null) => (id ? staff.find((s) => s.id === id)?.display_name || staff.find((s) => s.id === id)?.email || '' : ''), [staff]);   // '' when unknown: the callers fall back to the name stored with the issue
   const filtered = useMemo(() => applyFilter(rows, f, myId), [rows, f, myId]);
   const counts = useMemo(() => cardCounts(rows, f, myId), [rows, f, myId]);
   const others = !!(f.priority || f.category || f.assignee || f.source || f.q.trim());
@@ -126,15 +126,15 @@ export default function FeedbackIssues() {
           }
           empty={<Empty icon={<MessageSquarePlus size={22} />} title={loading ? 'Loading…' : err && !rows.length ? 'Could not load issues:' : 'No issues match'} hint={rows.length ? 'Change the filters, or show all feedback.' : 'Feedback from the customer app and the Feedback button shows up here.'} />}
           cols={[
-            { key: 'id', header: 'Issue ID', render: (r) => <span className="mono">{r.id}</span>, sort: (r) => r.created_at },
+            { key: 'id', header: 'Issue ID', render: (r) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{r.id}</span>, sort: (r) => r.created_at },
             { key: 't', header: 'Subject', render: (r) => <div><b>{r.title}</b><div className="sub">{r.page_name}{r.module_name ? ` · ${r.module_name}` : ''}</div></div> },
             { key: 'by', header: 'Submitted by', render: (r) => <div>{r.submitter_label}<div className="sub">{t(lang, r.source === 'customer' ? 'Customer' : 'Staff')}</div></div>, hideSm: true },
             { key: 'cat', header: 'Category', render: (r) => <CategoryBadge category={r.category} />, hideSm: true },
             { key: 'pr', header: 'Priority', render: (r) => <PriorityBadge priority={r.priority} />, sort: (r) => PRIORITY_RANK[r.priority] ?? 0 },
-            { key: 's', header: 'Status', render: (r) => <div className="row gap-4"><StatusBadge status={r.status} />{isOverdue(r) && <Badge tone="bad">{t(lang, 'Overdue')}</Badge>}</div>, sort: (r) => r.status },
+            { key: 's', header: 'Status', render: (r) => <div className="row gap-4" style={{ flexWrap: 'wrap' }}><StatusBadge status={r.status} />{isOverdue(r) && <Badge tone="bad">{t(lang, 'Overdue')}</Badge>}</div>, sort: (r) => r.status },
             { key: 'as', header: 'Assigned to', render: (r) => staffName(r.assigned_to) || r.handler_label || <span className="muted">—</span>, hideSm: true },
             { key: 'c', header: 'Created', render: (r) => dateTimeFmt(r.created_at), sort: (r) => r.created_at, hideSm: true },
-            { key: 'u', header: 'Last updated', render: (r) => dateTimeFmt(r.last_activity_at), sort: (r) => r.last_activity_at },
+            { key: 'u', header: 'Last updated', render: (r) => dateTimeFmt(r.last_activity_at), sort: (r) => r.last_activity_at, hideSm: true },
           ]}
           initialSort={{ key: 'u', dir: 'desc' }}
         />
@@ -145,7 +145,7 @@ export default function FeedbackIssues() {
   );
 }
 
-function IssueDrawer({ issueId, issue, staff, staffName, onClose, onChanged }: {
+function IssueDrawer({ issueId, issue: rowIssue, staff, staffName, onClose, onChanged }: {
   issueId: string; issue?: FeedbackIssue; staff: StaffMember[]; staffName: (id: string | null) => string; onClose: () => void; onChanged: () => void;
 }) {
   const lang = useLang();
@@ -155,19 +155,28 @@ function IssueDrawer({ issueId, issue, staff, staffName, onClose, onChanged }: {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(''); const [msgFiles, setMsgFiles] = useState<File[]>([]); const [askInfo, setAskInfo] = useState(false);
   const [note, setNote] = useState('');
-  const [rootCause, setRootCause] = useState(issue?.root_cause ?? ''); const [resolution, setResolution] = useState(issue?.resolution ?? '');
+  const [rootCause, setRootCause] = useState(rowIssue?.root_cause ?? ''); const [resolution, setResolution] = useState(rowIssue?.resolution ?? '');
   const [link, setLink] = useState<{ kind: DevLinkKind; ref: string; url: string; env: string }>({ kind: 'commit', ref: '', url: '', env: '' });
   const load = useCallback(() => { getThread(issueId, true).then(setTh).catch((e) => toast('error', (e as Error).message)); }, [issueId]);
   useEffect(() => { load(); }, [load]);
+  // an issue that is not in the list (it was archived, so its notifications still point to it) is read on its own; null = it cannot be opened
+  const [fetched, setFetched] = useState<FeedbackIssue | null | undefined>(undefined);
+  const loadIssue = useCallback(() => { getIssue(issueId).then(setFetched).catch((e) => { toast('error', (e as Error).message); setFetched(null); }); }, [issueId]);
+  useEffect(() => { if (!rowIssue) loadIssue(); }, [rowIssue, loadIssue]);
+  const issue = rowIssue ?? fetched ?? undefined;
   useEffect(() => { setRootCause(issue?.root_cause ?? ''); setResolution(issue?.resolution ?? ''); }, [issue?.root_cause, issue?.resolution]);
 
   const run = async (fn: () => Promise<unknown>, ok?: string) => {
     setBusy(true);
-    try { await fn(); if (ok) toast('success', t(lang, ok)); load(); onChanged(); return true; }
+    try { await fn(); if (ok) toast('success', t(lang, ok)); load(); onChanged(); if (!rowIssue) loadIssue(); return true; }
     catch (e) { toast('error', (e as Error).message); return false; }
     finally { setBusy(false); }
   };
-  if (!issue) return <Drawer title={issueId} onClose={onClose}><div className="center" style={{ padding: 20 }}><div className="spinner" /></div></Drawer>;
+  if (!issue) return (
+    <Drawer title={issueId} onClose={onClose}>
+      {fetched === null ? <Banner tone="warn"><Tx>This issue could not be opened. It may not exist, or you may not have access to it.</Tx></Banner> : <div className="center" style={{ padding: 20 }}><div className="spinner" /></div>}
+    </Drawer>
+  );
 
   const changeStatus = async (to: FeedbackStatus) => {
     let reason: string | undefined;
@@ -195,6 +204,7 @@ function IssueDrawer({ issueId, issue, staff, staffName, onClose, onChanged }: {
   return (
     <Drawer title={<><span className="mono muted" style={{ fontSize: 13 }}>{issue.id}</span> {issue.title}</>} sub={`${issue.submitter_label} · ${dateTimeFmt(issue.created_at)}`} onClose={onClose}>
       <div className="col gap-16">
+        {issue.archived_at && <Banner tone="warn"><Tx>This issue is archived. It is hidden from the list but never deleted.</Tx> {dateTimeFmt(issue.archived_at)}</Banner>}
         <div className="row wrap" style={{ gap: 8 }}><StatusBadge status={issue.status} /><PriorityBadge priority={issue.priority} /><CategoryBadge category={issue.category} /></div>
         <OriginalFeedbackCard issue={issue} />
         <EnglishContextCard issue={issue} attachments={issueFiles} onChanged={onChanged} />
@@ -238,6 +248,7 @@ function IssueDrawer({ issueId, issue, staff, staffName, onClose, onChanged }: {
             <Field label="Assigned to">
               <Select disabled={busy} value={issue.assigned_to ?? ''} onChange={(e) => run(() => staffUpdate(issue.id, { assignedTo: e.target.value || null }), 'Assignment updated')}>
                 <option value="">{t(lang, 'Unassigned')}</option>
+                {issue.assigned_to && !staff.some((s) => s.id === issue.assigned_to) && <option value={issue.assigned_to}>{issue.handler_label || '—'} {t(lang, '(no longer active)')}</option>}
                 {staff.map((s) => <option key={s.id} value={s.id}>{s.display_name || s.email}</option>)}
               </Select>
             </Field>
