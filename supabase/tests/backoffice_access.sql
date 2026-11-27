@@ -27,6 +27,8 @@ select pg_temp.put('M4', (select id::text from public.profiles where role = 'USE
 select pg_temp.chk('F0 fixtures: two super admins and four LINE members', (select count(*) from t_ctx where v is not null) = 6, (select string_agg(k || '=' || coalesce(v, 'NULL'), ',') from t_ctx));
 select pg_temp.put('before_roles', pg_temp.sv($q$select string_agg(id || ':' || role, ',' order by id) from public.profiles$q$));
 select pg_temp.put('before_orders', pg_temp.sv($q$select count(*) from public.shop_orders$q$));
+select pg_temp.put('admins_before', pg_temp.sv($q$select count(*) from public.profiles where role = 'ADMIN'$q$));
+select pg_temp.put('members_audit_before', pg_temp.sv($q$select count(*) from public.auth_audit_logs where action = 'role_change' and detail ->> 'via' = 'line_members'$q$));
 select pg_temp.put('before_audit', pg_temp.sv($q$select count(*) from public.auth_audit_logs$q$));
 -- M2 is disabled and M3 has no LINE id, set up the way the app does (a SUPER_ADMIN acting; a person can never change line_user_id, the database owner can)
 select pg_temp.as_user(pg_temp.c('S')::uuid);
@@ -53,7 +55,7 @@ select pg_temp.chk('G1 a SUPER_ADMIN gives a LINE member back-office access', (p
   and (public.line_member_set_access(pg_temp.c('M1')::uuid, true) ->> 'changed')::boolean = false);
 reset role;
 select pg_temp.chk('G1 the member is now ADMIN (and nobody else changed)', pg_temp.role_of(pg_temp.c('M1')::uuid) = 'ADMIN'
-  and pg_temp.sv($q$select count(*) from public.profiles where role = 'ADMIN'$q$)::int = 1);
+  and pg_temp.sv($q$select count(*) from public.profiles where role = 'ADMIN'$q$)::int = pg_temp.c('admins_before')::int + 1);
 select pg_temp.chk('G1 exactly one audit row: who, whom, from, to, why', pg_temp.audits(pg_temp.c('M1')::uuid) = 1
   and pg_temp.sv(format($q$select (actor_id::text = %L and detail ->> 'from' = 'USER' and detail ->> 'to' = 'ADMIN' and detail ->> 'reason' = 'Shop manager' and detail ->> 'target_name' is not distinct from (select display_name from public.profiles where id = %L))::text from public.auth_audit_logs where action = 'role_change' and detail ->> 'target' = %L and detail ->> 'via' = 'line_members'$q$, pg_temp.c('S'), pg_temp.c('M1'), pg_temp.c('M1')))::boolean);
 select pg_temp.chk('G1 giving it again changed nothing and wrote nothing more', pg_temp.audits(pg_temp.c('M1')::uuid) = 1);
@@ -79,7 +81,7 @@ select pg_temp.err_like('R1 a reason over 200 characters', format($q$select publ
 select pg_temp.err_like('R1 a missing answer', format($q$select public.line_member_set_access(%L::uuid, null)$q$, pg_temp.c('M4')), 'BAD_VALUE%');
 reset role;
 select pg_temp.chk('R2 none of the refusals changed a role or wrote an audit row', pg_temp.role_of(pg_temp.c('M4')::uuid) = 'USER' and pg_temp.role_of(pg_temp.c('M2')::uuid) = 'USER' and pg_temp.role_of(pg_temp.c('M3')::uuid) = 'USER'
-  and pg_temp.role_of(pg_temp.c('S2')::uuid) = 'SUPER_ADMIN' and pg_temp.sv($q$select count(*) from public.auth_audit_logs where action = 'role_change' and detail ->> 'via' = 'line_members'$q$)::int = 1);
+  and pg_temp.role_of(pg_temp.c('S2')::uuid) = 'SUPER_ADMIN' and pg_temp.sv($q$select count(*) from public.auth_audit_logs where action = 'role_change' and detail ->> 'via' = 'line_members'$q$)::int = pg_temp.c('members_audit_before')::int + 1);
 
 -- ================================================================================================ taking access back
 set local role authenticated; select pg_temp.as_user(pg_temp.c('S')::uuid);

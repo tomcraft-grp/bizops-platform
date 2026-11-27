@@ -100,3 +100,55 @@ test('accessible, and no sideways scrolling on a phone', async ({ page }) => {
   const over = await card(page).evaluate((el) => el.scrollWidth - el.clientWidth);
   expect(over).toBeLessThanOrEqual(1);
 });
+
+// ---- several LINE accounts under one staff account (migration 20261128120000_line_multi_link.sql): a code never removes anybody else's link
+test.describe('several LINE accounts', () => {
+  const two = [
+    { line_user_id: 'U-multi-aaaaaaaa01', display_name: 'Somsri', linked_at: '2026-11-28T01:00:00Z' },
+    { line_user_id: 'U-multi-aaaaaaaa02', display_name: 'Malee', linked_at: '2026-11-28T01:05:00Z' },
+  ];
+  test('My LINE lists every linked LINE account, the code dialog names the staff account it links to, and the button offers to add another', async ({ page }) => {
+    const fake = new FakeShop(); fake.ln.s.my_links = [...two]; await openSettings(page, fake);
+    const mine = page.getByTestId('my-links');
+    await expect(mine.locator('li')).toHaveCount(2); await expect(mine).toContainText('Somsri'); await expect(mine).toContainText('Malee');
+    await expect(card(page)).toContainText('Signed in as Staff');
+    await card(page).getByRole('button', { name: 'Add another LINE account' }).click();
+    await expect(card(page)).toContainText('123456'); await expect(card(page)).toContainText('staff account Staff');
+    await expect(card(page)).toContainText('A code never removes anybody else');
+    await expect(card(page)).not.toContainText('\\');                                              // no stray backslash from the apostrophe
+  });
+  test('taking back one LINE account leaves the others', async ({ page }) => {
+    const fake = new FakeShop(); fake.ln.s.my_links = [...two]; await openSettings(page, fake);
+    await page.getByTestId('my-links').locator('li', { hasText: 'Somsri' }).getByRole('button', { name: 'Unlink' }).click();
+    await expect.poll(() => fake.ln.unlinked).toEqual(['U-multi-aaaaaaaa01']);
+    await expect(page.getByTestId('my-links').locator('li')).toHaveCount(1); await expect(page.getByTestId('my-links')).toContainText('Malee');
+  });
+  test('Linked staff (SUPER_ADMIN) shows one row per LINE account of the same staff account, each with its own Unlink', async ({ page }) => {
+    const fake = new FakeShop();
+    fake.ln.s.links = [
+      { profile_id: 'p-1', name: 'AKE', email: 'ake@example.test', line_name: 'Somsri', linked_at: '2026-11-28T01:00:00Z', line_user_id: 'U-multi-aaaaaaaa01' },
+      { profile_id: 'p-1', name: 'AKE', email: 'ake@example.test', line_name: 'Malee', linked_at: '2026-11-28T01:05:00Z', line_user_id: 'U-multi-aaaaaaaa02' },
+      { profile_id: 'p-2', name: 'Oy', email: 'oy@example.test', line_name: 'Oy LINE', linked_at: '2026-11-28T01:10:00Z', line_user_id: 'U-multi-bbbbbbbb01' },
+    ] as never;
+    await openSettings(page, fake);
+    const staff = card(page).locator('section', { has: page.getByRole('heading', { name: 'Linked staff' }) });
+    await expect(staff.locator('li')).toHaveCount(3);
+    await staff.locator('li', { hasText: 'Malee' }).getByRole('button', { name: 'Unlink' }).click();
+    await expect.poll(() => fake.ln.unlinked).toEqual(['U-multi-aaaaaaaa02']);
+    await expect(staff.locator('li')).toHaveCount(2); await expect(staff).toContainText('Somsri'); await expect(staff).toContainText('Oy LINE');
+  });
+  test('a database without the migration still works: one LINE account, the old Unlink', async ({ page }) => {
+    const fake = new FakeShop(); fake.ln.multi = false; fake.ln.s.my_link = { display_name: 'Only one', linked_at: '2026-11-28T01:00:00Z' }; await openSettings(page, fake);
+    await expect(page.getByTestId('my-links').locator('li')).toHaveCount(1); await expect(page.getByTestId('my-links')).toContainText('Only one');
+    await card(page).getByRole('button', { name: 'Unlink' }).first().click();
+    await expect(card(page)).toContainText('Your LINE is not linked'); expect(fake.ln.unlinked).toEqual([]);
+  });
+  test('the Thai text is complete', async ({ page }) => {
+    const fake = new FakeShop(); fake.ln.s.my_links = [...two]; await openSettings(page, fake, 'th');
+    await expect(card(page)).toContainText('เพิ่มบัญชี LINE อีกบัญชี'); await expect(card(page)).toContainText('ทุกบัญชี LINE ที่ผูกไว้');
+    await card(page).getByRole('button', { name: 'เพิ่มบัญชี LINE อีกบัญชี' }).click();
+    await expect(card(page)).toContainText('รหัสนี้ผูกบัญชี LINE กับบัญชีพนักงาน'); await expect(card(page)).toContainText('ไม่ลบการผูกของคนอื่น');
+    const r = await new AxeBuilder({ page }).include('[data-line-settings]').analyze();
+    expect(r.violations.map((v) => v.id)).toEqual([]);
+  });
+});
