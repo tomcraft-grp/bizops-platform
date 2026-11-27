@@ -478,6 +478,60 @@ details.acc > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
 .exp-top { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5; }
 .exp-standalone { min-height: 100vh; background: var(--bg, var(--surface-2, #f6f5f1)); } .exp-main { max-width: 1100px; margin: 0 auto; padding: 16px; }
 .exp-steps { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* daily expense sheet (src/expenses/DailySheet.tsx): one day, one row per expense */
+.xs { display: flex; flex-direction: column; gap: 12px; }
+.xs-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.xs-date { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.xs-date-nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.xs-date-pick { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); color: var(--muted); }
+.xs-date-pick:focus-within { outline: 2px solid color-mix(in srgb, var(--brand) 40%, transparent); border-color: var(--brand); }
+.xs-date-pick input { border: 0; background: transparent; font: inherit; font-weight: 600; color: var(--text); height: 34px; outline: none; color-scheme: light dark; }
+.xs-date-label { display: flex; align-items: center; gap: 8px; font-size: 17px; flex-wrap: wrap; }
+.xs-stats { display: flex; gap: 10px; }
+.xs-stat { display: flex; flex-direction: column; gap: 2px; padding: 8px 14px; border-radius: 10px; background: var(--surface-3); min-width: 110px; }
+.xs-stat span { font-size: 12px; color: var(--text-2); }
+.xs-stat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.xs-stat.main { background: var(--brand-soft); } .xs-stat.main span, .xs-stat.main b { color: var(--brand-text); }
+.xs-others { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn-text); font-size: 13px; }
+.xs-loaderr { display: flex; gap: 8px; align-items: center; }
+.xs-grid { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.xs-row { display: grid; grid-template-columns: 30px minmax(180px, 2.2fr) minmax(150px, 1.4fr) minmax(120px, 1fr) minmax(130px, 1fr) minmax(120px, 1.4fr) 72px; gap: 8px; align-items: start; padding: 8px 12px; border-top: 1px solid var(--hairline); }
+.xs-row > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.xs-hrow { border-top: 0; padding: 10px 12px 6px; background: var(--surface-2); border-radius: var(--radius) var(--radius) 0 0; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.xs-hrow .num { text-align: right; }
+.xs-row.dirty { box-shadow: inset 3px 0 var(--warn); }
+.xs-row.failed { background: var(--crit-soft); box-shadow: inset 3px 0 var(--crit); }
+.xs-n { padding-top: 10px; align-items: center; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.xs-dot { display: inline-block; width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--warn); }
+.xs .input, .xs .select { height: 38px; }
+.xs .input[readonly], .xs .select[disabled] { background: var(--surface); color: var(--text); cursor: progress; }
+.xs-meta { display: flex !important; flex-direction: row !important; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.xs-money { position: relative; display: block; }
+.xs-money i { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-style: normal; color: var(--muted); pointer-events: none; }
+.xs-money .input { padding-left: 24px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.xs-money.bad .input { border-color: var(--crit); }
+.xs-locked { color: var(--text-2); } .xs-locked > span { padding-top: 9px; } .xs-locked > .xs-act { padding-top: 4px; }
+.xs-locked .xs-amt { text-align: right; align-items: flex-end; color: var(--text); font-variant-numeric: tabular-nums; }
+.xs-locked .xs-item b { color: var(--text); font-weight: 600; }
+.xs-act { flex-direction: row !important; justify-content: flex-end; gap: 2px !important; padding-top: 2px; }
+.xs-rowerr { padding: 0 12px 8px 50px; background: var(--crit-soft); }
+.xs-bar { position: sticky; bottom: 0; z-index: 4; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 -4px 18px rgba(11, 11, 11, .07); }
+.xs-bar .btn { padding: 9px 16px; }
+.xs-bar-sum { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.xs-bar-sum b { font-size: 17px; color: var(--text); }
+.xs-bar-act { display: flex; gap: 8px; flex-wrap: wrap; }
+.xs-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
+@media (max-width: 860px) {
+  .xs-hrow, .xs-n, .xs-keys { display: none !important; }
+  .xs-row { grid-template-columns: 1.5fr 1fr auto; grid-template-areas: "item item act" "cat method method" "amt notes notes"; padding: 12px; gap: 8px; }
+  .xs-item { grid-area: item; } .xs-cat { grid-area: cat; } .xs-method { grid-area: method; } .xs-amt { grid-area: amt; } .xs-notes { grid-area: notes; } .xs-act { grid-area: act; }
+  .xs-locked { grid-template-areas: "item item act" "cat method amt" "notes notes notes"; } .xs-locked > span { padding-top: 0; } .xs-locked .xs-notes:empty { display: none; }
+  .xs .input, .xs .select, .xs-date-pick input { font-size: 16px; }
+  .xs-rowerr { padding: 0 12px 10px; }
+  .xs-stats { width: 100%; } .xs-stat { flex: 1; }
+  .xs-bar { gap: 8px; padding: 10px; } .xs-bar-sum { margin-left: 0; flex: 1; justify-content: flex-end; }
+  .xs-bar-act { width: 100%; } .xs-bar-act .btn { flex: 1; }
+}
 @media (max-width: 560px) { .exp-cats { grid-template-columns: repeat(2, 1fr); } .exp-big { font-size: 24px; } .exp-form .exp-actions .btn { flex: 1 1 100%; } }
 
 /* slip review dashboard (finance/SlipReview.tsx) */
