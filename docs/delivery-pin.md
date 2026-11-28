@@ -14,7 +14,7 @@
 
 ## LINE MAN and other couriers
 
-**The LINE order card** of a delivery order with a pin also has the two map buttons (*ดูแผนที่*, *เส้นทางจากร้าน*), a *จุดส่ง* row with the distance and, when the recipient is not the customer, a *ผู้รับ* row (migration `20261128140000_line_card_map.sql` adds the `delivery` key to `line_card_data`; `line-dispatch` draws the buttons). Details in docs/line-notifications.md.
+**The LINE order card** of a delivery order with a pin also has the two map buttons (*ดูแผนที่*, *เส้นทางจากร้าน*), a *จุดส่ง* row with the distance and, when the recipient is not the customer, a *ผู้รับ* row (**LIVE 2026-11-28 20:22**; migration `20261128140000_line_card_map.sql` adds the `delivery` key to `line_card_data`; `line-dispatch` draws the buttons). Details in docs/line-notifications.md.
 
 LINE MAN has no public booking API that was verified, so there is none here. The workflow is link-and-copy: *Open route from the store* → check it in Google Maps → *Copy delivery details* → paste into the booking. If an API is ever verified, it would take the same stored fields.
 
