@@ -22,7 +22,7 @@ async function boot(page: Page, o: { role?: string; lang?: 'en' | 'th'; path?: s
   return { shop, fb, errors };
 }
 const tr = (page: Page) => page.evaluate(() => (window as unknown as { __tr: { state: string; creates: number; calls: string[]; downloads: number } }).__tr);
-const grantClipboard = (page: Page) => page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:4179' });
+const grantClipboard = (page: Page) => page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://localhost:${process.env.SHOP_PORT ?? 4179}` });
 
 async function openWidget(page: Page) {
   await page.locator('.feedback-fab').click();

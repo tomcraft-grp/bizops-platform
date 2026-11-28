@@ -10,7 +10,7 @@ test.describe.configure({ mode: 'serial', timeout: 150_000 });
 const pic = (n: string) => readFileSync(new URL(`./slips/${n}`, import.meta.url));
 const t = (k: K, v?: Record<string, string | number>) => tr('th', k, v);
 /** every request that leaves this site and the fake database: there must be none */
-function outside(page: Page) { const out: string[] = []; page.on('request', (r) => { const u = r.url(); if (!/^(data|blob):/.test(u) && !/localhost:4179|hlvravynjalculvplrxc\.supabase\.co|img\.test/.test(u)) out.push(u); }); return out; }
+function outside(page: Page) { const out: string[] = []; page.on('request', (r) => { const u = r.url(); if (!/^(data|blob):/.test(u) && !/localhost:[0-9]+|hlvravynjalculvplrxc\.supabase\.co|img\.test/.test(u)) out.push(u); }); return out; }
 function watch(page: Page) { const errs: string[] = []; page.on('pageerror', (e) => errs.push(String(e))); return errs; }
 
 test.describe('staff', () => {

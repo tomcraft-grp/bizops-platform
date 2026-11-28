@@ -212,7 +212,7 @@ test.describe('cart', () => {
 
 test.describe('checkout and payment', () => {
   test('validates the form, confirms, creates ONE order priced by the server, then shows the payment screen', async ({ page }) => {
-    const fake = new FakeShop(); fake.decorate(); await open(page, fake);
+    const fake = new FakeShop(); fake.decorate(); fake.profile.phone = ''; await open(page, fake);                       // an account without a phone: the checkout asks for it
     await tab(page, t('nav.shop')).click(); await addFromCatalog(page, 'FG-000001');
     await tab(page, t('nav.cart')).click();
     await page.getByRole('button', { name: t('cart.checkout') }).click();
