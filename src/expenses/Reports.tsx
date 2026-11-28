@@ -30,7 +30,7 @@ export function Reports() {
     setChecking(true);
     try {
       const { rows: claims } = await listClaims({ status: 'posted', from, to }, 0, 500);
-      const slim = (c: Claim) => ({ id: c.id, expense_no: c.expense_no, amount_paid: Number(c.amount_paid), wht_amount: Number(c.wht_amount), journal_no: c.journal_no, status: c.status });
+      const slim = (c: Claim) => ({ id: c.id, expense_no: c.expense_no, amount_paid: Number(c.amount_paid), wht_amount: Number(c.wht_amount), journal_no: c.journal_no, status: c.status, gl_queue_id: c.gl_queue_id ?? null });
       setRec(reconcileClaims(db, claims.map(slim)));
     } catch (e) { toast('error', (e as Error).message); } finally { setChecking(false); }
   };

@@ -40,11 +40,13 @@ export interface LedgerRow extends Omit<WalletTxn, 'bank' | 'note'> {
   created_by_email: string | null; approved_by_email: string | null; reversal_of: string | null;
 }
 export interface GlPlanLine { side: 'dr' | 'cr'; role: string; amount: number; bank_account_id?: string; wallet?: boolean; vat?: 'split' }
-export type GlEvent = 'INVOICE_ISSUE' | 'INVOICE_CANCEL' | 'BANK_RECEIPT' | 'RECEIPT_REAPPLY' | 'RECEIPT_REVERSAL' | 'WALLET_DEPOSIT' | 'WALLET_PAYMENT' | 'WALLET_REFUND' | 'WALLET_ADJUSTMENT' | 'WALLET_REVERSAL' | 'CASH_RECEIPT';
+export type GlEvent = 'INVOICE_ISSUE' | 'INVOICE_CANCEL' | 'BANK_RECEIPT' | 'RECEIPT_REAPPLY' | 'RECEIPT_REVERSAL' | 'WALLET_DEPOSIT' | 'WALLET_PAYMENT' | 'WALLET_REFUND' | 'WALLET_ADJUSTMENT' | 'WALLET_REVERSAL' | 'CASH_RECEIPT' | 'EXPENSE_PAYMENT' | 'EXPENSE_REVERSAL';
 export interface GlRow {
   id: string; seq: number; event_type: GlEvent; ref_type: string; ref_id: string; ref_no: string | null; customer_id: string | null; customer_name: string | null; event_date: string; amount: number;
   plan: GlPlanLine[]; depends_on: string | null; status: 'pending' | 'posted' | 'void'; journal_no: string | null; posted_at: string | null; void_reason: string | null;
   blocked_by: { id: string; ref_no: string | null; status: string } | null; banks: Record<string, { code: string; gl_account_code: string | null }>;
+  /** expense rows: what the expense was (number, vendor, claimable VAT, cash or bank) */
+  detail?: Record<string, unknown> | null;
 }
 export interface FinanceSettings {
   min_deposit: number; max_deposit: number; max_open_deposits: number; adjustment_limit: number; adjustment_role: string; invoice_vat_mode: 'unset' | 'none' | 'inclusive'; vat_rate: number; updated_at: string;

@@ -1,40 +1,46 @@
 // Daily Expenses (บันทึกรายจ่ายประจำวัน): one page, tabs depend on the person's expense role.
-//   employee   record expenses, see own          manager   + approve / reject      accountant  + review tax, post, reports, settings
-// It runs in two places: inside the back office (/expenses, where the ledger lives, so posting and reports work) and as a light
-// phone-friendly page (/my-expenses) for people who are not back-office staff.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+//   employee   record expenses (drafts), see own
+//   manager / accountant / admin   + review and "approve & post to accounting" in bulk (one step, done in the central database), bank balances
+//   accountant / admin             + tax review, reversal, reports (device ledger), settings
+// It runs in two places: inside the back office (/expenses, where the device ledger lives, so its reports work) and as a light
+// phone-friendly page (/my-expenses) for people who are not back-office staff. Approving & posting works in both: it is a database step.
+import { useCallback, useEffect, useState } from 'react';
 import { Languages, LogOut, X } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
-import { setLang, toast, useDB, useLang } from '../domain/store';
-import { claimJournal, planExpensePosting } from '../domain/expenseLedger';
+import { setLang, useLang } from '../domain/store';
 import { Badge, Banner, Button, Card, ErrText, PageHead, Tabs } from '../ui/kit';
 import { BrandMark } from '../ui/Brand';
 import { BRAND } from '../brand';
-import { dayKey } from '../lib/util';
-import { STATUS_META, canDo, dashboard, loadCategories, loadSettings, markPosted, myRole, useT, type Category, type Claim, type ExpenseCap, type ExpenseRole, type Settings, type Status } from './api';
-import { ExpenseCtx, claimToPosting, useExpense } from './parts';
+import {
+  STATUS_META, canDo, dashboard, loadBanks, loadCategories, loadProducts, loadSettings, myRole, useT,
+  type BankOption, type Category, type Claim, type ExpenseCap, type ExpenseRole, type ProductOption, type Settings, type Status,
+} from './api';
+import { ExpenseCtx, useExpense } from './parts';
 import { DailySheet } from './DailySheet';
 import { ClaimList } from './ClaimList';
 import { ClaimDrawer } from './ClaimDrawer';
 import { Dashboard } from './Dashboard';
 import { SettingsPanel } from './SettingsPanel';
 import { Reports } from './Reports';
+import { PostQueue } from './PostQueue';
+import { BankBooks } from '../finance/BankBooks';
 
-type Tab = 'new' | 'mine' | 'overview' | 'approve' | 'post' | 'reports' | 'settings';
+type Tab = 'new' | 'mine' | 'overview' | 'post' | 'banks' | 'reports' | 'settings';
+interface Boot { role: ExpenseRole | null; categories: Category[]; settings: Settings | null; products: ProductOption[]; banks: BankOption[] }
 
 export default function ExpensesPage({ mode }: { mode: 'backoffice' | 'standalone' }) {
   const T = useT();
   const lang = useLang();
   const { session, signOut } = useAuth();
   const backoffice = mode === 'backoffice';
-  const [boot, setBoot] = useState<{ role: ExpenseRole | null; categories: Category[]; settings: Settings | null } | null>(null);
+  const [boot, setBoot] = useState<Boot | null>(null);
   const [err, setErr] = useState('');
   const load = useCallback(async () => {
     try {
       const role = await myRole();
-      if (!role) { setBoot({ role: null, categories: [], settings: null }); return; }
-      const [categories, settings] = await Promise.all([loadCategories(), loadSettings()]);
-      setBoot({ role, categories, settings }); setErr('');
+      if (!role) { setBoot({ role: null, categories: [], settings: null, products: [], banks: [] }); return; }
+      const [categories, settings, products, banks] = await Promise.all([loadCategories(), loadSettings(), loadProducts(), loadBanks()]);
+      setBoot({ role, categories, settings, products, banks }); setErr('');
     } catch (e) { setErr((e as Error).message); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -47,11 +53,12 @@ export default function ExpensesPage({ mode }: { mode: 'backoffice' | 'standalon
     const value = {
       role, userId: session?.user.id ?? '', settings: boot.settings, categories: boot.categories, catById: Object.fromEntries(boot.categories.map((c) => [c.id, c])),
       backoffice, reloadConfig: load, can: (cap: ExpenseCap) => canDo(role, cap),
+      products: boot.products, productBySku: Object.fromEntries(boot.products.map((p) => [p.sku_code, p])), banks: boot.banks, bankById: Object.fromEntries(boot.banks.map((b) => [b.id, b])),
     };
     return <ExpenseCtx.Provider value={value}><Workspace /></ExpenseCtx.Provider>;
   })();
 
-  if (backoffice) return <><PageHead title="Daily expenses" desc={T('Record and manage your daily expenses: pick a day, type one row per expense, save. A manager approves them, then the accountant checks the tax and posts them to the books.', 'บันทึกและจัดการรายจ่ายประจำวัน: เลือกวัน พิมพ์รายจ่ายทีละแถว แล้วกดบันทึก ผู้จัดการอนุมัติ จากนั้นนักบัญชีตรวจภาษีและลงบัญชี')} />{body}</>;
+  if (backoffice) return <><PageHead title="Daily expenses" desc={T('Record daily expenses: pick a day, type one row per expense (or pick a product), save. An authorised person reviews them and approves & posts them to accounting in one step; bank transfers move the bank balance at that moment.', 'บันทึกรายจ่ายประจำวัน: เลือกวัน พิมพ์รายจ่ายทีละแถว (หรือเลือกสินค้า) แล้วกดบันทึก ผู้มีสิทธิ์ตรวจแล้ว “อนุมัติและลงบัญชี” ในขั้นตอนเดียว รายการโอนเงินจะตัดยอดบัญชีธนาคารทันทีที่ลงบัญชี')} />{body}</>;
   return (
     <div className="exp-standalone">
       <header className="exp-top">
@@ -68,91 +75,61 @@ export default function ExpensesPage({ mode }: { mode: 'backoffice' | 'standalon
 
 function Workspace() {
   const T = useT();
-  const db = useDB();
-  const { can, backoffice, role, catById, settings } = useExpense();
-  const [tab, setTab] = useState<Tab>(can('approve') ? 'approve' : can('post') ? 'overview' : 'new');
+  const { can, backoffice, userId, role } = useExpense();
+  const canPost = can('approve_post');
+  const [tab, setTab] = useState<Tab>(canPost ? 'post' : 'new');
   const [openId, setOpenId] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-  const [counts, setCounts] = useState({ submitted: 0, approved: 0 });
+  const [open, setOpen] = useState(0);
   const refresh = () => setTick((x) => x + 1);
   useEffect(() => {
     let live = true;
-    dashboard({}).then((d) => live && setCounts({ submitted: d.by_status.submitted?.n ?? 0, approved: d.by_status.approved?.n ?? 0 })).catch(() => undefined);
+    if (canPost) dashboard({}).then((d) => live && setOpen((d.by_status.draft?.n ?? 0) + (d.by_status.submitted?.n ?? 0) + (d.by_status.approved?.n ?? 0))).catch(() => undefined);
     return () => { live = false; };
-  }, [tick]);
-  const { userId } = useExpense();
-  const showPost = can('post') && backoffice;
-
-  // A claim that was posted to this ledger but whose status could not be updated (connection lost) is finished here automatically.
-  const syncPosted = async (rows: Claim[]) => {
-    let n = 0;
-    for (const c of rows) {
-      if (c.status !== 'approved' || !c.reviewed_at) continue;
-      const j = claimJournal(db, c.id);
-      if (!j) continue;
-      try { await markPosted(c.id, j.no, dayKey(j.date)); n++; } catch { /* the accountant will see it again next time */ }
-    }
-    if (n) { toast('success', T(`${n} expense(s) already in the ledger were marked as posted`, `มี ${n} รายการที่ลงบัญชีไปแล้ว ระบบอัปเดตสถานะให้แล้ว`)); refresh(); }
-  };
+  }, [tick, canPost]);
 
   const tabs = [
     { v: 'new' as Tab, label: T('Record expenses', 'บันทึกรายจ่าย') }, { v: 'mine' as Tab, label: T('My expenses', 'รายจ่ายของฉัน') }, { v: 'overview' as Tab, label: T('Overview', 'ภาพรวม') },
-    ...(can('approve') ? [{ v: 'approve' as Tab, label: T('Approvals', 'รออนุมัติ'), count: counts.submitted || '' }] : []),
-    ...(showPost ? [{ v: 'post' as Tab, label: T('Accounting', 'ลงบัญชี'), count: counts.approved || '' }, { v: 'reports' as Tab, label: T('Reports', 'รายงาน') }] : []),
+    ...(canPost ? [{ v: 'post' as Tab, label: T('Approve & post', 'อนุมัติและลงบัญชี'), count: open || '' }, { v: 'banks' as Tab, label: T('Bank accounts', 'บัญชีธนาคาร') }] : []),
+    ...(can('post') && backoffice ? [{ v: 'reports' as Tab, label: T('Reports', 'รายงาน') }] : []),
     ...(can('config') || can('manage_roles') ? [{ v: 'settings' as Tab, label: T('Settings', 'ตั้งค่า') }] : []),
   ];
-  const open = (c: Claim) => setOpenId(c.id);
+  const openClaim = (c: Claim) => setOpenId(c.id);
 
   return (
     <>
       <HowItWorks />
-      {role && can('post') && !backoffice && counts.approved > 0 && <div className="mb16"><Banner>{T(`${counts.approved} approved expense(s) are waiting to be posted. Posting is done in the back office (Daily expenses → Accounting).`, `มี ${counts.approved} รายการที่อนุมัติแล้วรอลงบัญชี การลงบัญชีทำในหลังบ้าน (รายจ่ายประจำวัน → ลงบัญชี)`)}</Banner></div>}
       <Tabs value={tab} onChange={setTab} tabs={tabs} />
       {tab === 'new' && <DailySheet refreshKey={tick} onOpen={setOpenId} onChanged={refresh} />}
-      {tab === 'mine' && <Card flush title={T('My expenses', 'รายจ่ายของฉัน')}><ClaimList filters={{ employee: userId }} refreshKey={tick} onOpen={open} empty={<div className="card-b muted">{T('You have not recorded any expenses yet. Use “Record expenses”.', 'คุณยังไม่ได้บันทึกรายจ่าย กดแท็บ “บันทึกรายจ่าย”')}</div>} /></Card>}
-      {tab === 'overview' && <Dashboard onOpen={open} refreshKey={tick} />}
-      {tab === 'approve' && <Card flush title={T('Waiting for your approval', 'รอการอนุมัติจากคุณ')} sub={T('Open an expense to see the receipt, then approve or reject it. You cannot approve your own.', 'เปิดรายการเพื่อดูใบเสร็จ แล้วอนุมัติหรือไม่อนุมัติ คุณอนุมัติรายการของตัวเองไม่ได้')}><ClaimList filters={{ status: 'submitted' }} refreshKey={tick} onOpen={open} showEmployee empty={<div className="card-b muted">{T('Nothing is waiting for approval.', 'ไม่มีรายการรออนุมัติ')}</div>} /></Card>}
-      {tab === 'post' && showPost && (
-        <Card flush title={T('Approved: ready for accounting', 'อนุมัติแล้ว: รอลงบัญชี')} sub={T('Check the tax treatment and account, then post. The journal is shown before anything is saved.', 'ตรวจภาษีและบัญชี แล้วลงบัญชี ระบบแสดงรายการบัญชีให้ดูก่อนบันทึก')}>
-          <ClaimList filters={{ status: 'approved' }} refreshKey={tick} onOpen={open} showEmployee extraHeader={T('Check', 'ตรวจสอบ')} onLoaded={syncPosted}
-            extra={(c) => <Ready claim={c} />} empty={<div className="card-b muted">{T('Nothing is waiting to be posted.', 'ไม่มีรายการรอลงบัญชี')}</div>} />
-        </Card>)}
-      {tab === 'reports' && showPost && <Reports />}
+      {tab === 'mine' && <Card flush title={T('My expenses', 'รายจ่ายของฉัน')}><ClaimList filters={{ employee: userId }} refreshKey={tick} onOpen={openClaim} empty={<div className="card-b muted">{T('You have not recorded any expenses yet. Use “Record expenses”.', 'คุณยังไม่ได้บันทึกรายจ่าย กดแท็บ “บันทึกรายจ่าย”')}</div>} /></Card>}
+      {tab === 'overview' && <Dashboard onOpen={openClaim} refreshKey={tick} />}
+      {tab === 'post' && canPost && <PostQueue refreshKey={tick} onOpen={setOpenId} onChanged={refresh} />}
+      {tab === 'banks' && canPost && <BankBooks refreshKey={tick} canManage={role === 'admin'} onOpenExpense={setOpenId} />}
+      {tab === 'reports' && can('post') && backoffice && <Reports />}
       {tab === 'settings' && <SettingsPanel />}
       {openId && <ClaimDrawer id={openId} onClose={() => setOpenId(null)} onChanged={refresh} />}
-      <span hidden>{Object.keys(catById).length}{settings.vat_rate}</span>
     </>
   );
-}
-
-/** Quick traffic light for the accounting queue: would this claim post cleanly right now? */
-function Ready({ claim }: { claim: Claim }) {
-  const T = useT();
-  const db = useDB();
-  const { catById, settings } = useExpense();
-  const plan = useMemo(() => planExpensePosting(db, claimToPosting(claim, catById[claim.category_id], { reviewed: true }), { whtAccount: settings.wht_account_code, fixedAssetAccount: settings.fixed_asset_account_code, fixedAssetWarnAmount: Number(settings.fixed_asset_warn_amount) }), [db.accounts, db.journals, db.meta.lockedUntil, claim, catById, settings]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (plan.errors.length) return <Badge tone="bad" dot>{T(`${plan.errors.length} to fix`, `ต้องแก้ ${plan.errors.length}`)}</Badge>;
-  return <Badge tone={claim.reviewed_at ? 'good' : 'warn'} dot>{claim.reviewed_at ? T('Ready to post', 'พร้อมลงบัญชี') : T('Needs tax review', 'รอตรวจภาษี')}</Badge>;
 }
 
 /** Plain-language guide for people without accounting knowledge. Shown the first time, then one click away. */
 function HowItWorks() {
   const T = useT();
   const lang = useLang();
-  const [show, setShow] = useState(() => { try { return !localStorage.getItem('bizops.expenses.guide'); } catch { return true; } });
-  const hide = () => { setShow(false); try { localStorage.setItem('bizops.expenses.guide', '1'); } catch { /* ignore */ } };
+  const [show, setShow] = useState(() => { try { return !localStorage.getItem('bizops.expenses.guide.v2'); } catch { return true; } });
+  const hide = () => { setShow(false); try { localStorage.setItem('bizops.expenses.guide.v2', '1'); } catch { /* ignore */ } };
   if (!show) return <div className="mb16"><Button size="sm" variant="ghost" onClick={() => setShow(true)}>{T('How does this work?', 'ใช้งานอย่างไร?')}</Button></div>;
-  const steps: Status[] = ['draft', 'submitted', 'approved', 'posted'];
+  const steps: Status[] = ['draft', 'posted'];
   return (
     <Card className="mb16" title={T('How daily expenses work', 'รายจ่ายประจำวันทำงานอย่างไร')} actions={<Button size="sm" variant="ghost" icon aria-label={T('Close', 'ปิด')} onClick={hide}><X size={15} /></Button>}>
       <div className="col gap-12">
-        <div className="exp-steps">{steps.map((s, i) => <span key={s} className="row gap-6"><Badge tone={STATUS_META[s].tone} dot>{lang === 'th' ? STATUS_META[s].th : STATUS_META[s].en}</Badge>{i < steps.length - 1 && <span className="muted">→</span>}</span>)}</div>
+        <div className="exp-steps">{steps.map((s, i) => <span key={s} className="row gap-6"><Badge tone={STATUS_META[s].tone} dot>{lang === 'th' ? STATUS_META[s].th : STATUS_META[s].en}</Badge>{i < steps.length - 1 && <span className="muted">→ {T('review', 'ตรวจ')} →</span>}</span>)}</div>
         <ol className="exp-list">
-          <li><b>{T('Employee:', 'พนักงาน:')}</b> {T('pick the day, type one row per expense (item, category, amount) and press “Save”. Saved rows stay editable; when the day is complete press “Send day for approval”. To attach a receipt photo, open the row or use “Detailed entry”. Not sure about VAT? The accountant will check.', 'เลือกวัน พิมพ์รายจ่ายทีละแถว (รายการ หมวดหมู่ จำนวนเงิน) แล้วกด “บันทึก” แถวที่บันทึกแล้วยังแก้ไขได้ เมื่อครบทั้งวันกด “ส่งอนุมัติทั้งวัน” ถ้าต้องแนบรูปใบเสร็จ เปิดดูรายการนั้นหรือใช้ “บันทึกแบบละเอียด” ไม่แน่ใจเรื่อง VAT นักบัญชีจะตรวจให้')}</li>
-          <li><b>{T('Manager:', 'ผู้จัดการ:')}</b> {T('checks the receipt and approves or rejects (with a reason). Nobody approves their own expense.', 'ตรวจใบเสร็จ แล้วอนุมัติหรือไม่อนุมัติ (ใส่เหตุผล) ไม่มีใครอนุมัติรายจ่ายของตัวเองได้')}</li>
-          <li><b>{T('Accountant:', 'นักบัญชี:')}</b> {T('confirms VAT and withholding tax, sees the exact journal, and posts it to the books. Mistakes are fixed by a reversal, never by deleting.', 'ยืนยัน VAT และภาษีหัก ณ ที่จ่าย ดูรายการบัญชีที่จะลง แล้วบันทึกบัญชี แก้ไขข้อผิดพลาดด้วยการกลับรายการ ไม่ลบทิ้ง')}</li>
+          <li><b>{T('Record:', 'บันทึก:')}</b> {T('pick the day, type one row per expense or pick a product from the list (its category fills itself in), choose how it was paid — for a transfer or QR also the bank account — and press “Save”. Saved rows are drafts and stay editable until they are posted.', 'เลือกวัน พิมพ์รายจ่ายทีละแถว หรือเลือกสินค้าจากรายการ (หมวดหมู่จะเติมให้อัตโนมัติ) เลือกวิธีจ่าย ถ้าโอนหรือจ่าย QR ให้เลือกบัญชีธนาคารด้วย แล้วกด “บันทึก” รายการที่บันทึกเป็นแบบร่างและแก้ไขได้จนกว่าจะลงบัญชี')}</li>
+          <li><b>{T('Review:', 'ตรวจสอบ:')}</b> {T('an authorised person checks the rows and receipts, marks them reviewed or sends one back with a reason.', 'ผู้มีสิทธิ์ตรวจรายการและใบเสร็จ ทำเครื่องหมายว่าตรวจแล้ว หรือส่งกลับให้แก้พร้อมเหตุผล')}</li>
+          <li><b>{T('Approve & post:', 'อนุมัติและลงบัญชี:')}</b> {T('select many rows at once and press “Approve & post to accounting”. A summary shows the count, the total, the payment methods and the bank accounts first. A transfer takes the money off that bank account at this moment, once only. Mistakes are fixed by a reversal, never by deleting.', 'เลือกหลายรายการพร้อมกันแล้วกด “อนุมัติและลงบัญชี” ระบบแสดงสรุปจำนวนรายการ ยอดรวม วิธีจ่าย และบัญชีธนาคารก่อนยืนยัน รายการโอนจะตัดยอดบัญชีธนาคารนั้นทันทีเพียงครั้งเดียว แก้ไขข้อผิดพลาดด้วยการกลับรายการ ไม่ลบทิ้ง')}</li>
         </ol>
-        <div className="muted">{T('“Rejected” returns to the employee to fix and send again. “Cancelled” expenses are kept for the record.', '“ไม่อนุมัติ” จะกลับไปให้พนักงานแก้ไขแล้วส่งใหม่ “ยกเลิก” จะเก็บไว้เป็นหลักฐาน')}</div>
+        <div className="muted">{T('“Sent back” returns to the employee to fix and save again. “Cancelled” expenses are kept for the record.', '“ส่งกลับ” จะกลับไปให้พนักงานแก้ไขแล้วบันทึกใหม่ “ยกเลิก” จะเก็บไว้เป็นหลักฐาน')}</div>
         <div><Button size="sm" variant="primary" onClick={hide}>{T('Got it', 'เข้าใจแล้ว')}</Button></div>
       </div>
     </Card>

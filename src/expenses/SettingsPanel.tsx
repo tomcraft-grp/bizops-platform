@@ -21,8 +21,9 @@ export function SettingsPanel() {
   const today = dayKey(new Date());
   const [edit, setEdit] = useState<Category | 'new' | null>(null);
   const acctName = (code: string | null) => { const a = code ? db.accounts.find((x) => x.code === code) : undefined; return a ? (lang === 'th' ? a.nameTh : a.name) : ''; };
-  const problem = (c: Category) => (backoffice ? accountProblem(db, c.treatment, c.account_code, today) : null);
-  const broken = categories.filter((c) => c.active && (!c.account_code || problem(c)));
+  // a stock category posts through a ledger posting role (inventory), not through an account code
+  const problem = (c: Category) => (backoffice && !c.posting_role ? accountProblem(db, c.treatment, c.account_code, today) : null);
+  const broken = categories.filter((c) => c.active && !c.posting_role && (!c.account_code || problem(c)));
 
   return (
     <div className="col gap-16">
@@ -34,12 +35,12 @@ export function SettingsPanel() {
         <DataTable rows={categories} rowKey={(c) => c.id} pageSize={20}
           cols={[
             { key: 'n', header: T('Category', 'หมวดหมู่'), sort: (c) => c.sort, render: (c) => <span className="row gap-8"><CatIcon name={c.icon} size={18} /><span><b>{catName(lang, c)}</b><div className="sub">{lang === 'th' ? c.name_en : c.name_th}</div></span></span> },
-            { key: 't', header: T('Treatment', 'การบันทึกบัญชี'), hideSm: true, render: (c) => c.treatment === 'fixed_asset' ? <Badge tone="info">{T('Fixed asset', 'สินทรัพย์ถาวร')}</Badge> : <Badge>{T('Expense', 'ค่าใช้จ่าย')}</Badge> },
-            { key: 'a', header: T('Posts to account', 'ลงบัญชี'), render: (c) => { const p = problem(c); return c.account_code ? <><b>{c.account_code}</b> {acctName(c.account_code)}{p && <div className="exp-err"><AlertTriangle size={12} />{' '}{p.msg}</div>}</> : <Badge tone="bad">{T('Not mapped', 'ยังไม่แมป')}</Badge>; } },
+            { key: 't', header: T('Treatment', 'การบันทึกบัญชี'), hideSm: true, render: (c) => c.treatment === 'inventory' ? <Badge tone="good">{T('Stock (products)', 'สินค้าคงคลัง (สินค้า)')}</Badge> : c.treatment === 'fixed_asset' ? <Badge tone="info">{T('Fixed asset', 'สินทรัพย์ถาวร')}</Badge> : <Badge>{T('Expense', 'ค่าใช้จ่าย')}</Badge> },
+            { key: 'a', header: T('Posts to account', 'ลงบัญชี'), render: (c) => { const p = problem(c); if (c.posting_role) return <span>{c.posting_role === 'inv_materials' ? T('Inventory – raw & packaging (posting role)', 'สินค้าคงคลัง – วัตถุดิบและบรรจุภัณฑ์ (ตามการแมปบัญชี)') : T('Inventory – goods & finished (posting role)', 'สินค้าคงคลัง – สินค้าสำเร็จรูป (ตามการแมปบัญชี)')}<div className="sub">{T(`Products of class ${c.product_class === 'FG' ? 'FG' : 'RM / WIP'} are mapped here`, `สินค้าประเภท ${c.product_class === 'FG' ? 'FG' : 'RM / WIP'} จะมาที่หมวดนี้อัตโนมัติ`)}</div></span>; return c.account_code ? <><b>{c.account_code}</b> {acctName(c.account_code)}{p && <div className="exp-err"><AlertTriangle size={12} />{' '}{p.msg}</div>}</> : <Badge tone="bad">{T('Not mapped', 'ยังไม่แมป')}</Badge>; } },
             { key: 'x', header: T('Default tax', 'ภาษีเริ่มต้น'), hideSm: true, render: (c) => (lang === 'th' ? TAX_META[c.default_tax_type].th : TAX_META[c.default_tax_type].en) },
             { key: 'w', header: T('Default WHT', 'หัก ณ ที่จ่ายเริ่มต้น'), num: true, hideSm: true, render: (c) => (c.default_wht_rate != null ? `${c.default_wht_rate}%` : <span className="muted">{T('none', 'ไม่มี')}</span>) },
             { key: 's', header: T('Status', 'สถานะ'), render: (c) => (c.active ? <Badge tone="good" dot>{T('In use', 'ใช้งาน')}</Badge> : <Badge dot>{T('Hidden', 'ซ่อน')}</Badge>) },
-            { key: 'e', header: '', render: (c) => canConfig && backoffice && <Button size="sm" variant="ghost" icon aria-label={T('Edit', 'แก้ไข')} onClick={() => setEdit(c)}><Pencil size={14} /></Button> },
+            { key: 'e', header: '', render: (c) => canConfig && backoffice && !c.posting_role && <Button size="sm" variant="ghost" icon aria-label={T('Edit', 'แก้ไข')} onClick={() => setEdit(c)}><Pencil size={14} /></Button> },
           ]} />
         {canConfig && !backoffice && <div className="card-b muted">{T('Open Daily expenses inside the back office to change account mappings (they are checked against the ledger).', 'เปิดรายจ่ายประจำวันในหลังบ้านเพื่อแก้การแมปบัญชี (ระบบตรวจกับสมุดบัญชีให้)')}</div>}
       </Card>

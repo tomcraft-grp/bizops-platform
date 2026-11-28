@@ -3,9 +3,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, ChevronDown, ChevronUp, FileUp, X } from 'lucide-react';
 import { toast, useLang } from '../domain/store';
 import { calcExpenseTax, type TaxType } from '../domain/expenseLedger';
-import { Button, Field, Input, Textarea } from '../ui/kit';
+import { Button, Field, Input, Select, Textarea } from '../ui/kit';
 import { cx, dayKey, money } from '../lib/util';
-import { METHOD_META, TAX_META, addAttachment, catName, listClaims, removeAttachment, saveClaim, submitClaim, useT, type Attachment, type Claim, type PayMethod } from './api';
+import { CLASS_META, METHOD_META, TAX_META, addAttachment, bankLabel, catName, listClaims, needsBank, removeAttachment, saveClaim, useT, type Attachment, type Claim, type PayMethod, type ProductOption } from './api';
 import { CatIcon, useExpense } from './parts';
 
 const todayKey = () => dayKey(new Date());
@@ -13,9 +13,11 @@ const todayKey = () => dayKey(new Date());
 export function ExpenseForm({ claim, existing = [], defaultDate, onDone }: { claim?: Claim; existing?: Attachment[]; /** the day a new expense starts on (the daily sheet's day) */ defaultDate?: string; onDone: (c: Claim, submitted: boolean) => void }) {
   const T = useT();
   const lang = useLang();
-  const { categories, catById, settings } = useExpense();
+  const { categories, catById, settings, products, productBySku, banks, bankById } = useExpense();
   const active = useMemo(() => categories.filter((c) => c.active), [categories]);
   const [catId, setCatId] = useState(claim?.category_id ?? '');
+  const [sku, setSku] = useState<string>(claim?.sku_code ?? '');
+  const [bankId, setBankId] = useState<string>(claim?.bank_account_id ?? (banks.length === 1 ? banks[0].id : ''));
   const [amount, setAmount] = useState(claim ? String(claim.tax_type === 'vat_excluded' ? Number(claim.amount_paid) - Number(claim.vat_amount) : claim.amount_paid) : '');
   const [date, setDate] = useState(claim?.expense_date ?? defaultDate ?? todayKey());
   const [method, setMethod] = useState<PayMethod>(claim?.payment_method ?? 'cash');
@@ -29,7 +31,7 @@ export function ExpenseForm({ claim, existing = [], defaultDate, onDone }: { cla
   const [files, setFiles] = useState<File[]>([]);
   const [saved, setSaved] = useState<Attachment[]>(existing);
   const [recent, setRecent] = useState<string[]>([]);
-  const [busy, setBusy] = useState<'' | 'draft' | 'submit'>('');
+  const [busy, setBusy] = useState<'' | 'draft'>('');
   const [errs, setErrs] = useState<Record<string, string>>({});
   const camera = useRef<HTMLInputElement>(null);
   const picker = useRef<HTMLInputElement>(null);
@@ -53,6 +55,16 @@ export function ExpenseForm({ claim, existing = [], defaultDate, onDone }: { cla
     if (c && !desc.trim()) setDesc(catName(lang, c));
     if (c && !claim) setTaxType(settings.vat_registered ? c.default_tax_type : 'none');
   };
+  const productName = (p: ProductOption) => (lang === 'th' ? p.name_th || p.name_en : p.name_en || p.name_th);
+  // a product: the category comes from its catalogue class (still changeable below), the description from its name
+  const pickProduct = (code: string) => {
+    const prev = sku ? productBySku[sku] : undefined;
+    setSku(code);
+    const p = code ? productBySku[code] : undefined;
+    if (!p) return;
+    if (p.category_id && catById[p.category_id]) pick(p.category_id);
+    if (!desc.trim() || (prev && desc === productName(prev)) || (catById[catId] && desc === catName(lang, catById[catId]))) setDesc(productName(p));
+  };
   const num = Number(amount.replace(/,/g, ''));
   const calc = num > 0 ? calcExpenseTax(num, taxType, taxType === 'none' ? 0 : settings.vat_rate) : null;
   const picks = [...recent, ...(cat ? [lang === 'th' ? cat.hint_th : cat.hint_en] : [])].filter((s, i, a): s is string => !!s && a.indexOf(s) === i).filter((s) => s !== desc).slice(0, 5);
@@ -64,24 +76,25 @@ export function ExpenseForm({ claim, existing = [], defaultDate, onDone }: { cla
     if (!desc.trim()) e.desc = T('Write a short description', 'เขียนรายละเอียดสั้น ๆ');
     if (!date || date > todayKey()) e.date = T('The date cannot be in the future', 'วันที่ต้องไม่เป็นอนาคต');
     if (taxId && !/^\d{13}$/.test(taxId)) e.taxId = T('The tax ID has 13 digits', 'เลขประจำตัวผู้เสียภาษีมี 13 หลัก');
+    if (needsBank(method) && !bankId) e.bank = T('Choose the bank account the money was paid from', 'เลือกบัญชีธนาคารที่ใช้จ่ายเงิน');
     setErrs(e);
     return Object.keys(e).length === 0;
   };
   // copy the FileList first: it is live, and the input is reset right after (which empties it before React reads it)
   const addFiles = (list: FileList | null) => { if (!list) return; const picked = Array.from(list); setFiles((f) => [...f, ...picked].slice(0, 5 - saved.length)); };
 
-  const go = async (submit: boolean) => {
+  const go = async () => {
     if (busy) return;
     if (!validate()) { toast('error', T('Please fix the highlighted fields', 'กรุณาแก้ช่องที่มีเครื่องหมายสีแดง')); return; }
-    setBusy(submit ? 'submit' : 'draft');
+    setBusy('draft');
     try {
-      let c = await saveClaim({ id: claim?.id, expenseDate: date, categoryId: catId, description: desc, amount: num, taxType, paymentMethod: method, vendor, vendorTaxId: taxId, referenceNo: ref, notes });
+      const c = await saveClaim({ id: claim?.id, expenseDate: date, categoryId: catId, description: desc, amount: num, taxType, paymentMethod: method, vendor, vendorTaxId: taxId, referenceNo: ref, notes,
+        sku: sku || null, bankAccountId: bankId || null });
       const failed: string[] = [];
       for (const f of files) { try { await addAttachment(c, f); } catch (e) { failed.push(`${f.name}: ${(e as Error).message}`); } }
-      if (failed.length) { toast('error', failed[0]); if (submit) { setBusy(''); onDone(c, false); return; } }
-      if (submit) c = await submitClaim(c.id);
-      toast('success', submit ? T(`Sent for approval (${c.expense_no})`, `ส่งขออนุมัติแล้ว (${c.expense_no})`) : T('Saved as a draft', 'บันทึกเป็นแบบร่างแล้ว'));
-      onDone(c, submit);
+      if (failed.length) toast('error', failed[0]);
+      toast('success', T('Saved. It is a draft until it is approved & posted to accounting.', 'บันทึกแล้ว เป็นแบบร่างจนกว่าจะอนุมัติและลงบัญชี'));
+      onDone(c, false);
     } catch (e) {
       toast('error', (e as Error).message);
     } finally { setBusy(''); }
@@ -92,6 +105,16 @@ export function ExpenseForm({ claim, existing = [], defaultDate, onDone }: { cla
     <div className="exp-form">
       <div className={cx('exp-block', errs.cat && 'bad')}>
         <div className="exp-q">1. {T('What was it for?', 'จ่ายเงินเรื่องอะไร?')}</div>
+        {products.length > 0 && (
+          <Field label={T('Product from the list (optional) — the category fills itself in', 'สินค้าจากรายการ (ไม่บังคับ) — ระบบเลือกหมวดหมู่ให้อัตโนมัติ')}>
+            <Select value={sku} data-testid="exp-product" onChange={(e) => pickProduct(e.target.value)}>
+              <option value="">{T('— not a product of the list —', '— ไม่ใช่สินค้าในรายการ —')}</option>
+              {(['RM', 'WIP', 'FG'] as const).map((k) => {
+                const list = products.filter((p) => p.sku_category === k);
+                return list.length ? <optgroup key={k} label={lang === 'th' ? CLASS_META[k].th : CLASS_META[k].en}>{list.map((p) => <option key={p.sku_code} value={p.sku_code}>{productName(p)} · {p.sku_code}</option>)}</optgroup> : null;
+              })}
+              {sku && !productBySku[sku] && <option value={sku}>{sku}</option>}
+            </Select></Field>)}
         <div className="exp-cats" role="radiogroup" aria-label={T('Expense category', 'หมวดหมู่รายจ่าย')}>
           {active.map((c) => (
             <button key={c.id} type="button" role="radio" aria-checked={c.id === catId} className={cx('exp-cat', c.id === catId && 'on')} onClick={() => pick(c.id)} title={(lang === 'th' ? c.hint_th : c.hint_en) ?? undefined}>
@@ -116,7 +139,14 @@ export function ExpenseForm({ claim, existing = [], defaultDate, onDone }: { cla
           {(Object.keys(METHOD_META) as PayMethod[]).map((m) => (
             <button key={m} type="button" role="radio" aria-checked={m === method} className={cx('exp-method', m === method && 'on')} onClick={() => setMethod(m)}>{lang === 'th' ? METHOD_META[m].th : METHOD_META[m].en}</button>))}
         </div>
-        <div className="muted exp-sub">{method === 'cash' ? T('Paid from: cash on hand', 'เงินออกจาก: เงินสดในมือ') : T('Paid from: the bank account', 'เงินออกจาก: บัญชีธนาคาร')}</div>
+        <div className="muted exp-sub">{method === 'cash' ? T('Paid from: cash on hand', 'เงินออกจาก: เงินสดในมือ') : method === 'card' ? T('Paid by card', 'จ่ายด้วยบัตร') : T('Paid from the bank account below', 'เงินออกจากบัญชีธนาคารด้านล่าง')}</div>
+        {needsBank(method) && <div className="mt8">
+          <Field label={T('Bank account (required)', 'บัญชีธนาคาร (จำเป็น)')}>
+            <Select value={bankId} data-testid="exp-bank" onChange={(e) => { setBankId(e.target.value); setErrs((x) => ({ ...x, bank: '' })); }}>
+              <option value="">{T('Choose the bank account…', 'เลือกบัญชีธนาคาร…')}</option>
+              {banks.map((b) => <option key={b.id} value={b.id}>{bankLabel(lang, b, true)}</option>)}
+              {bankId && !bankById[bankId] && <option value={bankId}>{T('(account no longer active)', '(บัญชีปิดใช้แล้ว)')}</option>}
+            </Select></Field><E k="bank" /></div>}
       </div>
 
       <div className="exp-block">
@@ -166,15 +196,15 @@ export function ExpenseForm({ claim, existing = [], defaultDate, onDone }: { cla
         <div className="exp-summary-h">{T('Summary', 'สรุปรายการ')}</div>
         <div className="row between"><span className="muted">{T('Category', 'หมวดหมู่')}</span><b>{cat ? catName(lang, cat) : '—'}</b></div>
         <div className="row between"><span className="muted">{T('Date', 'วันที่')}</span><b>{date}</b></div>
-        <div className="row between"><span className="muted">{T('Paid by', 'วิธีจ่าย')}</span><b>{lang === 'th' ? METHOD_META[method].th : METHOD_META[method].en}</b></div>
+        <div className="row between"><span className="muted">{T('Paid by', 'วิธีจ่าย')}</span><b>{lang === 'th' ? METHOD_META[method].th : METHOD_META[method].en}{needsBank(method) && bankById[bankId] ? ` · ${bankLabel(lang, bankById[bankId])}` : ''}</b></div>
+        {sku && <div className="row between"><span className="muted">{T('Product', 'สินค้า')}</span><span>{productBySku[sku] ? productName(productBySku[sku]) : sku}</span></div>}
         {calc && calc.vat > 0 && <div className="row between"><span className="muted">{T('of which VAT', 'ซึ่งเป็น VAT')}</span><span>{money(calc.vat)}</span></div>}
         <div className="row between exp-total"><span>{T('Total paid', 'รวมจ่ายจริง')}</span><b>{calc ? money(calc.paid) : '—'}</b></div>
         <div className="row between"><span className="muted">{T('Receipts', 'ใบเสร็จ')}</span><span>{files.length + saved.length}</span></div>
       </div>
 
       <div className="exp-actions">
-        <Button onClick={() => go(false)}>{busy === 'draft' ? T('Saving…', 'กำลังบันทึก…') : T('Save draft', 'บันทึกแบบร่าง')}</Button>
-        <Button variant="primary" onClick={() => go(true)}>{busy === 'submit' ? T('Sending…', 'กำลังส่ง…') : T('Submit for approval', 'ส่งอนุมัติ')}</Button>
+        <Button variant="primary" data-testid="exp-save" onClick={() => void go()}>{busy === 'draft' ? T('Saving…', 'กำลังบันทึก…') : T('Save expense', 'บันทึกรายจ่าย')}</Button>
       </div>
     </div>
   );

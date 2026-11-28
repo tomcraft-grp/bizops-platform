@@ -11,7 +11,7 @@ import { cr, dr, findAcct, isLocked, post, reverseJournal, roleCode, taxAt } fro
 import { dayKey, r2 } from '../lib/util';
 
 export type TaxType = 'none' | 'vat_included' | 'vat_excluded' | 'vat_noncreditable';
-export type Treatment = 'expense' | 'fixed_asset';
+export type Treatment = 'expense' | 'fixed_asset' | 'inventory';   // inventory: a product bought for stock (posted through the central queue, not here)
 
 /** What the central database stores for a claim, as the ledger needs it. Amounts are in baht. */
 export interface ClaimForPosting {
