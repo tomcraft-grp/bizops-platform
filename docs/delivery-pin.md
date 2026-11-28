@@ -14,6 +14,8 @@
 
 ## LINE MAN and other couriers
 
+**The LINE order card** of a delivery order with a pin also has the two map buttons (*ดูแผนที่*, *เส้นทางจากร้าน*), a *จุดส่ง* row with the distance and, when the recipient is not the customer, a *ผู้รับ* row (migration `20261128140000_line_card_map.sql` adds the `delivery` key to `line_card_data`; `line-dispatch` draws the buttons). Details in docs/line-notifications.md.
+
 LINE MAN has no public booking API that was verified, so there is none here. The workflow is link-and-copy: *Open route from the store* → check it in Google Maps → *Copy delivery details* → paste into the booking. If an API is ever verified, it would take the same stored fields.
 
 ## How it works (database)
@@ -74,4 +76,4 @@ These are shared public services meant for light use. If the shop grows, or a se
 * Unit tests `tests/unit/deliveryPin.test.ts` (32): distances equal the database's (4832 m), the exact link strings, reading pasted links (including the real link the shop's short link redirects to), the draft and what is sent, saved addresses, and that every text exists in Thai and English.
 * Browser tests (Chrome, 390 px and 320 px wide): `tests/shop-e2e/delivery.spec.ts` (22: choosing the place all five ways, the whole order journey, validation, services failing, saved addresses, old database, optional pin, English, no sideways scroll, accessibility) and `delivery-admin.spec.ts` (14: the card, the exact links, copy and the copy fallback, orders without a pin, Thai, phone, settings). They run against a fake backend that mirrors the database contract and test answers for the three map services (`tests/shop-e2e/mapMocks.ts`); the provider answers were checked by hand against the live services on 2026-11-28 (shapes and CORS).
 * Regression before publishing: the shop browser suites that touch checkout, orders, Account and settings (14 files, 317 tests): 316 passed; the one that failed (`paymentPolicy.spec.ts:119`, checks a request right after the click without waiting for it) passes on its own. `checkout-ux` and `dailyExpenses` (45 tests) pass on an unloaded machine (they had failed once while the machine was busy). The complete suite of 654 tests was not run to the end (it takes hours on this machine).
-* **Not tested:** the screens against the real database from a browser (the migration is not applied), real taps on the Google Maps links on a phone, a real LINE in-app browser (the phone's position may be refused there: the other four ways remain), and the public map services under real traffic.
+* **Not tested:** the screens against the real database from a browser (no real pinned order has been placed yet), real taps on the Google Maps links on a phone, a real LINE in-app browser (the phone's position may be refused there: the other four ways remain), and the public map services under real traffic.

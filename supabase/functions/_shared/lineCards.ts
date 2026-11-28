@@ -3,6 +3,10 @@
 // links open the back office in the phone's own browser (openExternalBrowser=1), where staff are usually signed in already.
 import { encodePostback } from './line.ts';
 
+/** The delivery pin of an order (a database with the delivery-pin and card-map migrations; null for a pick-up and for an order placed without a pin). Both links were built by the database. */
+export type CardDelivery = {
+  maps_url: string; directions_url: string; straight_m: number | null; route_m: number | null; route_s: number | null; recipient_name: string; recipient_phone: string;
+};
 export type CardData = {
   order_id: string; order_no: string; customer_name: string; phone: string; created_at: string;
   item_count: number; items: { name: string; qty: number; price: number; image: string | null }[]; more_count: number;
@@ -11,6 +15,7 @@ export type CardData = {
   order_type?: 'regular' | 'preorder'; pickup_at?: string | null;
   payment: { method: 'transfer' | 'wallet' | 'qr' | 'unpaid'; bank: string | null; has_slip: boolean; transfer_at: string | null; evidence_id: string | null };
   status: string; quick: { ok: boolean; why: string | null }; app_url: string;
+  delivery?: CardDelivery | null;
 };
 
 export type ActResult =
@@ -45,6 +50,16 @@ export const orderUrl = (d: Pick<CardData, 'app_url' | 'order_id'>) => `${d.app_
 /** The back-office page of one preorder (sign-in required, like every back-office link). */
 export const preorderUrl = (d: Pick<CardData, 'app_url' | 'order_id'>) => `${d.app_url}?openExternalBrowser=1#/preorders?order=${d.order_id}`;
 export const slipUrl = (appUrl: string, evidenceId: string) => `${appUrl}?openExternalBrowser=1#/payment-review?evidence=${evidenceId}`;
+
+/** A Google Maps link of the database as a button, opened in the phone's own browser (so in the Google Maps app when it is installed). Anything that is not a Google Maps link becomes no button. */
+export const mapLink = (u: unknown): string | null =>
+  typeof u === 'string' && u.length <= 600 && /^https:\/\/www\.google\.com\/maps\//.test(u) ? `${u}${u.includes('?') ? '&' : '?'}openExternalBrowser=1` : null;
+const kmText = (m: number): string => (m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} ม.` : `${m < 10000 ? (m / 1000).toFixed(1) : Math.round(m / 1000)} กม.`);
+/** "ปักหมุดแล้ว · ขับรถ 6.2 กม. (~15 นาที)", or only the straight line when the order has no driving route (never called a driving distance). */
+export function pinLine(x: CardDelivery): string {
+  const far = x.route_m && x.route_s ? `ขับรถ ${kmText(x.route_m)} (~${Math.max(1, Math.round(x.route_s / 60))} นาที)` : x.straight_m != null ? `เส้นตรง ${kmText(x.straight_m)}` : '';
+  return `ปักหมุดแล้ว${far ? ` · ${far}` : ''}`;
+}
 
 const text = (t: string, extra: Record<string, unknown> = {}) => ({ type: 'text', text: t, wrap: true, size: 'sm', color: DARK, ...extra });
 const row = (label: string, value: string, valueExtra: Record<string, unknown> = {}) => ({
@@ -89,6 +104,15 @@ export function orderCard(d: CardData, event: 'order_new' | 'slip_new' = 'order_
     ...(d.payment.has_slip && d.payment.evidence_id ? [button('ตรวจสลิป', { type: 'uri', uri: slipUrl(d.app_url, d.payment.evidence_id) }, 'link')] : []),
     button('โทรหาลูกค้า', { type: 'uri', uri: `tel:${d.phone}` }, 'link'),
   ];
+  // the delivery pin: where, how far, who receives it (only when it is not the customer), and the two map buttons
+  const pin = d.fulfilment === 'delivery' && d.delivery && typeof d.delivery === 'object' ? d.delivery : null;
+  const maps = pin ? mapLink(pin.maps_url) : null;
+  const route = pin ? mapLink(pin.directions_url) : null;
+  const other = pin && (pin.recipient_name.trim() !== d.customer_name.trim() || pin.recipient_phone.replace(/\D/g, '') !== d.phone.replace(/\D/g, ''));
+  const mapButtons = maps || route ? [{ type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+    ...(maps ? [button('ดูแผนที่', { type: 'uri', uri: maps }, 'secondary')] : []),
+    ...(route ? [button('เส้นทางจากร้าน', { type: 'uri', uri: route }, 'secondary')] : []),
+  ] }] : [];
   const title = event === 'slip_new' ? 'สลิปใหม่' : pre ? 'พรีออเดอร์ใหม่' : 'ออเดอร์ใหม่';
   return {
     type: 'flex', altText: `${title} ${d.order_no} ${money(d.total)}`,
@@ -110,6 +134,8 @@ export function orderCard(d: CardData, event: 'order_new' | 'slip_new' = 'order_
           row('วันที่', dayTime(d.created_at)),
           row('รับสินค้า', pre ? 'พรีออเดอร์ · รับที่ร้าน' : d.fulfilment === 'pickup' ? 'รับที่ร้าน' : 'จัดส่ง'),
           ...(pre ? [row('นัดรับ', `${dayTime(d.pickup_at as string)} น.`, { weight: 'bold', color: AMBER })] : []),
+          ...(pin && (maps || route) ? [row('จุดส่ง', pinLine(pin))] : []),
+          ...(pin && other && (maps || route) ? [row('ผู้รับ', `${pin.recipient_name} · ${pin.recipient_phone}`)] : []),
           { type: 'separator' },
           ...items,
           { type: 'separator' },
@@ -118,7 +144,7 @@ export function orderCard(d: CardData, event: 'order_new' | 'slip_new' = 'order_
           row('ชำระ', paymentLine(d.payment)),
         ],
       },
-      footer: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '12px', contents: [...actions, { type: 'separator' }, ...links] },
+      footer: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '12px', contents: [...actions, { type: 'separator' }, ...mapButtons, ...links] },
     },
   };
 }

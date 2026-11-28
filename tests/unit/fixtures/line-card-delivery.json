@@ -1,0 +1,43 @@
+{
+  "items": [
+    {
+      "qty": 1,
+      "name": "RELX น้ำยา Double Mint 20000 คำ (ดับเบิลมินต์)",
+      "image": "https://hlvravynjalculvplrxc.supabase.co/storage/v1/object/public/shop-products/FG-000086/m-ed9c0b7de1ec92d6d495b59258509d38a7668b33.webp",
+      "price": 420
+    }
+  ],
+  "phone": "0812345678",
+  "quick": {
+    "ok": false,
+    "why": "NO_SLIP"
+  },
+  "total": 420,
+  "status": "new",
+  "app_url": "https://tomcraft-grp.github.io/bizops-platform/",
+  "payment": {
+    "bank": null,
+    "method": "unpaid",
+    "has_slip": false,
+    "evidence_id": null,
+    "transfer_at": null
+  },
+  "delivery": {
+    "route_m": 6200,
+    "route_s": 900,
+    "maps_url": "https://www.google.com/maps/search/?api=1&query=13.77,100.33",
+    "straight_m": 4832,
+    "directions_url": "https://www.google.com/maps/dir/?api=1&origin=13.745952,100.292734&destination=13.77,100.33&travelmode=driving",
+    "recipient_name": "Somchai Tester",
+    "recipient_phone": "0891234567"
+  },
+  "order_id": "44f7d936-35c0-4b02-a14a-f9c10c385347",
+  "order_no": "ORD-000025",
+  "pickup_at": null,
+  "created_at": "2026-11-28T13:19:47.912662+00:00",
+  "fulfilment": "delivery",
+  "item_count": 1,
+  "more_count": 0,
+  "order_type": "regular",
+  "customer_name": "Test Customer"
+}
