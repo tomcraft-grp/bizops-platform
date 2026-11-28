@@ -20,6 +20,8 @@ import { t } from '../../src/lib/i18n';
 const SQL = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/20261120100000_slip_review.sql'), 'utf8');
 // 20261124100000 adds two rules to the classifier (the file that is really stored)
 const SQL_FILE = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/20261124100000_slip_check_customer.sql'), 'utf8');
+// 20261128150000 replaces the classifier (the receiver is critical, RECEIVER_UNCERTAIN): its codes must have texts too
+const SQL_RCP = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/20261128150000_slip_recipient_check.sql'), 'utf8');
 const THAI = /[฀-๿]/;
 const nonEmpty = (s: unknown) => typeof s === 'string' && s.trim().length > 0;
 
@@ -127,7 +129,7 @@ describe('reason texts agree with the classifier in the migration', () => {
     if (found.size === 0) for (const c of body.matchAll(/'([A-Z][A-Z0-9_]{3,})'/g)) found.add(c[1]);
     return found;
   })();
-  const allSqlCodes = new Set([...reasonCodes(SQL), ...reasonCodes(SQL_FILE)]);              // the classifier plus finance_analysis_fail (AI_UNAVAILABLE)
+  const allSqlCodes = new Set([...reasonCodes(SQL), ...reasonCodes(SQL_FILE), ...reasonCodes(SQL_RCP)]);              // the classifier plus finance_analysis_fail (AI_UNAVAILABLE)
 
   it('the reader of the SQL finds the codes it should (a guard against reading nothing and passing)', () => {
     expect([...classifyCodes].sort()).toEqual([
@@ -136,7 +138,9 @@ describe('reason texts agree with the classifier in the migration', () => {
     ]);
     expect(allSqlCodes.has('AI_UNAVAILABLE')).toBe(true);
     expect([...reasonCodes(SQL_FILE)].sort()).toEqual(['DUPLICATE_FILE', 'FILE_HASH_MISMATCH']);
-    expect(allSqlCodes.size).toBe(classifyCodes.size + 3);
+    // the classifier of 20261128150000 = the old one + the two file rules + RECEIVER_UNCERTAIN, nothing lost
+    expect([...reasonCodes(SQL_RCP)].sort()).toEqual([...classifyCodes, 'DUPLICATE_FILE', 'FILE_HASH_MISMATCH', 'RECEIVER_UNCERTAIN'].sort());
+    expect(allSqlCodes.size).toBe(classifyCodes.size + 4);
     // the loose read (every upper-case literal of the classifier that looks like a code) must not find a code the structured read missed: a reason passed in a way the reader does not understand
     const loose = [...fnBody('finance_classify_slip').matchAll(/'([A-Z][A-Z0-9_]{3,})'/g)].map((x) => x[1]);
     expect(loose.filter((c) => !classifyCodes.has(c))).toEqual([]);

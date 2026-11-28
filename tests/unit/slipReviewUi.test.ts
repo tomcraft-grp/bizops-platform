@@ -259,7 +259,7 @@ describe('the Suspicious chip does not restyle any other screen', () => {
 describe('every sentence on the dashboard has a Thai text', () => {
   const src = (f: string) => readFileSync(new URL(`../../src/finance/${f}`, import.meta.url), 'utf8');
   const found = new Set<string>();
-  for (const f of ['SlipReview.tsx', 'RecordPayment.tsx']) {
+  for (const f of ['SlipReview.tsx', 'RecordPayment.tsx', 'SlipInsight.tsx']) {
     const code = src(f);
     for (const re of [/<Tx>([^<>{}]+)<\/Tx>/g, /\btl\(lang, '((?:[^'\\]|\\.)*)'/g, /\b(?:label|hint|title|sub)="([^"]+)"/g, /\btile\('[a-z_]+', '([^']+)', [^,]+, '([^']+)'/g, /<Badge[^>]*>([A-Z][^<>{}]+)<\/Badge>/g]) {
       for (const m of code.matchAll(re)) for (const g of m.slice(1)) if (g) found.add(g.replace(/\\'/g, "'").trim());

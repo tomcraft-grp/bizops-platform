@@ -40,6 +40,7 @@ const slot = (page: Page, hhmm: string) => page.locator(`[data-slot="${hhmm}"]`)
 test.describe('checkout: choosing a pickup time', () => {
   test('a shop that offers no preorder shows no such choice, and a database without the migration still checks out as before', async ({ page }) => {
     const fake = new FakeShop(); fake.decorate(); fake.settings.require_payment_slip = false; await open(page, fake); await addAndCheckout(page);
+    await page.getByRole('radio', { name: new RegExp(t('co.pickup')) }).click(); await expect(page.getByTestId('pickup-card')).toBeVisible();
     await expect(page.getByTestId('mode-preorder')).toHaveCount(0);
     await page.close();
   });
@@ -47,6 +48,7 @@ test.describe('checkout: choosing a pickup time', () => {
     const fake = shop(); fake.po.missing = true; await open(page, fake); await addAndCheckout(page);
     await expect(page.getByTestId('mode-preorder')).toHaveCount(0);
     await page.getByRole('radio', { name: new RegExp(t('co.pickup')) }).click();
+    await expect(page.getByTestId('pickup-card')).toBeVisible(); await expect(page.getByTestId('mode-preorder')).toHaveCount(0);
     await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
     await expect(page.locator('.sp-order-detail')).toBeVisible();
@@ -57,7 +59,7 @@ test.describe('checkout: choosing a pickup time', () => {
   test('the whole journey: choose Preorder, a day and a time, instructions, confirm, and the order page shows the schedule', async ({ page }) => {
     const fake = shop(); fake.po.days.set(addDays(today(), 1), { kind: 'closed', open: null, close: null, reason: 'วันหยุดร้าน' });
     await open(page, fake); await addAndCheckout(page, 'FG-000001', 3);
-    await page.getByTestId('mode-preorder').click();
+    await page.getByRole('radio', { name: new RegExp(t('co.pickup')) }).click(); await page.getByTestId('mode-preorder').click();
     await expect(page.getByTestId('pickup-picker')).toBeVisible();
     await expect(page.getByTestId('preorder-section')).toContainText(t('po.prepNote'));
     // the closed day cannot be chosen, with its reason said on the chip
@@ -67,11 +69,9 @@ test.describe('checkout: choosing a pickup time', () => {
     await slot(page, '10:30').click();
     await expect(page.getByTestId('pickup-chosen')).toContainText('10:30');
     // the quick instructions add to the note once
-    await openFold(page, 'contact');
     await page.getByRole('button', { name: new RegExp(t('po.ph.ready')) }).click();
     await page.getByRole('button', { name: new RegExp(t('po.ph.call')) }).click();
-    await expect(page.locator('[data-fold="contact"] textarea').first()).toHaveValue(`${t('po.ph.ready')} ${t('po.ph.call')}`);
-    await page.getByRole('button', { name: t('co.contactDone') }).click();
+    await expect(page.getByTestId('co-note')).toHaveValue(`${t('po.ph.ready')} ${t('po.ph.call')}`);
     await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     // the confirmation shows everything the customer is committing to
     const sum = page.getByTestId('preorder-summary');
@@ -96,7 +96,7 @@ test.describe('checkout: choosing a pickup time', () => {
 
   test('placing without a time is refused with a clear sentence, and nothing is sent', async ({ page }) => {
     const fake = shop(); await open(page, fake); await addAndCheckout(page);
-    await page.getByTestId('mode-preorder').click();
+    await page.getByRole('radio', { name: new RegExp(t('co.pickup')) }).click(); await page.getByTestId('mode-preorder').click();
     await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await expect(page.getByTestId('checkout-error')).toContainText(t('po.pickFirst'));
     expect(fake.count('shop_place_order')).toBe(0);
@@ -107,7 +107,7 @@ test.describe('checkout: choosing a pickup time', () => {
     seed(fake, 'full-a-0001', 3, '11:00', 1); seed(fake, 'full-b-0001', 3, '11:00', 1);        // 11:00 on day +3: two orders, the slot is full
     seed(fake, 'unit-a-0001', 3, '12:00', 3);                                                   // 12:00: 3 of 5 units used, a cart of 3 will not fit
     await open(page, fake); await addAndCheckout(page, 'FG-000001', 3);
-    await page.getByTestId('mode-preorder').click(); await pickDay(page, 3).click();
+    await page.getByRole('radio', { name: new RegExp(t('co.pickup')) }).click(); await page.getByTestId('mode-preorder').click(); await pickDay(page, 3).click();
     await expect(slot(page, '11:00')).toBeDisabled(); await expect(slot(page, '11:00')).toHaveAttribute('data-state', 'full');
     await expect(slot(page, '12:00')).toBeDisabled(); await expect(slot(page, '12:00')).toHaveAttribute('data-state', 'units');
     await expect(slot(page, '11:30')).toBeEnabled();
@@ -115,14 +115,14 @@ test.describe('checkout: choosing a pickup time', () => {
     await expect(page.getByTestId('pickup-chosen')).toHaveCount(0);                            // a disabled slot never becomes the choice
     // the lead time: with three days of lead, the first three days have nothing to offer
     fake.po.s.lead_minutes = 3 * 24 * 60; await page.reload(); await expect(page.locator('.phone-nav')).toBeVisible();
-    await tab(page, t('nav.cart')).click(); await page.getByRole('button', { name: t('cart.checkout') }).click(); await page.getByTestId('mode-preorder').click();
+    await tab(page, t('nav.cart')).click(); await page.getByRole('button', { name: t('cart.checkout') }).click(); await page.getByRole('radio', { name: new RegExp(t('co.pickup')) }).click(); await page.getByTestId('mode-preorder').click();
     for (const off of [0, 1, 2]) await expect(pickDay(page, off)).toBeDisabled();
     await expect(pickDay(page, 4)).toBeEnabled();
   });
 
   test('a time that fills up while the customer is deciding is refused, the choice is dropped and the slot shows as full', async ({ page }) => {
     const fake = shop(); await open(page, fake); await addAndCheckout(page);
-    await page.getByTestId('mode-preorder').click(); await pickDay(page, 2).click(); await slot(page, '14:00').click();
+    await page.getByRole('radio', { name: new RegExp(t('co.pickup')) }).click(); await page.getByTestId('mode-preorder').click(); await pickDay(page, 2).click(); await slot(page, '14:00').click();
     await expect(page.getByTestId('pickup-chosen')).toBeVisible();
     seed(fake, 'race-a-0001', 2, '14:00', 1); seed(fake, 'race-b-0001', 2, '14:00', 1);        // somebody else takes the last two places
     await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
@@ -135,8 +135,9 @@ test.describe('checkout: choosing a pickup time', () => {
 
   test('a delivery or ordinary pick-up choice leaves no schedule behind', async ({ page }) => {
     const fake = shop(); await open(page, fake); await addAndCheckout(page);
-    await page.getByTestId('mode-preorder').click(); await pickDay(page, 2).click(); await slot(page, '10:00').click();
-    await page.getByRole('radio', { name: new RegExp(t('co.pickup')) }).click();
+    await page.getByRole('radio', { name: new RegExp(t('co.pickup')) }).click(); await page.getByTestId('mode-preorder').click(); await pickDay(page, 2).click(); await slot(page, '10:00').click();
+    await page.getByTestId('mode-soon').click();                                                    // pick up when it is ready (the top choice stays "pick up")
+    await expect(page.getByRole('radio', { name: new RegExp(t('co.pickup')) })).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByTestId('preorder-section')).toHaveCount(0);
     await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
@@ -147,7 +148,7 @@ test.describe('checkout: choosing a pickup time', () => {
 
   test('accessible and fits a phone: the picker has no axe violations and nothing scrolls sideways', async ({ page }) => {
     const fake = shop(); await open(page, fake); await addAndCheckout(page);
-    await page.getByTestId('mode-preorder').click(); await pickDay(page, 2).click(); await slot(page, '10:00').click();
+    await page.getByRole('radio', { name: new RegExp(t('co.pickup')) }).click(); await page.getByTestId('mode-preorder').click(); await pickDay(page, 2).click(); await slot(page, '10:00').click();
     await noOverflow(page);
     const r = await new AxeBuilder({ page }).include('[data-testid="preorder-section"]').analyze();
     expect(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(' | ')}`)).toEqual([]);

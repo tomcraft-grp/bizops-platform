@@ -57,6 +57,7 @@ const REASONS = {
   QR_REF_MISMATCH: { en: 'The reference in the QR code differs from the one printed on the slip', th: 'เลขอ้างอิงใน QR ไม่ตรงกับที่พิมพ์บนสลิป' },
   RECEIVER_MISMATCH: { en: 'The receiver on the slip is not one of the shop\'s accounts', th: 'ผู้รับบนสลิปไม่ใช่บัญชีของร้าน' },
   RECEIVER_UNCLEAR: { en: 'The receiver could not be read well enough to compare with the shop\'s accounts', th: 'อ่านผู้รับไม่ชัดพอที่จะเทียบกับบัญชีของร้าน' },
+  RECEIVER_UNCERTAIN: { en: 'The receiver is close to one of the shop\'s names but not certainly the same: compare it yourself', th: 'ชื่อผู้รับใกล้เคียงกับชื่อบัญชีของร้านแต่ไม่แน่ชัด กรุณาเทียบด้วยตนเอง' },
   RESUBMITTED_TRANSFER: { en: 'The customer resent a transfer already sent on an earlier slip of this order', th: 'ลูกค้าส่งสลิปโอนเดิมซ้ำอีกครั้ง (สลิปก่อนหน้าถูกส่งกลับหรือปฏิเสธ)' },
   STATUS_NOT_SUCCESS: { en: 'The slip does not say that the transfer succeeded', th: 'สลิปไม่ได้ระบุว่าโอนสำเร็จ' },
   TAMPER_SIGNAL: { en: 'The AI found a sign that the picture was edited', th: 'AI พบสัญญาณว่าภาพถูกแก้ไข' },
@@ -108,12 +109,74 @@ export interface SlipExpected {
 }
 export interface SlipSignal { code: string; severity: 'low' | 'high'; detail: string }
 export type AnalysisStatus = 'queued' | 'running' | 'done' | 'failed';
+/** The outcome of one reading (finance_slip_decision, 20261128150000). "verified" is NOT proof of payment: a person still checks the bank record before Confirm. */
+export type SlipDecision = 'verified' | 'review_required' | 'rejected';
+export const DECISION: Record<SlipDecision, Label & { hint: Bilingual }> = {
+  verified: { en: 'Checks passed', th: 'ผ่านการตรวจ', tone: 'info', hint: { en: 'Amount, date and receiver agree. Still check the bank record before you confirm.', th: 'ยอดเงิน วันที่ และผู้รับตรงกัน ยังต้องเทียบกับรายการธนาคารก่อนยืนยัน' } },
+  review_required: { en: 'Review required', th: 'ต้องให้เจ้าหน้าที่ตรวจ', tone: 'warn', hint: { en: 'Something could not be read or is only nearly right.', th: 'มีข้อมูลที่อ่านไม่ได้หรือใกล้เคียงแต่ไม่แน่ชัด' } },
+  rejected: { en: 'Failed a critical check', th: 'ไม่ผ่านเงื่อนไขสำคัญ', tone: 'bad', hint: { en: 'The receiver, the amount, the reference or the file is clearly wrong. Do not confirm without the bank record.', th: 'ผู้รับ ยอดเงิน เลขอ้างอิง หรือไฟล์ไม่ถูกต้องชัดเจน ห้ามยืนยันโดยไม่ตรวจรายการธนาคาร' } },
+};
+const CRITICAL = ['RECEIVER_MISMATCH', 'DUPLICATE_REFERENCE', 'DUPLICATE_FILE', 'FILE_HASH_MISMATCH', 'QR_BAD_CRC', 'STATUS_NOT_SUCCESS', 'TAMPER_SIGNAL'];
+/** The outcome of an attempt: the stored one, or for an attempt made before 20261128150000 the same rule as finance_slip_decision applied to what it stored. */
+export function decisionOf(a: Pick<SlipAnalysis, 'status' | 'result' | 'reasons' | 'extracted'> & { decision?: SlipDecision | null }): SlipDecision | null {
+  if (a.decision) return a.decision;
+  if (a.status !== 'done' || !a.result) return null;
+  const rs = a.reasons ?? []; const fc = a.extracted?.field_confidence;
+  const crit = rs.some((r) => CRITICAL.includes(r.code) || ((r.code === 'AMOUNT_UNDER' || r.code === 'AMOUNT_OVER') && (fc?.amount ?? 1) >= 0.9) || (r.code === 'DATE_OUT_OF_RANGE' && (fc?.date ?? 1) >= 0.9));
+  return crit ? 'rejected' : a.result === 'match' && !rs.some((r) => r.severity === 'warn' || r.severity === 'high') ? 'verified' : 'review_required';
+}
+/** What the database concluded about the receiver of one attempt (finance_recipient_check). */
+export interface RecipientCandidate { name: string | null; account_hint: string | null; how: string | null; verdict: 'match' | 'partial' | 'near' | 'conflict' | 'other' | 'none'; method: string | null; holder: string | null; distance: number | null }
+export interface RecipientResult {
+  status: 'match' | 'mismatch' | 'uncertain' | 'unclear'; holder: string | null; method: string | null; confidence: number; agree: { match: number; other: number; soft: number };
+  candidates: RecipientCandidate[]; version: string;
+}
+export const RECIPIENT_STATUS: Record<RecipientResult['status'], Label> = {
+  match: { en: 'The shop’s account', th: 'บัญชีของร้าน', tone: 'info' },
+  mismatch: { en: 'Not the shop’s account', th: 'ไม่ใช่บัญชีของร้าน', tone: 'bad' },
+  uncertain: { en: 'Close, not certain', th: 'ใกล้เคียง ไม่แน่ชัด', tone: 'warn' },
+  unclear: { en: 'Could not be read', th: 'อ่านไม่ได้', tone: 'warn' },
+};
 /** One analysis attempt of a slip (finance_slip_analysis row without its evidence id). A finished attempt never changes; a re-run is a new attempt. */
 export interface SlipAnalysis {
   id: string; attempt: number; status: AnalysisStatus; engine: string | null; prompt_version: string | null;
   extracted: SlipExtracted | null; qr: SlipQr | null; expected: SlipExpected | null; overall_confidence: number | null; signals: SlipSignal[];
   result: AiResult | null; reasons: Reason[]; error: string | null; requested_by: string | null; created_at: string; started_at: string | null; finished_at: string | null;
+  /** since 20261128150000 (empty on attempts made before it) */
+  decision?: SlipDecision | null; recipient?: RecipientResult | null; rules_version?: string | null;
 }
+
+// ------------------------------------------------------------------------------------------------ feedback, recipients, learning (20261128150000)
+export interface FeedbackInput { analysisId: string; verdict: 'correct' | 'wrong'; correctDecision?: SlipDecision | null; recipientTruth?: string | null; printedName?: string | null; note?: string | null }
+export interface NameVariant { id: string; holder: string; variant: string; kind: 'spelling' | 'english' | 'ocr'; source: 'manager' | 'learned'; status: 'active' | 'retired'; note: string | null; created_at: string; created_by: string | null; retired_at: string | null; retire_reason: string | null; impact: VariantImpact | Record<string, never> }
+export interface Recipients { holders: { holder: string; accounts: number }[]; names: { holder: string; name: string; src: string }[]; variants: NameVariant[] }
+export interface VariantImpact { readings: number; evidence: number; posted: number; rejected: number; open: number; would_change: number; distance: number }
+export interface Tally3 { right: number; wrong: number; blank: number }
+export interface Learning {
+  from: string; days: number; rules_version: string; readings: number; slips: number;
+  decisions: Record<SlipDecision, number>; recipient: Record<RecipientResult['status'], number>; unreadable: number;
+  feedback: { correct: number; wrong: number; recipient_corrected: number };
+  outcomes: { verified_posted: number; verified_rejected: number; review_posted: number; review_rejected: number; rejected_posted: number; rejected_rejected: number; open: number };
+  amount_on_posted: Tally3; date_on_posted: Tally3;
+  calibration: { band: string; n: number; right: number; wrong: number }[];
+  weeks: { week: string; n: number; verified: number; review_required: number; rejected: number }[];
+  reasons: { code: string; n: number }[];
+  corrections: { read: string; holder: string; slips: number; posted: number; rejected: number; distance: number; proposed: boolean }[];
+}
+export const slipLearning = {
+  async feedback(p: FeedbackInput): Promise<{ id: string; correct_decision: SlipDecision | null }> {
+    return must(await supabase.rpc('finance_slip_feedback_add', { p_analysis: p.analysisId, p_verdict: p.verdict, p_correct_decision: p.correctDecision ?? null, p_recipient_truth: clean(p.recipientTruth),
+      p_printed_name: clean(p.printedName), p_note: clean(p.note) }), 'Save feedback');
+  },
+  /** null = a database without 20261128150000 */
+  async report(days = 90): Promise<Learning | null> { const r = await supabase.rpc('finance_slip_learning', { p_days: days }); return r.error ? null : (r.data as Learning); },
+  async recipients(): Promise<Recipients> { return must(await supabase.rpc('finance_slip_recipients'), 'Load recipients'); },
+  async impact(holder: string, variant: string): Promise<VariantImpact> { return must(await supabase.rpc('finance_slip_variant_impact', { p_holder: holder, p_variant: variant }), 'Check the spelling'); },
+  async addVariant(holder: string, variant: string, kind: NameVariant['kind'], note?: string, source: NameVariant['source'] = 'manager'): Promise<NameVariant> {
+    return must(await supabase.rpc('finance_slip_variant_add', { p_holder: holder, p_variant: variant, p_kind: kind, p_note: clean(note), p_source: source }), 'Approve the spelling');
+  },
+  async retireVariant(id: string, reason: string): Promise<NameVariant> { return must(await supabase.rpc('finance_slip_variant_retire', { p_id: id, p_reason: reason }), 'Retire the spelling'); },
+};
 
 /** One row of the review list (finance_review_list). `reasons` are the reason codes of the newest analysis, in the order they were recorded. */
 export interface ReviewItem {

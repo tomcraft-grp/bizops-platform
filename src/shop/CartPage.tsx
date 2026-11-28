@@ -1,8 +1,8 @@
 // The cart tab: lines with server-checked prices, and the checkout step. Totals shown here are the server's quote
 // (shop_quote); placing the order sends only SKU + quantity + contact details and the total the customer saw, and the
 // database prices the order again. A retry of the same checkout returns the same order (see attemptKey).
-import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, CalendarClock, ShoppingCart, Store, Trash2, Truck, Upload } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Bike, CalendarClock, ShoppingCart, Store, Trash2, Upload } from 'lucide-react';
 import { Banner, Empty } from '../ui/kit';
 import { cx } from '../lib/util';
 import { useAuth } from '../auth/AuthProvider';
@@ -20,8 +20,10 @@ import { RewardsPreview } from './Rewards';
 import { CheckoutQrPanel, PayToBank } from '../wallet/PayTo';
 import { RecentOrders } from './RecentOrders';
 import { PickupPicker, PreorderSummary, QuickPhrases } from './Preorder';
-import { DeliveryForm, DeliverySummary, useDrivingRoute } from './geo/DeliveryForm';
-import { deliveryProblems, draftFromSaved, pinOf, toDeliveryInput } from './geo/deliveryDraft';
+import { DeliverySummary, useDrivingRoute } from './geo/DeliveryForm';
+import { deliveryProblems, draftFromSaved, pinOf, recipientOf, toDeliveryInput } from './geo/deliveryDraft';
+import { ShipTo } from './geo/ShipTo';
+import { AddressEditor } from './geo/AddressEditor';
 import type { SavedAddress } from './api';
 import { preorderUnits } from './preorderView';
 import { Choice, PayMethodPicker, useMethods } from '../wallet/ui';
@@ -111,6 +113,9 @@ function loadContact(uid: string | undefined): Partial<Contact> {
   try { const v = JSON.parse(localStorage.getItem(CONTACT_KEY(uid)) ?? 'null') as Partial<Contact> | null; return v && typeof v === 'object' ? v : {}; } catch { return {}; }
 }
 
+// The checkout asks only for what an order needs. Two ways to get it: LINE MAN delivery (the shop books a LINE MAN driver to an address chosen from the
+// customer's address book) or pick-up at the shop (no address, no recipient). The customer's name and phone come from their account (a LINE member signs up
+// with both); only an account without them is asked here. The note to the shop is the one optional field both ways have.
 function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }: {
   quote: Quote; loading: boolean; fulfilment: Fulfilment; setFulfilment: (f: Fulfilment) => void; onBack: () => void; refresh: () => void;
 }) {
@@ -119,39 +124,51 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   const { session, profile } = useAuth();
   const uid = session?.user.id ?? '';
   const settings = useSettings();
-  // every answer lives in the draft, so nothing is lost when a section closes or the customer goes back to the cart or to the bank app
+  // every answer lives in the draft, so nothing is lost when a section closes, the way of getting the order changes, or the customer goes back to the cart or to the bank app
   const { text: draft, slip, patch, setSlip } = useCheckoutDraft();
   const [saved] = useState(() => loadContact(uid));
-  const name = draft.name ?? saved.name ?? profile?.display_name ?? '';
-  const phone = draft.phone ?? saved.phone ?? profile?.phone ?? '';
-  const address = draft.address ?? saved.address ?? '';
+  // the account first: what the customer typed here before is used only when the account has nothing valid
+  const acctName = (profile?.display_name ?? '').trim();
+  const acctPhone = validPhone(profile?.phone ?? '') ? digits(profile?.phone ?? '') : '';
+  const name = acctName || (draft.name ?? saved.name ?? '');
+  const phone = acctPhone || (draft.phone ?? saved.phone ?? '');
   const note = draft.note ?? '';
   // a preorder = pick-up at a time the customer chose; it exists only while the shop offers it
   const preorder = fulfilment === 'pickup' && draft.preorder === true && settings?.preorder_enabled === true;
   const pickupAt = preorder ? draft.pickupAt ?? '' : '';
   const units = preorderUnits(quote.lines.filter((l) => l.ok));
-  // delivery pin (a database with the delivery-pin migration): the place the customer confirmed on the map replaces the typed address
-  const store = settings?.store;
-  const pinAvailable = fulfilment === 'delivery' && !!store;
-  const pinRequired = pinAvailable && settings?.delivery_pin_required !== false;
-  const dl = draft.delivery ?? {};
   const contact = { name, phone };
-  const dlPin = pinAvailable ? pinOf(dl) : null;
-  const dlActive = pinAvailable && (pinRequired || !!dlPin);                                   // a pin that is optional but was chosen is checked like a required one
-  const dlProblems = dlActive ? deliveryProblems(dl, contact) : [];
-  const route = useDrivingRoute(store, dlActive && dl.confirmed ? dlPin : null);
-  const [book, setBook] = useState<SavedAddress[]>([]);
-  const bookLoaded = useRef(false);
-  useEffect(() => {
-    if (!pinAvailable || bookLoaded.current) return;
-    bookLoaded.current = true;
-    shop.addresses.list().then((list) => {
-      setBook(list);
-      const def = list.find((a) => a.is_default);
-      if (def && !useCheckoutDraft.getState().text.delivery) useCheckoutDraft.getState().setDelivery(draftFromSaved(def, { name, phone }));   // the default address is chosen for the customer
-    }).catch(() => undefined);                                                                  // no saved addresses: the customer pins a new one
-  }, [pinAvailable]); // eslint-disable-line react-hooks/exhaustive-deps
-  const saveIt = dl.saveIt ?? (!book.length && !dl.addressId);
+  const nameOk = name.trim().length > 0 && name.trim().length <= 100;
+  const phoneOk = validPhone(phone);
+
+  // LINE MAN delivery: the address book (a database with the delivery-pin migration has the shop's location). An older database keeps the typed address.
+  const store = settings?.store;
+  const delivery = fulfilment === 'delivery';
+  const pinRequired = settings?.delivery_pin_required !== false;
+  const [book, setBook] = useState<SavedAddress[] | null>(null);
+  const [bookErr, setBookErr] = useState<unknown>(null);
+  const loadBook = useCallback(() => { setBookErr(null); return shop.addresses.list().then((l) => { setBook(l); return l; }).catch((e) => { setBookErr(e); return null; }); }, []);
+  useEffect(() => { if (store && delivery && book === null) void loadBook(); }, [!!store, delivery]); // eslint-disable-line react-hooks/exhaustive-deps
+  // typed instead of chosen: an older database, or a shop that does not require a pin when the customer chose to type (or has nothing saved)
+  const typed = delivery && (!store || (!pinRequired && (draft.addrTyped === true || (!!book && !book.length))));
+  const address = draft.address ?? saved.address ?? '';
+  const addrOk = address.trim().length <= 400;                                  // a typed address is optional
+  // the chosen saved address: the one in the draft (it survives a reload), else the default, else the first. A deleted one falls back the same way.
+  const wantId = draft.delivery?.addressId;
+  const selected = !store || !book || typed ? undefined : book.find((a) => a.id === wantId) ?? book.find((a) => a.is_default) ?? book[0];
+  const dl = selected ? draftFromSaved(selected, contact) : undefined;
+  const dlProblems = dl ? deliveryProblems(dl, contact) : [];
+  const route = useDrivingRoute(store, delivery && selected ? pinOf(dl) : null);
+  const choose = (a: SavedAddress) => { useCheckoutDraft.getState().setDelivery({ addressId: a.id }); patch({ addrTyped: undefined }); };
+  const [editing, setEditing] = useState<{ address?: SavedAddress } | null>(null);
+  const afterSave = (a: SavedAddress) => { setEditing(null); choose(a); void loadBook(); };
+  // who the order is for: the account; a LINE MAN order whose account has no valid details uses the recipient of the chosen address
+  const rec = dl ? recipientOf(dl, contact) : null;
+  const orderName = nameOk ? name.trim() : rec?.name.trim() ?? '';
+  const orderPhone = phoneOk ? digits(phone) : digits(rec?.phone ?? '');
+  const shipOk = delivery && !typed ? !!selected && !dlProblems.length : true;
+  const needContact = !(nameOk && phoneOk) && !(delivery && !typed && shipOk && validPhone(orderPhone) && !!orderName);
+
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -184,32 +201,29 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   const [showPay, setShowPay] = useState(false);               // the transfer details again, after the slip is attached
   const methodPref = method?.kind === 'bank' ? (bank ? `bank:${bank.code}` : null) : method?.kind ?? null;
 
-  const nameOk = name.trim().length > 0 && name.trim().length <= 100;
-  const phoneOk = validPhone(phone);
-  const addrOk = address.trim().length <= 400;                                  // the address is optional
   const closed = !!settings && !settings.shop_open;
   const unavailable = settings && ((fulfilment === 'delivery' && !settings.delivery_enabled) || (fulfilment === 'pickup' && !settings.pickup_enabled));
-  const formOk = nameOk && phoneOk && addrOk;
-  // one section open at a time; the contact form starts open only while there is something to fill in
-  const [sec, setSec] = useState<'contact' | 'items' | 'payment' | null>(() => (!nameOk || !phoneOk || (fulfilment === 'delivery' && !address.trim() && draft.address === undefined) ? 'contact' : null));
-  const toggle = (id: 'contact' | 'items' | 'payment') => setSec((s) => (s === id ? null : id));
-  useEffect(() => { if (pinAvailable && nameOk && phoneOk) setSec((s) => (s === 'contact' && draft.address === undefined ? null : s)); }, [pinAvailable]); // eslint-disable-line react-hooks/exhaustive-deps
+  const formOk = (!needContact || (nameOk && phoneOk)) && (!typed || addrOk);
+  // one section open at a time (the items and the payment fold away)
+  const [sec, setSec] = useState<'items' | 'payment' | null>(null);
+  const toggle = (id: 'items' | 'payment') => setSec((s) => (s === id ? null : id));
   const openPayment = () => { setSec('payment'); setTimeout(() => document.getElementById('fold-payment-h')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0); };
-  const contactDone = () => { setTouched(true); if (!formOk) return; patch({ name, phone, address }); setSec(null); };
   const pickSlip = async (f: File) => {
     const bad = await slipProblem(f); if (bad) { setErr(t(bad)); return; }          // not a picture or PDF, or too big: said now, nothing is kept
-    setSlip({ file: f, total: quote.total }); setShowPay(false); setErr(null); if (formOk) { patch({ name, phone, address }); setSec(null); }
+    setSlip({ file: f, total: quote.total }); setShowPay(false); setErr(null);
   };
+  const toShipTo = () => document.querySelector('[data-testid="ship-to"]')?.scrollIntoView({ block: 'start' });
 
   const ask = () => {
     setTouched(true); setErr(null);
-    if (dlProblems.length) {
-      setErr(t(dlProblems.includes('pin') || dlProblems.includes('confirm') ? 'dl.pinFirst' : dlProblems.includes('address') ? 'dl.err.address' : 'dl.err.recipient'));
-      document.querySelector('[data-testid="delivery-section"]')?.scrollIntoView({ block: 'start' }); return;
+    if (delivery && store && !typed) {
+      if (!book) { setErr(t(bookErr != null ? 'ck.loadFail' : 'ck.loading')); toShipTo(); return; }
+      if (!selected) { setErr(t('ck.pickAddress')); toShipTo(); return; }
+      if (dlProblems.length) { setErr(t('ck.incomplete')); toShipTo(); return; }
     }
     if (needsSlip && !slip) { setErr(t('co.slipMissing')); slipSec.current?.scrollIntoView({ block: 'center' }); return; }
     if (preorder && !pickupAt) { setErr(t('po.pickFirst')); document.querySelector('[data-testid="pickup-picker"]')?.scrollIntoView({ block: 'center' }); return; }
-    if (!formOk) { setSec('contact'); setTimeout(() => document.querySelector<HTMLElement>('[data-fold="contact"] [aria-invalid="true"]')?.focus(), 0); return; }
+    if (!formOk) { setTimeout(() => document.querySelector<HTMLElement>('[data-testid="checkout-form"] [aria-invalid="true"]')?.focus(), 0); return; }
     const hold = needsSlip ? holdUp(live) : null;              // still being read (never longer than 20 s), or something to confirm first
     if (hold) { setErr(t(hold)); document.querySelector('[data-testid="slip-live"]')?.scrollIntoView({ block: 'center' }); return; }
     setAsking(true);
@@ -221,22 +235,16 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
     try {
       const items = toQuoteItems(lines);
       const fp = needsSlip && slip ? await slipFingerprint(slip.file) : null;
-      const dlInput = dlActive && dl.confirmed ? toDeliveryInput(dl, contact, route.status === 'ok' && route.info ? { distance_m: route.info.distance_m, duration_s: route.info.duration_s } : null) : null;
-      const addrText = pinAvailable ? (dl.addressLine ?? '').trim() : address.trim();
-      const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? addrText : '', note: note.trim(), pm: methodPref, slip: fp?.sha256 ?? null, pu: pickupAt || null, dl: dlInput ? { ...dlInput, route: null } : null });
+      const dlInput = delivery && dl && !typed ? toDeliveryInput(dl, contact, route.status === 'ok' && route.info ? { distance_m: route.info.distance_m, duration_s: route.info.duration_s } : null) : null;
+      const addrText = !delivery ? '' : dlInput ? (dl?.addressLine ?? '').trim() : typed ? address.trim() : '';
+      const payload = JSON.stringify({ items, fulfilment, name: orderName, phone: orderPhone, address: addrText, note: note.trim(), pm: methodPref, slip: fp?.sha256 ?? null, pu: pickupAt || null, dl: dlInput ? { ...dlInput, route: null } : null });
       const key = attemptKey(sessionStorage, uid, payload);
       // the same key gives the same file: a retry never leaves a second one. A stalled upload gives up after 60 s so the button comes back (FB-001019)
       if (fp && slip) { setUploading(true); uploaded = await withTimeout(() => uploadOrderSlip(slip.file, key, fp), 60_000); setUploading(false); }
-      const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: addrText, note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total, pickupAt: pickupAt || null, delivery: dlInput,
+      const r = await shop.placeOrder({ key, items, fulfilment, name: orderName, phone: orderPhone, address: addrText, note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total, pickupAt: pickupAt || null, delivery: dlInput,
         slip: fp && uploaded ? { path: uploaded, sha256: fp.sha256, type: fp.type, transferAt: slipWhen ? new Date(slipWhen).toISOString() : null, ref: slipRef.trim() || null } : null });
-      try { localStorage.setItem(CONTACT_KEY(uid), JSON.stringify({ name: name.trim(), phone: digits(phone), address: address.trim() } satisfies Contact)); } catch { /* ignore */ }
+      if (needContact || typed) { try { localStorage.setItem(CONTACT_KEY(uid), JSON.stringify({ name: name.trim(), phone: digits(phone), address: address.trim() } satisfies Contact)); } catch { /* ignore */ } }
       forgetAttempt(sessionStorage, uid);
-      // the order is placed; saving the address for next time is a favour that never holds anything up (a failure is said, the order stays)
-      if (dlInput && (saveIt || (dl.updateSaved && dl.addressId))) {
-        const { route: _route, address_id: _aid, ...data } = dlInput; void _route; void _aid;
-        const update = !!(dl.updateSaved && dl.addressId);
-        void shop.addresses.save(update ? dl.addressId! : null, data, (dl.saveLabel ?? '').trim() || null, update ? undefined : !book.length ? true : undefined).catch(() => toast('error', t('dl.saveFailed')));
-      }
       // the order and its slip are saved: ask the AI reader to look at the slip, once, best effort. Never awaited and it never throws (analyze swallows every error),
       // so a slow or broken reader cannot delay the order page or fail the order; the shop checks every slip by hand whatever the reader does.
       // (the answer is read defensively: an order without an invoice object must never throw after the order exists, so then the reader is simply not asked)
@@ -253,30 +261,59 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       if (uploaded && e instanceof ShopError && code !== 'NETWORK' && code !== 'ERROR') removeOrderSlip(uploaded);   // refused for good: do not keep the file (a lost answer might still have created the order, so then it stays)
       if (code === 'PRICE_CHANGED' || code === 'CART_INVALID') refresh();   // show the new numbers / the unavailable items
       if (/^(SLOT_|DAY_UNITS)/.test(code)) { patch({ pickupAt: undefined }); setReloadSlots((k) => k + 1); }   // the time filled up or passed meanwhile: choose again
+      if (code === 'ADDRESS_NOT_FOUND') void loadBook();
       setErr(e instanceof TimeoutError ? t('err.network') : errText(t, e));   // a stalled upload: the same "could not connect, safe to try again" message
     } finally { inflight.current = false; setBusy(false); setUploading(false); }
   };
 
+  const typedBox = typed && (
+    <div className="sp-form">
+      <label>{store ? t('ck.typedLabel') : t('co.address')} <small className="muted">({t('co.addressOptional')})</small><textarea value={address} rows={3} maxLength={400} autoComplete="street-address" placeholder={t('co.addressHint')} aria-invalid={touched && !addrOk} onChange={(e) => patch({ address: e.target.value })} data-testid="typed-address" /></label>
+      {touched && !addrOk && <small className="bad">{t('err.address')}</small>}
+      {!!store && !!book?.length && <button type="button" className="sp-link" onClick={() => patch({ addrTyped: undefined })} data-testid="use-saved">{t('ck.useSaved')}</button>}
+    </div>
+  );
+
   return (
-    <div className="sp-page">
+    <div className="sp-page" data-testid="checkout-form">
       <button type="button" className="sp-back" onClick={onBack}><ArrowLeft size={18} /> {t('co.back')}</button>
       <h2 className="sp-h2">{t('co.title')}</h2>
       {closed && <Banner tone="warn">{settings?.closed_message || t('shop.closed')}</Banner>}
 
       <section className="sp-sec"><h3>{t('co.fulfilment')}</h3>
         <div className="sp-seg" role="radiogroup" aria-label={t('co.fulfilment')}>
-          <button type="button" role="radio" aria-checked={fulfilment === 'delivery'} className={cx(fulfilment === 'delivery' && 'on')} onClick={() => { patch({ preorder: false, pickupAt: undefined }); setFulfilment('delivery'); }}><Truck size={16} /> {t('co.delivery')}</button>
-          <button type="button" role="radio" aria-checked={fulfilment === 'pickup' && !preorder} className={cx(fulfilment === 'pickup' && !preorder && 'on')} onClick={() => { patch({ preorder: false, pickupAt: undefined }); setFulfilment('pickup'); }}><Store size={16} /> {t('co.pickup')}</button>
-          {settings?.preorder_enabled === true && <button type="button" role="radio" data-testid="mode-preorder" aria-checked={preorder} className={cx(preorder && 'on')} onClick={() => { setFulfilment('pickup'); patch({ preorder: true }); }}><CalendarClock size={16} /> {t('po.mode')}</button>}
+          <button type="button" role="radio" aria-checked={delivery} className={cx(delivery && 'on')} onClick={() => { patch({ preorder: false, pickupAt: undefined }); setFulfilment('delivery'); }}><Bike size={16} /> {t('co.delivery')}</button>
+          <button type="button" role="radio" aria-checked={fulfilment === 'pickup'} className={cx(fulfilment === 'pickup' && 'on')} onClick={() => setFulfilment('pickup')}><Store size={16} /> {t('co.pickup')}</button>
         </div>
-        {settings?.preorder_enabled === true && !preorder && <div className="sp-note">{t('po.modeHint')}</div>}
-        {unavailable && <Banner tone="warn">{fulfilment === 'delivery' ? t('co.noDelivery') : t('co.noPickup')}</Banner>}
-        {fulfilment === 'pickup' && settings?.pickup_note && <div className="sp-note"><b>{t('co.pickupNote')}:</b> {settings.pickup_note}</div>}
+        <div className="sp-fulfil-hint" data-testid="fulfil-hint">{t(delivery ? 'co.deliveryHint' : 'co.pickupHint')}</div>
+        {unavailable && <Banner tone="warn">{delivery ? t('co.noDelivery') : t('co.noPickup')}</Banner>}
       </section>
 
-      {pinAvailable && store && (
-        <DeliveryForm value={{ ...dl, saveIt }} onChange={(p) => useCheckoutDraft.getState().patchDelivery(p)} contact={contact} shop={store} touched={touched} required={pinRequired} route={route}
-          saved={book} onUseSaved={(a) => useCheckoutDraft.getState().setDelivery(draftFromSaved(a, contact))} onNew={() => useCheckoutDraft.getState().setDelivery(undefined)} offerSave />
+      {delivery && store && (
+        <ShipTo book={book} error={bookErr} onRetry={() => void loadBook()} selected={selected} incomplete={!!selected && dlProblems.length > 0} onSelect={choose}
+          onAdd={() => setEditing({})} onEdit={(a) => setEditing({ address: a })} store={store} route={route} missing={touched && !typed && !!book && !selected}>
+          {typedBox || (!pinRequired && !!book && <button type="button" className="sp-link" onClick={() => patch({ addrTyped: true })} data-testid="type-instead">{t('ck.typeInstead')}</button>)}
+        </ShipTo>
+      )}
+      {delivery && !store && <section className="sp-sec"><h3>{t('ck.shipTo')}</h3>{typedBox}</section>}
+
+      {fulfilment === 'pickup' && (
+        <section className="sp-sec" data-testid="pickup-card">
+          <div className="dp-card ok">
+            <div className="dp-line"><Store size={16} aria-hidden /> <b>{t('ck.pickupAt')}</b>{store?.name && <span>{store.name}</span>}</div>
+            {settings?.pickup_note && <div className="sp-note"><b>{t('co.pickupNote')}:</b> {settings.pickup_note}</div>}
+          </div>
+          {settings?.preorder_enabled === true && (
+            <>
+              <h3>{t('ck.pickupWhen')}</h3>
+              <div className="sp-seg" role="radiogroup" aria-label={t('ck.pickupWhen')}>
+                <button type="button" role="radio" aria-checked={!preorder} className={cx(!preorder && 'on')} onClick={() => patch({ preorder: false, pickupAt: undefined })} data-testid="mode-soon">{t('ck.pickupSoon')}</button>
+                <button type="button" role="radio" data-testid="mode-preorder" aria-checked={preorder} className={cx(preorder && 'on')} onClick={() => patch({ preorder: true })}><CalendarClock size={16} /> {t('po.mode')}</button>
+              </div>
+              {!preorder && <div className="sp-note">{t('po.modeHint')}</div>}
+            </>
+          )}
+        </section>
       )}
 
       {preorder && (
@@ -286,26 +323,22 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
         </section>
       )}
 
-      <Fold id="contact" title={t('co.contact')} open={sec === 'contact'} onToggle={() => toggle('contact')} action={t('pm.change')}
-        summary={nameOk && phoneOk
-          ? <span className="sp-fold-lines"><span>{name.trim()} · {phone}</span>{fulfilment === 'delivery' && <span>{(pinAvailable ? dl.addressLine ?? '' : address).trim() || t('co.noAddress')}</span>}{note.trim() && <span>{note.trim()}</span>}</span>
-          : <span className="bad">{t('co.contactMissing')}</span>}>
-        <div className="sp-form">
-          <label>{t('co.name')}<input value={name} maxLength={100} autoComplete="name" aria-invalid={touched && !nameOk} onChange={(e) => patch({ name: e.target.value })} /></label>
-          {touched && !nameOk && <small className="bad">{t('err.name')}</small>}
-          <label>{t('co.phone')}<input value={phone} type="tel" inputMode="numeric" autoComplete="tel" maxLength={14} placeholder="08xxxxxxxx" aria-invalid={touched && !phoneOk} onChange={(e) => patch({ phone: e.target.value })} /></label>
-          {touched && !phoneOk && <small className="bad">{t('err.phone')}</small>}
-          {fulfilment === 'delivery' && !pinAvailable && (
-            <>
-              <label>{t('co.address')} <small className="muted">({t('co.addressOptional')})</small><textarea value={address} rows={3} maxLength={400} autoComplete="street-address" placeholder={t('co.addressHint')} aria-invalid={touched && !addrOk} onChange={(e) => patch({ address: e.target.value })} /></label>
-              {touched && !addrOk && <small className="bad">{t('err.address')}</small>}
-            </>
-          )}
-          <label>{t('co.note')}<textarea value={note} rows={2} maxLength={300} onChange={(e) => patch({ note: e.target.value })} /></label>
-          {preorder && <><small className="muted">{t('po.noteHint')}</small><QuickPhrases note={note} onChange={(n) => patch({ note: n })} /></>}
-          <button type="button" className="btn block" onClick={contactDone}>{t('co.contactDone')}</button>
-        </div>
-      </Fold>
+      {needContact && (
+        <section className="sp-sec" data-testid="contact-section"><h3>{t('ck.contactTitle')}</h3>
+          <div className="sp-note">{t('ck.contactWhy')}</div>
+          <div className="sp-form">
+            <label>{t('co.name')}<input value={name} maxLength={100} autoComplete="name" aria-invalid={touched && !nameOk} onChange={(e) => patch({ name: e.target.value })} /></label>
+            {touched && !nameOk && <small className="bad">{t('err.name')}</small>}
+            <label>{t('co.phone')}<input value={phone} type="tel" inputMode="numeric" autoComplete="tel" maxLength={14} placeholder="08xxxxxxxx" aria-invalid={touched && !phoneOk} onChange={(e) => patch({ phone: e.target.value })} /></label>
+            {touched && !phoneOk && <small className="bad">{t('err.phone')}</small>}
+          </div>
+        </section>
+      )}
+
+      <section className="sp-sec sp-form" data-testid="note-section">
+        <label>{t('co.note')}<textarea value={note} rows={2} maxLength={300} onChange={(e) => patch({ note: e.target.value })} data-testid="co-note" /></label>
+        {preorder && <><small className="muted">{t('po.noteHint')}</small><QuickPhrases note={note} onChange={(n) => patch({ note: n })} /></>}
+      </section>
 
       <Fold id="items" title={t('co.items')} open={sec === 'items'} onToggle={() => toggle('items')}
         summary={<span className="sp-fold-row"><span className="sp-thumbs-row" aria-hidden>{quote.lines.filter((l) => l.ok).slice(0, 3).map((l) => <ProductImage key={l.sku_code} src={l.image_url} alt="" />)}</span><span>{t('ord.n', { n: cartCount(lines) })} · {baht(quote.subtotal)}</span></span>}>
@@ -358,9 +391,12 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
       {err && <div data-testid="checkout-error"><Banner tone="bad">{err}</Banner></div>}
       <button type="button" className="btn primary lg block" disabled={busy || loading || !quote.ok || closed || !!unavailable} onClick={ask}>{busy ? t('co.placing') : `${t('co.place')} · ${baht(quote.total)}`}</button>
 
+      {editing && store && <AddressEditor sheet initial={editing.address} contact={contact} store={store} first={!editing.address && !book?.length} onSaved={afterSave} onCancel={() => setEditing(null)} />}
       {asking && <ConfirmSheet title={t(preorder ? 'po.cf.title' : 'co.confirmTitle')} body={preorder
         ? <PreorderSummary lines={quote.lines.filter((l) => l.ok)} pickupAt={pickupAt} note={note} total={quote.total} method={methodLabel(t, method, bank?.code)} />
-        : <>{t(needsSlip ? 'co.confirmBodySlip' : 'co.confirmBody', { total: baht(quote.total) })}{dlActive && dlPin && store && <DeliverySummary value={dl} contact={contact} shop={store} />}</>} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} busyLabel={t(uploading ? 'co.uploading' : 'co.placing')} onConfirm={place} onCancel={() => setAsking(false)} />}
+        : <>{t(needsSlip ? 'co.confirmBodySlip' : 'co.confirmBody', { total: baht(quote.total) })}
+          {delivery && dl && store && !typed && <DeliverySummary value={dl} contact={contact} shop={store} />}
+          {fulfilment === 'pickup' && <div className="dp-card" data-testid="confirm-pickup"><div className="dp-line"><Store size={14} aria-hidden /> <b>{t('ck.pickupAt')}</b>{store?.name && <span>{store.name}</span>}</div></div>}</>} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} busyLabel={t(uploading ? 'co.uploading' : 'co.placing')} onConfirm={place} onCancel={() => setAsking(false)} />}
     </div>
   );
 }

@@ -2,6 +2,7 @@
 .dp-map { position: relative; width: 100%; min-height: 220px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border, #d6dae1); background: var(--surface-3, #e8ebf0); isolation: isolate; }
 .dp-map .leaflet-container { width: 100%; height: 100%; font: inherit; background: var(--surface-3, #e8ebf0); }
 .dp-map .leaflet-control-attribution { font-size: 10px; }
+.dp-map .leaflet-control-attribution a { text-decoration: underline; }   /* links told apart from the text by more than colour (axe link-in-text-block) */
 .dp-map-down { position: absolute; inset: auto 8px 8px 8px; z-index: 500; padding: 8px 10px; border-radius: 8px; background: var(--warn-soft, #fff4d6); color: var(--warn-text, #6b4a00); font-size: 12.5px; line-height: 1.4; }
 .dp-marker { background: none; border: 0; }
 .dp-pin { position: relative; display: block; width: 30px; height: 40px; }
@@ -51,3 +52,18 @@
 .dp-actions a { text-decoration: none; text-align: center; }
 .dp-note-driver { padding: 8px 10px; border-radius: 8px; background: var(--warn-soft, #fff4d6); color: var(--warn-text, #6b4a00); white-space: pre-wrap; font-size: 13.5px; }
 @media (min-width: 700px) { .dp-sheet { inset: 4vh 0; margin: 0 auto; max-width: 640px; border-radius: 16px; overflow: hidden; box-shadow: 0 12px 48px rgba(0, 0, 0, .35); border: 1px solid var(--border, #d6dae1); } }
+
+/* checkout: the saved address chosen for a LINE MAN delivery, the list to change it, and the address editor sheet (under the map picker, which opens over it) */
+.dp-editor { z-index: 1100; }
+.dp-editor .dp-sheet-body { gap: 12px; padding-bottom: 16px; }
+.dp-more { align-self: flex-start; gap: 4px; }
+.dp-more svg { transition: transform .15s; } .dp-more svg.up { transform: rotate(180deg); }
+.dp-opts { display: flex; flex-direction: column; gap: 8px; }
+.dp-opt { display: flex; align-items: flex-start; gap: 4px; padding: 4px 4px 4px 0; border: 1px solid var(--border, #d6dae1); border-radius: 12px; background: var(--surface, #fff); }
+.dp-opt.on { border-color: var(--brand, #2a78d6); box-shadow: 0 0 0 1px var(--brand, #2a78d6); }
+.dp-opt-pick { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 10px; border: 0; background: none; color: inherit; text-align: left; padding: 8px 4px 8px 10px; font: inherit; cursor: pointer; border-radius: 10px; }
+.dp-opt-pick small { font-size: 12.5px; line-height: 1.4; word-break: break-word; }
+.dp-radio { flex: none; width: 18px; height: 18px; margin-top: 2px; border-radius: 50%; border: 2px solid var(--border-strong, #9aa1ad); background: var(--surface, #fff); }
+.dp-opt.on .dp-radio { border-color: var(--brand, #2a78d6); box-shadow: inset 0 0 0 4px var(--surface, #fff); background: var(--brand, #2a78d6); }
+.dp-card .sp-text { font-size: 14px; line-height: 1.45; word-break: break-word; }
+.sp-fulfil-hint { font-size: 12.5px; color: var(--muted, #6b7280); }

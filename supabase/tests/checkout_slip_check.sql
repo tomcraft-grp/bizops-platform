@@ -14,7 +14,8 @@ set local role anon;
 select pg_temp.err_like('S2 anon cannot change it', $q$select public.finance_set_checkout_check(true)$q$, '%permission denied%');
 reset role; set local role authenticated; select pg_temp.as_user('USER');
 select pg_temp.err_like('S3 nor can a customer', $q$select public.finance_set_checkout_check(true)$q$, '%allowed%');
-select pg_temp.chk('S4 a customer learns the switch and the date rule, and no more', (select array_agg(k order by k) from jsonb_object_keys(public.finance_own_reader()) k) = array['after_min', 'before_min', 'can_manage', 'can_read', 'checkout', 'enabled'] and not (public.finance_own_reader() ->> 'can_manage')::boolean, public.finance_own_reader()::text);
+-- (since 20261128150000 also "recipients": the names the payment card shows, only while the check before ordering is on; see slip_recipient_check.sql S09/S10)
+select pg_temp.chk('S4 a customer learns the switch, the date rule and the receiver names, and no more', (select array_agg(k order by k) from jsonb_object_keys(public.finance_own_reader()) k) = array['after_min', 'before_min', 'can_manage', 'can_read', 'checkout', 'enabled', 'recipients'] and not (public.finance_own_reader() ->> 'can_manage')::boolean, public.finance_own_reader()::text);
 select pg_temp.as_user('SUPER_ADMIN');
 select pg_temp.chk('S5 a manager turns it on without the staff reader', (public.finance_set_checkout_check(true) ->> 'checkout')::boolean);
 select pg_temp.chk('S6 and the two are independent', (public.finance_own_reader() ->> 'checkout')::boolean and not (public.finance_set_own_reader(false) ->> 'enabled')::boolean);

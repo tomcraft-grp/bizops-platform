@@ -18,6 +18,7 @@ import { TH_PRODUCTION } from './i18n.production';
 import { TH_PREORDERS } from './i18n.preorders';
 import { TH_DELIVERY } from './i18n.delivery';
 import { TH_CENTRAL_AR } from './i18n.centralAr';
+import { TH_SLIPCHECK } from './i18n.slipcheck';
 
 export type Lang = 'en' | 'th';
 
@@ -154,6 +155,7 @@ for (const [k, v] of Object.entries(TH_PRODUCTION)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_PREORDERS)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_DELIVERY)) if (!(k in TH)) TH[k] = v;
 for (const [k, v] of Object.entries(TH_CENTRAL_AR)) if (!(k in TH)) TH[k] = v;
+for (const [k, v] of Object.entries(TH_SLIPCHECK)) if (!(k in TH)) TH[k] = v;
 
 /** Translate an English source string. `{name}` placeholders are filled from `vars` AFTER lookup, so the
  *  dictionary key is the template (e.g. 'Type {word} to confirm') and dynamic values are never translated. */

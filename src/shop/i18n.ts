@@ -5,6 +5,7 @@ import { create } from 'zustand';
 import { POINTS_D } from './i18n.points';
 import { PREORDER_D } from './i18n.preorder';
 import { DELIVERY_D } from './i18n.delivery';
+import { CHECKOUT_D } from './i18n.checkout';
 
 export type ShopLang = 'th' | 'en';
 const KEY = 'tc.shop.lang';
@@ -19,6 +20,7 @@ const D = {
   ...POINTS_D,
   ...PREORDER_D,
   ...DELIVERY_D,
+  ...CHECKOUT_D,
   // navigation and general
   'nav.home': ['หน้าหลัก', 'Home'], 'nav.shop': ['สินค้า', 'Products'], 'nav.cart': ['ตะกร้า', 'Cart'], 'nav.orders': ['คำสั่งซื้อ', 'Orders'], 'nav.account': ['บัญชีของฉัน', 'Account'],
   'common.back': ['ย้อนกลับ', 'Back'], 'common.retry': ['ลองอีกครั้ง', 'Try again'], 'common.close': ['ปิด', 'Close'], 'common.all': ['ทั้งหมด', 'All'],
@@ -52,7 +54,7 @@ const D = {
   'cart.line.over_limit': ['สั่งได้สูงสุด {n} ชิ้น', 'Maximum {n} per order'], 'cart.line.bad_qty': ['จำนวนไม่ถูกต้อง', 'Invalid quantity'],
   'cart.items': ['{n} ชิ้น', '{n} items'], 'cart.fix': ['กรุณานำสินค้าที่สั่งไม่ได้ออกก่อนสั่งซื้อ', 'Please remove the items that cannot be ordered first'],
   // checkout
-  'co.title': ['ยืนยันคำสั่งซื้อ', 'Confirm your order'], 'co.fulfilment': ['วิธีรับสินค้า', 'How to get your order'], 'co.delivery': ['จัดส่งถึงที่', 'Delivery'], 'co.pickup': ['รับที่ร้าน', 'Pick up'],
+  'co.title': ['ยืนยันคำสั่งซื้อ', 'Confirm your order'], 'co.fulfilment': ['วิธีรับสินค้า', 'How to get your order'], 'co.delivery': ['เรียก Line Man', 'LINE MAN delivery'], 'co.pickup': ['รับที่ร้าน', 'Pick up'],
   'co.contact': ['ข้อมูลติดต่อ', 'Contact details'], 'co.name': ['ชื่อผู้รับ', 'Recipient name'], 'co.phone': ['เบอร์โทร', 'Phone'], 'co.address': ['ที่อยู่จัดส่ง', 'Delivery address'],
   'co.addressHint': ['บ้านเลขที่ ถนน แขวง/ตำบล เขต/อำเภอ จังหวัด รหัสไปรษณีย์', 'House no., street, sub-district, district, province, postcode'], 'co.note': ['หมายเหตุถึงร้าน (ไม่บังคับ)', 'Note to the shop (optional)'],
   'co.items': ['รายการสินค้า', 'Items'], 'co.payment': ['วิธีชำระเงิน', 'Payment'], 'co.promptpay': ['โอนผ่าน QR พร้อมเพย์', 'Transfer by PromptPay QR'],
@@ -154,6 +156,8 @@ const D = {
   'sv.reading': ['กำลังตรวจสอบหลักฐานการโอนเงิน…', 'Checking your slip…'], 'sv.readingBody': ['ระบบกำลังอ่านยอดเงินและวันที่ทำรายการบนอุปกรณ์ของท่าน', 'Reading the amount and the date on your device.'],
   'sv.ok': ['ยอดเงินและวันที่ทำรายการถูกต้องตรงกัน', 'The amount and the date agree'], 'sv.differs': ['ข้อมูลในหลักฐานการโอนเงินไม่ตรงกับคำสั่งซื้อ', 'The slip does not agree with your order'], 'sv.notSlip': ['รูปภาพนี้อาจไม่ใช่หลักฐานการโอนเงิน', 'This picture may not be a transfer slip'], 'sv.unsure': ['ระบบอ่านข้อมูลได้ไม่ครบถ้วน เจ้าหน้าที่จะดำเนินการตรวจสอบ', 'Not everything could be read. Our staff will check it.'],
   'sv.amount': ['ยอดเงิน', 'Amount'], 'sv.date': ['วันที่ทำรายการ', 'Date'], 'sv.amountOk': ['{a} ถูกต้อง', '{a} agrees'], 'sv.amountDiff': ['ในหลักฐาน {slip} ยอดที่ต้องชำระ {want}', 'Slip {slip}, to transfer {want}'], 'sv.notClear': ['ไม่สามารถอ่านได้ชัดเจน', 'Not clear'],
+  'sv.okAll': ['ยอดเงิน วันที่ทำรายการ และผู้รับเงินถูกต้องตรงกัน', 'The amount, the date and the receiver agree'], 'sv.recipient': ['ผู้รับเงิน', 'Paid to'],
+  'sv.recipientDiff': ['ผู้รับเงินในหลักฐานไม่ใช่บัญชีของร้าน', 'The receiver on the slip is not the shop’s account'],
   'sv.dateOk': ['{d}', '{d}'], 'sv.datePast': ['{d} เป็นวันก่อนหน้าคำสั่งซื้อ', '{d} is an earlier day'], 'sv.dateFuture': ['{d} เป็นวันในอนาคต', '{d} is in the future'],
   'sv.tick': ['ข้าพเจ้าได้ตรวจสอบแล้ว และยืนยันการใช้หลักฐานนี้', 'I have checked it and want to use this slip'], 'sv.note': ['เป็นการตรวจสอบเบื้องต้นเท่านั้น ทางร้านจะตรวจสอบกับรายการเดินบัญชีธนาคารก่อนยืนยันการชำระเงิน', 'A first check only. The shop compares it with its bank record before the payment is confirmed.'],
   'sv.wait': ['ระบบกำลังตรวจสอบหลักฐานการโอนเงิน กรุณารอสักครู่แล้วดำเนินการอีกครั้ง', 'Your slip is being checked. Please wait a moment and press again.'], 'sv.must': ['กรุณาตรวจสอบหลักฐานการโอนเงินและทำเครื่องหมายยืนยัน หรือแนบหลักฐานใหม่', 'Please check the slip and tick to confirm, or attach another one.'],
