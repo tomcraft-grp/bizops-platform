@@ -4,9 +4,12 @@
 import { create } from 'zustand';
 import type { Choice } from '../wallet/ui';
 import type { Fulfilment } from './api';
+import { type DeliveryDraft, parseDeliveryDraft } from './geo/deliveryDraft';
 
 /** `preorder`: the customer chose "pick up later" (a pick-up order with `pickupAt`, the start of the chosen slot); the server re-checks the slot when the order is placed. */
-export interface DraftText { name?: string; phone?: string; address?: string; note?: string; fulfilment?: Fulfilment; method?: Choice; slipWhen?: string; slipRef?: string; preorder?: boolean; pickupAt?: string }
+export interface DraftText { name?: string; phone?: string; address?: string; note?: string; fulfilment?: Fulfilment; method?: Choice; slipWhen?: string; slipRef?: string; preorder?: boolean; pickupAt?: string;
+  /** the delivery location (pin, address details, who receives it): see geo/deliveryForm.ts */
+  delivery?: DeliveryDraft }
 /** The slip picture stays in memory only; `total` is the amount the customer was asked to transfer when they attached it. */
 export interface DraftSlip { file: File; total: number }
 
@@ -25,6 +28,7 @@ export function parseDraft(raw: string | null): DraftText {
       name: str(o.name, 100), phone: str(o.phone, 14), address: str(o.address, 400), note: str(o.note, 300), slipWhen: str(o.slipWhen, 20), slipRef: str(o.slipRef, 80),
       fulfilment: o.fulfilment === 'delivery' || o.fulfilment === 'pickup' ? o.fulfilment : undefined, method,
       preorder: o.preorder === true ? true : undefined, pickupAt: typeof o.pickupAt === 'string' && !isNaN(new Date(o.pickupAt).getTime()) ? o.pickupAt.slice(0, 40) : undefined,
+      delivery: parseDeliveryDraft(o.delivery),
     };
     return Object.fromEntries(Object.entries(d).filter(([, v]) => v !== undefined)) as DraftText;
   } catch { return {}; }
@@ -36,6 +40,10 @@ interface DraftState {
   /** Load the draft of the signed-in user (another user never sees it). */
   hydrate: (uid: string | null) => void;
   patch: (p: DraftText) => void;
+  /** change some fields of the delivery location (the rest stays) */
+  patchDelivery: (p: Partial<DeliveryDraft>) => void;
+  /** start the delivery location again (or from a saved address) */
+  setDelivery: (d: DeliveryDraft | undefined) => void;
   setSlip: (s: DraftSlip | null) => void;
   clear: () => void;
 }
@@ -47,6 +55,8 @@ export const useCheckoutDraft = create<DraftState>((set, get) => ({
     if (uid) { try { sessionStorage.setItem(keyOf(uid), JSON.stringify(text)); } catch { /* storage unavailable: the draft still works for this visit */ } }
     set({ text });
   },
+  patchDelivery: (p) => get().patch({ delivery: { ...(get().text.delivery ?? {}), ...p } }),
+  setDelivery: (d) => get().patch({ delivery: d }),
   setSlip: (slip) => set({ slip }),
   clear: () => { const uid = get().uid; if (uid) { try { sessionStorage.removeItem(keyOf(uid)); } catch { /* ignore */ } } set({ text: {}, slip: null }); },
 }));

@@ -19,6 +19,7 @@ import { ConfirmSheet, ErrorBox, errText, Fold, OrderBadge, orderSteps, PayBadge
 import { useSettings } from './hooks';
 import { PreorderPanel } from './Preorder';
 import { pickupLabel } from './preorderView';
+import { DeliveryBlock } from './geo/DeliveryBlock';
 
 const FILTERS: OrderFilter[] = ['all', 'preorder', 'unpaid', 'to_ship', 'to_receive', 'done', 'cancelled'];
 const PAGE = 20;
@@ -171,7 +172,7 @@ function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
       <Fold {...fold('delivery')} title={o.fulfilment === 'pickup' ? t('od.pickup') : t('od.delivery')} summary={`${o.contact_name} · ${o.contact_phone}`}>
         <div className="sp-kv"><span>{o.contact_name}</span><span>{o.contact_phone}</span></div>
-        {o.delivery_address && <p className="sp-text">{o.delivery_address}</p>}
+        {o.delivery ? <DeliveryBlock d={o.delivery} /> : o.delivery_address && <p className="sp-text">{o.delivery_address}</p>}
         {o.note && <p className="sp-note">{t('od.note')}: {o.note}</p>}
       </Fold>
 

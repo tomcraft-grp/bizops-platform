@@ -4,6 +4,7 @@ import { useCallback } from 'react';
 import { create } from 'zustand';
 import { POINTS_D } from './i18n.points';
 import { PREORDER_D } from './i18n.preorder';
+import { DELIVERY_D } from './i18n.delivery';
 
 export type ShopLang = 'th' | 'en';
 const KEY = 'tc.shop.lang';
@@ -17,6 +18,7 @@ export const useShopLang = () => useShopLangStore((s) => s.lang);
 const D = {
   ...POINTS_D,
   ...PREORDER_D,
+  ...DELIVERY_D,
   // navigation and general
   'nav.home': ['หน้าหลัก', 'Home'], 'nav.shop': ['สินค้า', 'Products'], 'nav.cart': ['ตะกร้า', 'Cart'], 'nav.orders': ['คำสั่งซื้อ', 'Orders'], 'nav.account': ['บัญชีของฉัน', 'Account'],
   'common.back': ['ย้อนกลับ', 'Back'], 'common.retry': ['ลองอีกครั้ง', 'Try again'], 'common.close': ['ปิด', 'Close'], 'common.all': ['ทั้งหมด', 'All'],

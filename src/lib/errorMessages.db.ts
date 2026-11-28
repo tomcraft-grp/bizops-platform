@@ -4,6 +4,19 @@ import type { Pair } from './errorMessages.app';
 
 /** What a machine code means, for a bare "CODE" and for a "CODE: detail" whose detail has no entry of its own. */
 export const CODE_MESSAGES: Record<string, Pair> = {
+  DELIVERY_PIN_REQUIRED: ['A delivery order needs a confirmed pin on the map.', 'ออเดอร์จัดส่งต้องปักหมุดและยืนยันตำแหน่งบนแผนที่'],
+  PIN_NOT_CONFIRMED: ['The delivery location was not confirmed.', 'ยังไม่ได้ยืนยันตำแหน่งจัดส่ง'],
+  PIN_INVALID: ['The delivery location is not valid.', 'ตำแหน่งจัดส่งไม่ถูกต้อง'],
+  PIN_OUTSIDE_AREA: ['The delivery location is outside the delivery area (Thailand).', 'ตำแหน่งจัดส่งอยู่นอกพื้นที่จัดส่ง (ประเทศไทย)'],
+  INVALID_RECIPIENT: ['Enter the recipient name and a valid phone number.', 'กรุณากรอกชื่อและเบอร์โทรผู้รับให้ถูกต้อง'],
+  INVALID_DETAILS: ['An address detail is too long.', 'รายละเอียดที่อยู่บางช่องยาวเกินไป'],
+  ADDRESS_LIMIT: ['You can save up to 10 delivery addresses.', 'บันทึกที่อยู่จัดส่งได้สูงสุด 10 ที่อยู่'],
+  ADDRESS_NOT_FOUND: ['That saved address was not found.', 'ไม่พบที่อยู่ที่บันทึกไว้นี้'],
+  DELIVERY_PICKUP_CONFLICT: ['A pick-up order cannot carry a delivery pin.', 'ออเดอร์รับสินค้าเองใส่หมุดจัดส่งไม่ได้'],
+  DELIVERY_FROZEN: ['The delivery destination of an order cannot be changed.', 'เปลี่ยนจุดส่งของออเดอร์ที่สั่งไปแล้วไม่ได้'],
+  INVALID_STORE: ['Enter a name for the starting point.', 'กรุณากรอกชื่อจุดเริ่มต้น'],
+  INVALID_STORE_LOCATION: ['The starting point must be a latitude and longitude inside Thailand.', 'จุดเริ่มต้นต้องเป็นละติจูดและลองจิจูดที่อยู่ในประเทศไทย'],
+  INVALID_STORE_URL: ['The Google Maps link must start with https://.', 'ลิงก์ Google Maps ต้องขึ้นต้นด้วย https://'],
   MEMBER_DISABLED: ['A disabled member cannot be given back-office access.', 'สมาชิกที่ปิดบัญชีอยู่ให้สิทธิ์หลังบ้านไม่ได้'],
   NOT_LINE_MEMBER: ['Only LINE members can be given access here.', 'ให้สิทธิ์จากหน้านี้ได้เฉพาะสมาชิก LINE'],
   SELF_CHANGE: ['You cannot change your own access.', 'เปลี่ยนสิทธิ์ของตัวเองไม่ได้'],
