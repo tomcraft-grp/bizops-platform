@@ -5,13 +5,16 @@
 // reference makes a double posting impossible from either side. Re-posting the same row here returns the journal that is already there.
 import { r2 } from '../lib/util';
 import { findAcct, isLocked, post, resolveLine, ROLE_KEYS } from './accounting';
-import { audit, Ctx, fail, guard } from './core';
+import { audit, Ctx, fail, guard, nid } from './core';
 import type { DB, ID, JournalLine } from './types';
 
 export interface FinancePlanLine { side: 'dr' | 'cr'; role: string; amount: number; bank_account_id?: string; wallet?: boolean; vat?: 'split' }
 export interface FinanceQueueRow {
   id: string; event_type: string; ref_no: string | null; event_date: string; amount: number; plan: FinancePlanLine[];
   banks?: Record<string, { code: string; gl_account_code: string | null }>;
+  /** expense rows (EXPENSE_PAYMENT / EXPENSE_REVERSAL): the expense number, vendor, claimable VAT, cash or bank, and for a reversal the row it reverses */
+  detail?: Record<string, unknown> | null;
+  depends_on?: string | null;
 }
 export interface FinancePostSettings { invoice_vat_mode: 'unset' | 'none' | 'inclusive'; vat_rate: number }
 export const FINANCE_REF_TYPE = 'finance_event';
@@ -21,6 +24,8 @@ const MEMO: Record<string, string> = {
   RECEIPT_REVERSAL: 'Receipt reversed', WALLET_DEPOSIT: 'Wallet deposit', WALLET_PAYMENT: 'Invoice paid from wallet', WALLET_REFUND: 'Refund to wallet',
   WALLET_ADJUSTMENT: 'Wallet adjustment', WALLET_REVERSAL: 'Wallet transaction reversed',
   CASH_RECEIPT: 'Cash received',   // a payment staff recorded as cash: Dr cash on hand (role cash) / Cr receivable. Its reversal is a RECEIPT_REVERSAL that credits role cash.
+  EXPENSE_PAYMENT: 'Expense paid',          // a daily expense approved & posted: Dr expense / stock (+ input VAT) / Cr cash or that bank (+ withholding tax)
+  EXPENSE_REVERSAL: 'Expense reversed',     // the same lines flipped, queued after the original
 };
 export const eventLabel = (t: string) => MEMO[t] ?? t;
 
@@ -69,10 +74,27 @@ export function postFinanceRow(d: DB, ctx: Ctx, row: FinanceQueueRow, s: Finance
   if (have) return { journalId: have.id, journalNo: have.no, date: have.date, already: true };
   const plan = planFinanceRow(d, row, s, opts);
   if (!plan.ok) fail('FINANCE_NOT_POSTABLE', plan.errors[0]);
-  const jid = post(d, ctx, { date: plan.date, memo: plan.memo, refType: FINANCE_REF_TYPE, refId: row.id, lines: plan.lines });
+  const dt = row.detail ?? {};
+  const memo = row.event_type === 'EXPENSE_PAYMENT' && dt.description ? `${plan.memo}: ${String(dt.vendor || dt.description)}` : plan.memo;
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const info = row.event_type === 'EXPENSE_PAYMENT' ? { claimNo: str(dt.expense_no) || (row.ref_no ?? ''), categoryCode: str(dt.category_code), categoryNameEn: str(dt.category_name_en), categoryNameTh: str(dt.category_name_th),
+    vendor: str(dt.vendor) || undefined, paymentMethod: str(dt.payment_method), taxType: str(dt.tax_type), treatment: str(dt.treatment), vat: r2(Number(dt.vat ?? 0)), wht: r2(Number(dt.wht ?? 0)),
+    expenseDate: str(dt.expense_date), postedBy: ctx.userId, claimId: str(dt.claim_id) || undefined } : undefined;
+  const jid = post(d, ctx, { date: plan.date, memo, refType: FINANCE_REF_TYPE, refId: row.id, lines: plan.lines, dim: typeof dt.branch_id === 'string' && dt.branch_id ? { branchId: dt.branch_id } : undefined, info });
   if (!jid) fail('EMPTY', 'The journal has no lines');
   const j = d.journals.find((x) => x.id === jid)!;
-  audit(d, ctx, 'finance.post', 'journal', jid!, `${plan.memo} (${r2(row.amount)}) posted as ${j.no}`, 'info');
+  if (row.event_type === 'EXPENSE_PAYMENT') {
+    // the expense register feeds the VAT report (input VAT only when it is claimable), as for an expense posted on this device
+    const debit = row.plan.find((l) => l.side === 'dr' && l.role !== 'input_vat');
+    d.expenses.push({ id: nid(d, 'EX'), no: String(dt.expense_no ?? row.ref_no ?? ''), date: j.date, account: debit ? j.lines.find((l) => l.debit > 0)?.account ?? debit.role : '', vendor: String(dt.vendor || dt.description || ''),
+      amount: r2(row.amount), vat: r2(Number(dt.vat ?? 0)), paidFrom: dt.paid_from === 'cash' ? 'cash' : 'bank', branchId: typeof dt.branch_id === 'string' ? dt.branch_id : undefined,
+      note: typeof dt.description === 'string' ? dt.description : undefined, journalId: jid! });
+  } else if (row.event_type === 'EXPENSE_REVERSAL') {
+    // the original journal is marked reversed by this one, so the register and the VAT report leave it out (the original stays as it was)
+    const orig = typeof dt.reverses_queue_id === 'string' ? financeJournal(d, dt.reverses_queue_id) : undefined;
+    if (orig && orig.status !== 'reversed') { orig.status = 'reversed'; orig.reversedBy = jid!; j.reverses = orig.id; }
+  }
+  audit(d, ctx, 'finance.post', 'journal', jid!, `${memo} (${r2(row.amount)}) posted as ${j.no}`, 'info');
   return { journalId: jid!, journalNo: j.no, date: plan.date, already: false };
 }
 

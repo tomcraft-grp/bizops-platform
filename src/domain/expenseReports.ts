@@ -18,7 +18,8 @@ export function expenseRows(d: DB, from: string, to: string): ExpenseRow[] {
   const acct = new Map(d.accounts.map((a) => [a.code, a]));
   const out: ExpenseRow[] = [];
   for (const j of d.journals) {
-    if ((j.refType !== 'expense_claim' && j.refType !== 'expense') || j.status !== 'posted' || j.reverses) continue;
+    const queued = j.refType === 'finance_event' && !!j.info?.claimId;   // an expense approved & posted centrally, journal posted from the queue
+    if ((j.refType !== 'expense_claim' && j.refType !== 'expense' && !queued) || j.status !== 'posted' || j.reverses) continue;
     const day = dayKey(j.date);
     if (day < from || day > to) continue;
     const cashCode = roleCode(d, 'cash', j.date), inputVat = roleCode(d, 'input_vat', j.date);
@@ -35,7 +36,7 @@ export function expenseRows(d: DB, from: string, to: string): ExpenseRow[] {
     const first = Object.keys(accounts)[0];
     const fa = first ? acct.get(first) : undefined;
     out.push({
-      journal: j, source: j.refType === 'expense_claim' ? 'claim' : 'legacy', amount: r2(amount), vat: r2(vat), wht: r2(info?.wht ?? 0), cashOut: r2(cashOut), bankOut: r2(bankOut), paid: r2(cashOut + bankOut),
+      journal: j, source: j.refType === 'expense_claim' || queued ? 'claim' : 'legacy', amount: r2(amount), vat: r2(vat), wht: r2(info?.wht ?? 0), cashOut: r2(cashOut), bankOut: r2(bankOut), paid: r2(cashOut + bankOut),
       categoryKey: info?.categoryCode ?? `account:${first ?? '?'}`, categoryEn: info?.categoryNameEn ?? fa?.name ?? '—', categoryTh: info?.categoryNameTh ?? fa?.nameTh ?? '—',
       accounts: Object.entries(accounts).map(([code, amt]) => ({ code, amount: amt })), transactionDate: info?.expenseDate ?? day, postingDate: day, approvedAt: info?.approvedAt, claimNo: info?.claimNo, vendor: info?.vendor,
     });
@@ -77,16 +78,17 @@ export function monthlyComparison(d: DB, to: string, months = 6) {
   return list;
 }
 
-export interface WorkflowClaim { id: string; expense_no: string | null; amount_paid: number; wht_amount: number; journal_no: string | null; status: string }
+export interface WorkflowClaim { id: string; expense_no: string | null; amount_paid: number; wht_amount: number; journal_no: string | null; status: string; gl_queue_id?: string | null }
+const claimJournals = (d: DB, claimId: string) => d.journals.filter((j) => j.status === 'posted' && !j.reverses && ((j.refType === 'expense_claim' && j.refId === claimId) || (j.refType === 'finance_event' && j.info?.claimId === claimId)));
 /** Compare the workflow database (claims marked posted) with this ledger: every posted claim must have exactly one matching journal. */
 export function reconcileClaims(d: DB, claims: WorkflowClaim[]) {
   const issues: { id: string; no: string; problem: 'missing' | 'amount' | 'journal'; detail: string }[] = [];
   let workflow = 0, ledger = 0;
   for (const c of claims) {
     if (c.status !== 'posted') continue;
-    const js = d.journals.filter((j) => j.refType === 'expense_claim' && j.refId === c.id && j.status === 'posted' && !j.reverses);
+    const js = claimJournals(d, c.id);
     workflow += Number(c.amount_paid);
-    if (js.length !== 1) { issues.push({ id: c.id, no: c.expense_no ?? c.id, problem: 'missing', detail: js.length === 0 ? 'No journal in this ledger' : `${js.length} journals in this ledger` }); continue; }
+    if (js.length !== 1) { issues.push({ id: c.id, no: c.expense_no ?? c.id, problem: 'missing', detail: js.length === 0 ? (c.gl_queue_id ? 'Waiting in the accounting queue (Payments & wallet → Accounting ledger)' : 'No journal in this ledger') : `${js.length} journals in this ledger` }); continue; }
     const j = js[0], debit = r2(j.lines.reduce((s, l) => s + l.debit, 0));
     ledger += debit;
     if (Math.abs(debit - Number(c.amount_paid)) > 0.005) issues.push({ id: c.id, no: c.expense_no ?? c.id, problem: 'amount', detail: `Claim ${c.amount_paid} vs journal ${debit}` });
@@ -94,6 +96,6 @@ export function reconcileClaims(d: DB, claims: WorkflowClaim[]) {
   }
   // journals of claims that the workflow does not know as posted (e.g. posted here, status update failed or claim reversed elsewhere)
   const known = new Set(claims.filter((c) => c.status === 'posted').map((c) => c.id));
-  const orphans = d.journals.filter((j) => j.refType === 'expense_claim' && j.status === 'posted' && !j.reverses && j.refId && !known.has(j.refId));
+  const orphans = d.journals.filter((j) => j.status === 'posted' && !j.reverses && ((j.refType === 'expense_claim' && j.refId && !known.has(j.refId)) || (j.refType === 'finance_event' && j.info?.claimId && !known.has(j.info.claimId))));
   return { issues, workflow: r2(workflow), ledger: r2(ledger), diff: r2(workflow - ledger), orphans: orphans.map((j) => ({ no: j.no, claim: j.info?.claimNo ?? j.refId ?? '' })) };
 }

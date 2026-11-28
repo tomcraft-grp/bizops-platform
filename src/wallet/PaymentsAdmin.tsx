@@ -13,6 +13,7 @@ import { eventLabel, financeNetCredit, planFinanceRow, postFinanceRow, verifyPos
 import { Badge, Banner, Button, Drawer, Empty, Field, Input, Modal, PageHead, SearchBox, Select, Skeleton, Switch, Tabs, Textarea, useHas } from '../ui/kit';
 import { canFinance, finance, FinanceRole } from '../finance/api';
 import { CustomerPaymentHistory } from '../finance/PaymentHistory';
+import { BankBooks } from '../finance/BankBooks';
 import { ShopError } from '../shop/api';
 import { BankAccountRow, BankReportRow, FinanceSettings, GlRow, LedgerRow, newKey, PaymentRow, Reconciliation, walletAdmin, WalletReconcile, WalletRow } from './api';
 import { BankBadge } from './ui';
@@ -297,6 +298,7 @@ function BanksPanel({ T, role }: { T: TFn; role: FinanceRole | null }) {
               <td>{b.gl_account_code ?? <span className="muted">{T('default bank account')}</span>}</td><td><Badge tone={b.active ? 'good' : ''} dot>{b.active ? T('Active') : T('Inactive')}</Badge></td>
               <td>{manage && <Button size="sm" onClick={() => setEdit(b)}>{T('Edit')}</Button>}</td></tr>))}</tbody></table></div>
       )}
+      {canFinance(role, 'view') && <BankBooks canManage={manage} />}
       <QrBankCard T={T} role={role} />
       {settings && manage && <SettingsCard s={settings} T={T} onSaved={load} />}
       {edit && <BankEditor b={edit} T={T} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} />}

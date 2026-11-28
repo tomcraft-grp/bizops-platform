@@ -2,9 +2,9 @@
 // "keep my unsaved rows" logic are tested on their own (tests/unit/expenseSheet.test.ts). Each row is one expense claim in the database
 // (public.expense_claims); the sheet only decides which rows to save, and expense_save stays the single writer that recomputes the money.
 import type { TaxType } from '../domain/expenseLedger';
-import type { Category, Claim, PayMethod, Status } from './api';
+import { needsBank, type Category, type Claim, type PayMethod, type ProductOption, type Status } from './api';
 
-export interface SavedFields { description: string; categoryId: string; amount: number; method: PayMethod; notes: string }
+export interface SavedFields { description: string; categoryId: string; amount: number; method: PayMethod; notes: string; sku: string | null; bankId: string }
 export interface SheetRow {
   /** stable React key: stays the same when the row is saved and gets an id */
   key: string;
@@ -13,6 +13,10 @@ export interface SheetRow {
   status: Status | null;
   expenseNo: string | null;
   description: string; categoryId: string; amount: string; method: PayMethod; notes: string;
+  /** the catalogue product this row is (null: a free-text item) */
+  sku: string | null;
+  /** the bank account a transfer / QR payment came from ('' = none chosen) */
+  bankId: string;
   taxType: TaxType;
   /** the category was filled in from a suggestion, so picking another suggestion may replace it */
   auto?: boolean;
@@ -47,17 +51,21 @@ export function shiftDay(key: string, n: number): string {
 }
 
 // ------------------------------------------------------------------------------------------ rows
-export function blankRow(method: PayMethod): SheetRow {
-  return { key: newKey(), id: null, status: null, expenseNo: null, description: '', categoryId: '', amount: '', method, notes: '', taxType: 'none', saved: null, base: null };
+/** A new row starts with the payment method (and bank account) of the row above: several transfers from one account are typed quickly. */
+export function blankRow(method: PayMethod, bankId = ''): SheetRow {
+  return { key: newKey(), id: null, status: null, expenseNo: null, description: '', categoryId: '', amount: '', method, notes: '', sku: null, bankId: needsBank(method) ? bankId : '', taxType: 'none', saved: null, base: null };
 }
 export function rowFromClaim(c: Claim): SheetRow {
   const amount = Number(c.amount_paid);
+  const sku = c.sku_code ?? null, bankId = c.bank_account_id ?? '';
   return {
     key: `c-${c.id}`, id: c.id, status: c.status, expenseNo: c.expense_no, description: c.description, categoryId: c.category_id, amount: formatAmount(amount), method: c.payment_method,
-    notes: c.notes ?? '', taxType: c.tax_type, saved: { description: c.description, categoryId: c.category_id, amount, method: c.payment_method, notes: c.notes ?? '' }, base: c,
+    notes: c.notes ?? '', sku, bankId, taxType: c.tax_type, saved: { description: c.description, categoryId: c.category_id, amount, method: c.payment_method, notes: c.notes ?? '', sku, bankId }, base: c,
   };
 }
-/** New rows, drafts and rejected expenses can be changed here. Anything sent for approval is locked (the database enforces the same).
+/** A row kept in this browser by an earlier version of the app has no product / bank fields yet. */
+export const withDefaults = (r: SheetRow): SheetRow => ({ ...r, sku: r.sku ?? null, bankId: r.bankId ?? '' });
+/** New rows, drafts and rejected expenses can be changed here. Anything posted (or sent through the old approval step) is locked (the database enforces the same).
  *  "VAT added on top" is edited in the full form: there the amount typed is the price before VAT, here it is the money paid. */
 export const isEditable = (r: SheetRow) => (r.status === null || r.status === 'draft' || r.status === 'rejected') && r.taxType !== 'vat_excluded';
 export const isBlank = (r: SheetRow) => r.id === null && !r.description.trim() && !r.amount.trim() && !r.notes.trim() && !r.categoryId;
@@ -65,10 +73,11 @@ export function isDirty(r: SheetRow): boolean {
   if (r.id === null) return !isBlank(r);
   if (!isEditable(r) || !r.saved) return false;
   const s = r.saved;
-  return r.description.trim() !== s.description || r.categoryId !== s.categoryId || parseAmount(r.amount) !== s.amount || r.method !== s.method || r.notes.trim() !== s.notes;
+  return r.description.trim() !== s.description || r.categoryId !== s.categoryId || parseAmount(r.amount) !== s.amount || r.method !== s.method || r.notes.trim() !== s.notes
+    || (r.sku ?? null) !== (s.sku ?? null) || (needsBank(r.method) ? r.bankId ?? '' : '') !== (needsBank(s.method) ? s.bankId ?? '' : '');
 }
 
-export type RowErrors = Partial<Record<'description' | 'category' | 'amount' | 'notes', 'required' | 'inactive' | 'too_long' | 'invalid' | 'too_big'>>;
+export type RowErrors = Partial<Record<'description' | 'category' | 'amount' | 'notes' | 'bank', 'required' | 'inactive' | 'too_long' | 'invalid' | 'too_big'>>;
 /** The same checks expense_save makes, so a row is fixed before anything is sent. */
 export function validateRow(r: SheetRow, catById: Record<string, Category | undefined>): RowErrors {
   const e: RowErrors = {};
@@ -78,6 +87,7 @@ export function validateRow(r: SheetRow, catById: Record<string, Category | unde
   const n = parseAmount(r.amount);
   if (!r.amount.trim()) e.amount = 'required'; else if (n === null) e.amount = 'invalid'; else if (n > MAX_AMOUNT) e.amount = 'too_big';
   if (r.notes.trim().length > 1000) e.notes = 'too_long';
+  if (needsBank(r.method) && !r.bankId) e.bank = 'required';
   return e;
 }
 
@@ -100,9 +110,16 @@ export function newRowTaxType(cat: Category | undefined, vatRegistered: boolean)
 }
 
 // ------------------------------------------------------------------------------------------ suggestions for the item box
-export interface Suggestion { text: string; categoryId: string; method: PayMethod | null; uses: number; last: string }
-/** The person's own items, most used first (category and payment method as used last time), then the active category names. */
-export function suggestionsFrom(history: Claim[], categories: Category[], lang: string): Suggestion[] {
+export interface Suggestion {
+  text: string; categoryId: string; method: PayMethod | null; uses: number; last: string;
+  /** a product of the catalogue: choosing it links the row to that product (and its category) */
+  sku?: string | null;
+  /** the catalogue class of that product (shown small next to it) */
+  productClass?: ProductOption['sku_category'] | null;
+}
+/** The person's own items, most used first (category and payment method as used last time), then the products of the catalogue
+ *  (each with the category its catalogue class maps to), then the active category names. */
+export function suggestionsFrom(history: Claim[], categories: Category[], lang: string, products: ProductOption[] = []): Suggestion[] {
   const active = new Set(categories.filter((c) => c.active).map((c) => c.id));
   const by = new Map<string, Suggestion>();
   for (const c of history) {
@@ -111,14 +128,25 @@ export function suggestionsFrom(history: Claim[], categories: Category[], lang: 
     if (!text) continue;
     const k = norm(text);
     const prev = by.get(k);
-    if (!prev) { by.set(k, { text, categoryId: active.has(c.category_id) ? c.category_id : '', method: c.payment_method, uses: 1, last: c.created_at }); continue; }
+    const fields = { text, categoryId: active.has(c.category_id) ? c.category_id : '', method: c.payment_method, last: c.created_at, sku: c.sku_code ?? null };
+    if (!prev) { by.set(k, { ...fields, uses: 1 }); continue; }
     prev.uses++;
-    if (c.created_at > prev.last) Object.assign(prev, { text, categoryId: active.has(c.category_id) ? c.category_id : '', method: c.payment_method, last: c.created_at });
+    if (c.created_at > prev.last) Object.assign(prev, fields);
   }
   const mine = [...by.values()].sort((a, b) => b.uses - a.uses || (a.last < b.last ? 1 : -1));
-  const cats = categories.filter((c) => c.active).map((c) => ({ text: lang === 'th' ? c.name_th : c.name_en, categoryId: c.id, method: null, uses: 0, last: '' }))
-    .filter((s) => !by.has(norm(s.text)));
-  return [...mine, ...cats];
+  const items: Suggestion[] = [];
+  for (const p of products) {
+    const text = (lang === 'th' ? p.name_th || p.name_en : p.name_en || p.name_th)?.trim().replace(/\s+/g, ' ');
+    if (!text) continue;
+    const own = by.get(norm(text));
+    if (own) { own.sku ??= p.sku_code; own.productClass = p.sku_category; continue; }   // typed before under the same name: that line now stands for the product
+    if (items.some((x) => norm(x.text) === norm(text))) continue;
+    items.push({ text, categoryId: p.category_id && active.has(p.category_id) ? p.category_id : '', method: null, uses: 0, last: '', sku: p.sku_code, productClass: p.sku_category });
+  }
+  const taken = new Set([...by.keys(), ...items.map((x) => norm(x.text))]);
+  const cats = categories.filter((c) => c.active && !c.product_class).map((c) => ({ text: lang === 'th' ? c.name_th : c.name_en, categoryId: c.id, method: null, uses: 0, last: '' }))
+    .filter((s) => !taken.has(norm(s.text)));
+  return [...mine, ...items, ...cats];
 }
 export const matchSuggestion = (list: Suggestion[], typedText: string): Suggestion | null => { const k = norm(typedText); return k ? list.find((s) => norm(s.text) === k) ?? null : null; };
 /** The suggestions that fit what was typed (any part of the text, upper or lower case), in the same order. Nothing is offered when the only fit is exactly what is
@@ -129,10 +157,11 @@ export function filterSuggestions<T extends { text: string }>(list: T[], typed: 
   if (k && hit.length === 1 && norm(hit[0].text) === k) return [];
   return hit.slice(0, limit);
 }
-/** Fill the category (and how it was paid) from a suggestion. `overwrite` = the person did not choose them by hand. */
+/** Fill the category (and how it was paid) from a suggestion. `overwrite` = the person did not choose them by hand.
+ *  Choosing a PRODUCT always applies the category its catalogue class maps to (the person can still change it before saving). */
 export function fillFromSuggestion(r: SheetRow, s: Suggestion, overwrite: boolean): SheetRow {
-  const out = { ...r };
-  if (s.categoryId && (overwrite || !r.categoryId)) { out.categoryId = s.categoryId; out.auto = true; }
+  const out = { ...r, sku: s.sku ?? null };
+  if (s.categoryId && (overwrite || !r.categoryId || (s.sku && s.sku !== r.sku))) { out.categoryId = s.categoryId; out.auto = true; }
   if (s.method && overwrite) out.method = s.method;
   return out;
 }
@@ -145,13 +174,14 @@ export const stashOf = (rows: SheetRow[]) => rows.filter(isDirty);
 export function mergeDay(server: Claim[], stash: SheetRow[], method: PayMethod): { rows: SheetRow[]; dropped: number } {
   const rows = server.filter((c) => c.status !== 'cancelled').sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0)).map(rowFromClaim);
   let dropped = 0;
-  for (const s of stash) {
+  for (const raw of stash) {
+    const s = withDefaults(raw);
     if (s.id === null) { rows.push(s); continue; }
     const i = rows.findIndex((r) => r.id === s.id);
     if (i < 0 || !isEditable(rows[i])) { dropped++; continue; }
-    rows[i] = { ...rows[i], description: s.description, categoryId: s.categoryId, amount: s.amount, method: s.method, notes: s.notes, auto: s.auto };
+    rows[i] = { ...rows[i], description: s.description, categoryId: s.categoryId, amount: s.amount, method: s.method, notes: s.notes, auto: s.auto, sku: s.sku, bankId: s.bankId };
   }
   const last = rows[rows.length - 1];
-  rows.push(blankRow(last?.method ?? method));
+  rows.push(blankRow(last?.method ?? method, last?.bankId ?? ''));
   return { rows, dropped };
 }

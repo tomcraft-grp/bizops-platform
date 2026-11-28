@@ -4,23 +4,23 @@
 // so changing the day, switching tabs or reloading never loses them. Saving gives each new row its claim id at once: saving again
 // (after a failure, or a second click) updates that claim instead of creating a second one.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, ExternalLink, FileText, Plus, Send, Trash2 } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, ExternalLink, FileText, Package, Plus, Trash2 } from 'lucide-react';
 import { toast, useLang } from '../domain/store';
 import { Badge, Button, Modal, useConfirm } from '../ui/kit';
 import { cx, dayKey } from '../lib/util';
-import { METHOD_META, cancelClaim, catName, listClaims, saveClaim, submitClaim, useT, type Claim, type PayMethod } from './api';
+import { CLASS_META, METHOD_META, bankLabel, cancelClaim, catName, listClaims, needsBank, saveClaim, useT, type Claim, type PayMethod } from './api';
 import { CatIcon, StatusBadge, useExpense } from './parts';
 import { ItemBox, type ItemOption } from './ItemBox';
 import { ExpenseForm } from './ExpenseForm';
 import {
   blankRow, dayTotals, fillFromSuggestion, formatAmount, isBlank, isDirty, isEditable, matchSuggestion, mergeDay, newRowTaxType, parseAmount, rowFromClaim, shiftDay, stashOf, suggestionsFrom,
-  validateRow, type RowErrors, type SheetRow, type Suggestion,
+  validateRow, withDefaults, type RowErrors, type SheetRow, type Suggestion,
 } from './sheet';
 
 const STASH = 'expenseSheet.v1';
 const stashKey = (uid: string, day: string) => `${STASH}.${uid}.${day}`;
 function readStash(uid: string, day: string): SheetRow[] {
-  try { const v = JSON.parse(localStorage.getItem(stashKey(uid, day)) ?? '[]') as SheetRow[]; return Array.isArray(v) ? v : []; } catch { return []; }
+  try { const v = JSON.parse(localStorage.getItem(stashKey(uid, day)) ?? '[]') as SheetRow[]; return Array.isArray(v) ? v.map(withDefaults) : []; } catch { return []; }
 }
 function writeStash(uid: string, day: string, rows: SheetRow[]) {
   try { const s = stashOf(rows); if (s.length) localStorage.setItem(stashKey(uid, day), JSON.stringify(s)); else localStorage.removeItem(stashKey(uid, day)); } catch { /* private mode: rows live in memory only */ }
@@ -48,7 +48,7 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
   const T = useT();
   const lang = useLang();
   const confirm = useConfirm();
-  const { userId, categories, catById, settings } = useExpense();
+  const { userId, categories, catById, settings, products, productBySku, banks, bankById } = useExpense();
   const today = dayKey(new Date());
   const [day, setDay] = useState(today);
   const [sheet, setSheet] = useState<Sheet | null>(null);
@@ -65,12 +65,16 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
   const itemRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const focusNext = useRef<string | null>(null);
   const active = useMemo(() => categories.filter((c) => c.active), [categories]);
-  const suggestions = useMemo(() => suggestionsFrom(history, categories, lang), [history, categories, lang]);
-  // each suggestion carries the icon of its category and, small at the end, the category name (not repeated when the suggestion IS the category)
+  const suggestions = useMemo(() => suggestionsFrom(history, categories, lang, products), [history, categories, lang, products]);
+  // each suggestion carries the icon of its category and, small at the end, the category name (not repeated when the suggestion IS the category);
+  // a product of the catalogue shows its class and code instead ("วัตถุดิบ · RM-000001")
   const options = useMemo<ItemOption[]>(() => suggestions.map((x) => {
     const c = x.categoryId ? catById[x.categoryId] : undefined, name = c ? catName(lang, c) : '';
+    if (x.sku) return { text: x.text, icon: c?.icon ?? 'package', sub: `${x.productClass ? (lang === 'th' ? CLASS_META[x.productClass].th : CLASS_META[x.productClass].en) : ''} · ${x.sku}` };
     return { text: x.text, icon: c?.icon, sub: name && name !== x.text ? name : undefined };
   }), [suggestions, catById, lang]);
+  /** a single active bank account is chosen for you; with several, you choose */
+  const defaultBank = banks.length === 1 ? banks[0].id : '';
 
   // ---------------------------------------------------------------- loading
   const loadHistory = useCallback(() => {
@@ -87,10 +91,16 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
       const { rows } = await listClaims({ employee: userId, from: d, to: d }, 0, 500);
       if (my !== reqSeq.current) return;
       // read the stash only now: rows typed while the request was out are in it too
-      const live = sheetRef.current?.day === d ? stashOf(sheetRef.current.rows) : readStash(userId, d);
+      const cur = sheetRef.current?.day === d ? sheetRef.current.rows : [];
+      const live = sheetRef.current?.day === d ? stashOf(cur) : readStash(userId, d);
       const merged = mergeDay(rows, live, 'cash');
-      setSheet({ day: d, rows: merged.rows });
-      if (merged.dropped) toast('error', T(`${merged.dropped} unsaved change(s) could not be kept: those expenses were sent for approval or cancelled in the meantime.`, `มี ${merged.dropped} รายการที่แก้ไว้แต่เก็บไม่ได้ เพราะรายการนั้นถูกส่งอนุมัติหรือยกเลิกไปแล้ว`));
+      // rows already on screen keep their React key, so a background reload never remounts a row (a choice made at that moment would be lost)
+      const keyOf = new Map(cur.filter((r) => r.id).map((r) => [r.id, r.key]));
+      const lastCur = cur[cur.length - 1], keep = merged.rows.map((r) => (r.id && keyOf.has(r.id) ? { ...r, key: keyOf.get(r.id)! } : r));
+      const lastNew = keep[keep.length - 1];
+      if (lastCur && lastNew && lastCur.id === null && lastNew.id === null && isBlank(lastCur) && isBlank(lastNew) && !keep.some((r) => r.key === lastCur.key)) keep[keep.length - 1] = { ...lastNew, key: lastCur.key };
+      setSheet({ day: d, rows: keep });
+      if (merged.dropped) toast('error', T(`${merged.dropped} unsaved change(s) could not be kept: those expenses were posted to accounting or cancelled in the meantime.`, `มี ${merged.dropped} รายการที่แก้ไว้แต่เก็บไม่ได้ เพราะรายการนั้นถูกลงบัญชีหรือยกเลิกไปแล้ว`));
     } catch (e) { if (my === reqSeq.current) { setLoadErr((e as Error).message); if (!quiet) setSheet(null); } }
   }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void loadDay(day, false); setErrs({}); setRowErr({}); }, [day]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -117,7 +127,7 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
     if (!rows) return;
     const last = rows[rows.length - 1];
     if (last && isBlank(last) && isEditable(last)) { itemRefs.current[last.key]?.focus(); return; }
-    const r = blankRow(last?.method ?? 'cash');
+    const r = blankRow(last?.method ?? 'cash', last?.bankId || defaultBank);
     focusNext.current = r.key;
     setRows((rs) => [...rs, r]);
   };
@@ -130,8 +140,13 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
   const onEnter = (key: string) => (e: KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); nextRow(key); } };
   const typeItem = (r: SheetRow, text: string) => {
     const m: Suggestion | null = matchSuggestion(suggestions, text);
-    patch(r.key, (x) => { const y = { ...x, description: text }; return m ? fillFromSuggestion(y, m, !x.categoryId || !!x.auto) : y; });
+    // a typed text that is not a product unlinks the product (the row becomes a free-text item)
+    patch(r.key, (x) => { const y = { ...x, description: text, sku: null }; return m ? fillFromSuggestion(y, m, !x.categoryId || !!x.auto) : y; });
     clearErr(r.key, 'description'); if (m) clearErr(r.key, 'category');
+  };
+  const changeMethod = (r: SheetRow, m: PayMethod) => {
+    patch(r.key, { method: m, bankId: needsBank(m) ? r.bankId || defaultBank : '' });
+    clearErr(r.key, 'bank');
   };
 
   const changeDay = (d: string) => {
@@ -147,6 +162,7 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
     if (f === 'description') return code === 'too_long' ? T('At most 300 characters', 'ไม่เกิน 300 ตัวอักษร') : T('Type what it was', 'ใส่ชื่อรายการ');
     if (f === 'category') return code === 'inactive' ? T('This category is closed: pick another', 'หมวดนี้ปิดใช้แล้ว เลือกหมวดอื่น') : T('Pick a category', 'เลือกหมวดหมู่');
     if (f === 'amount') return code === 'too_big' ? T('Too large', 'จำนวนเงินมากเกินไป') : code === 'invalid' ? T('Numbers only, up to 2 decimals', 'ใส่ตัวเลข ทศนิยมไม่เกิน 2 ตำแหน่ง') : T('Enter the amount', 'ใส่จำนวนเงิน');
+    if (f === 'bank') return T('Choose the bank account', 'เลือกบัญชีธนาคาร');
     return T('At most 1,000 characters', 'ไม่เกิน 1,000 ตัวอักษร');
   };
 
@@ -175,6 +191,7 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
             id: r.id, expenseDate: cur.day, categoryId: r.categoryId, description: r.description.trim(), amount: parseAmount(r.amount)!,
             taxType: r.id ? r.taxType : newRowTaxType(catById[r.categoryId], settings.vat_registered), paymentMethod: r.method,
             vendor: r.base?.vendor ?? '', vendorTaxId: r.base?.vendor_tax_id ?? '', referenceNo: r.base?.reference_no ?? '', notes: r.notes.trim(),
+            sku: r.sku, bankAccountId: r.bankId,
           });
           ok++;
           // the row keeps its place and key; from now on it is that claim (a second save updates it)
@@ -192,35 +209,10 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
     return latest;
   };
 
-  const submitDay = async () => {
-    if (busyRef.current) return;
-    const cur = sheetRef.current;
-    const now = await save();
-    if (!now || !cur) return;
-    const ready = now.filter((r) => r.id && (r.status === 'draft' || r.status === 'rejected'));
-    if (!ready.length) { toast('info', T('Nothing to send: save some rows first.', 'ยังไม่มีรายการที่จะส่ง กรุณาบันทึกก่อน')); return; }
-    const sum = ready.reduce((s, r) => Math.round((s + (parseAmount(r.amount) ?? 0)) * 100) / 100, 0);
-    const x = await confirm({
-      title: T(`Send ${ready.length} expense(s) for approval?`, `ส่ง ${ready.length} รายการขออนุมัติ?`),
-      body: T(`Total ${formatAmount(sum)} THB. After sending they cannot be changed here unless the approver sends them back.`, `รวม ${formatAmount(sum)} บาท ส่งแล้วจะแก้ไขไม่ได้ จนกว่าผู้อนุมัติจะส่งกลับมา`),
-      confirmLabel: T('Send for approval', 'ส่งอนุมัติ'),
-    });
-    if (!x.ok) return;
-    busyRef.current = true; setBusy('submit');
-    let ok = 0; let firstErr = '';
-    try {
-      for (const r of ready) { try { await submitClaim(r.id!); ok++; } catch (e) { firstErr ||= (e as Error).message; } }
-    } finally { busyRef.current = false; setBusy(''); }
-    if (firstErr) toast('error', T(`${ok} sent; the rest failed: ${firstErr}`, `ส่งแล้ว ${ok} รายการ ที่เหลือไม่สำเร็จ: ${firstErr}`));
-    else toast('success', T(`${ok} expense(s) sent for approval`, `ส่งขออนุมัติแล้ว ${ok} รายการ`));
-    onChanged();
-    void loadDay(cur.day, true);
-  };
-
   const removeRow = async (r: SheetRow) => {
     if (busyRef.current) return;
     if (r.id === null) {
-      setRows((rs) => { const left = rs.filter((x) => x.key !== r.key); return left.some((x) => isEditable(x) && isBlank(x)) ? left : [...left, blankRow(r.method)]; });
+      setRows((rs) => { const left = rs.filter((x) => x.key !== r.key); return left.some((x) => isEditable(x) && isBlank(x)) ? left : [...left, blankRow(r.method, r.bankId)]; });
       setErrs((e) => ({ ...e, [r.key]: {} }));
       return;
     }
@@ -234,7 +226,7 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
     busyRef.current = true;
     try {
       await cancelClaim(r.id, x.reason);
-      setRows((rs) => { const left = rs.filter((y) => y.key !== r.key); return left.length ? left : [blankRow(r.method)]; });
+      setRows((rs) => { const left = rs.filter((y) => y.key !== r.key); return left.length ? left : [blankRow(r.method, r.bankId)]; });
       toast('success', T('Removed', 'ลบรายการแล้ว'));
       onChanged();
     } catch (e) { toast('error', (e as Error).message); } finally { busyRef.current = false; }
@@ -245,9 +237,13 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
   };
 
   // ---------------------------------------------------------------- view
-  const anyDraft = !!rows?.some((r) => r.id && (r.status === 'draft' || r.status === 'rejected'));
   const isToday = day === today;
   const methodLabel = (m: PayMethod) => (lang === 'th' ? METHOD_META[m].th : METHOD_META[m].en);
+  const productTag = (sku: string | null) => {
+    if (!sku) return null;
+    const p = productBySku[sku];
+    return <span className="xs-prod" title={T('Product from the catalogue', 'สินค้าจากรายการสินค้า')}><Package size={12} aria-hidden />{p ? `${lang === 'th' ? CLASS_META[p.sku_category].th : CLASS_META[p.sku_category].en} · ` : ''}{sku}</span>;
+  };
   return (
     <div className="xs" onKeyDown={onKeys}>
       <div className="xs-head">
@@ -295,9 +291,9 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
             if (!isEditable(r)) return (
               <div key={r.key} className="xs-row xs-locked" role="row" data-testid="xs-row">
                 <span className="xs-n" role="cell">{i + 1}</span>
-                <span role="cell" className="xs-item"><b className="xs-lt"><span className="xs-ico" aria-hidden><CatIcon name={(catById[r.categoryId] ?? r.base?.category)?.icon} size={14} /></span>{r.description}</b><span className="xs-meta"><StatusBadge status={r.status!} />{r.expenseNo && <span className="muted">{r.expenseNo}</span>}</span></span>
+                <span role="cell" className="xs-item"><b className="xs-lt"><span className="xs-ico" aria-hidden><CatIcon name={(catById[r.categoryId] ?? r.base?.category)?.icon} size={14} /></span>{r.description}</b><span className="xs-meta"><StatusBadge status={r.status!} />{r.expenseNo && <span className="muted">{r.expenseNo}</span>}{productTag(r.sku)}</span></span>
                 <span role="cell" className="xs-cat">{catName(lang, catById[r.categoryId] ?? r.base?.category)}</span>
-                <span role="cell" className="xs-method">{methodLabel(r.method)}</span>
+                <span role="cell" className="xs-method">{methodLabel(r.method)}{needsBank(r.method) && r.bankId && <small className="muted xs-bankline">{bankLabel(lang, bankById[r.bankId]) || T('bank account', 'บัญชีธนาคาร')}</small>}</span>
                 <span role="cell" className="xs-amt num"><b>{n !== null ? formatAmount(n) : r.amount}</b></span>
                 <span role="cell" className="xs-notes muted">{r.notes}</span>
                 <span role="cell" className="xs-act"><Button size="sm" variant="ghost" icon aria-label={T('Open details', 'ดูรายละเอียด')} title={T('Open details', 'ดูรายละเอียด')} onClick={() => onOpen(r.id!)}><ExternalLink size={15} /></Button></span>
@@ -310,7 +306,7 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
                     <ItemBox inputRef={(el) => { itemRefs.current[r.key] = el; }} value={r.description} options={options} icon={catById[r.categoryId]?.icon} invalid={!!e.description} readOnly={!edit}
                       placeholder={T('e.g. Coffee, Gasoline…', 'เช่น กาแฟ ค่าน้ำมัน…')} label={T(`Expense item, row ${i + 1}`, `รายการ แถว ${i + 1}`)} listLabel={T(`Suggestions for the item, row ${i + 1}`, `รายการแนะนำ แถว ${i + 1}`)} onChange={(text) => typeItem(r, text)} />
                     {e.description && <span className="exp-err">{errText('description', e.description)}</span>}
-                    {(r.status === 'rejected' || r.id) && <span className="xs-meta">{r.status && <StatusBadge status={r.status} />}{r.status === 'rejected' && r.base?.reject_reason && <span className="muted">{r.base.reject_reason}</span>}</span>}
+                    {(r.status === 'rejected' || r.id || r.sku) && <span className="xs-meta">{r.status && <StatusBadge status={r.status} />}{r.status === 'rejected' && r.base?.reject_reason && <span className="muted">{r.base.reject_reason}</span>}{productTag(r.sku)}</span>}
                   </span>
                   <span role="cell" className="xs-cat">
                     <select className={cx('select', e.category && 'bad')} value={r.categoryId} disabled={!edit} aria-label={T(`Category, row ${i + 1}`, `หมวดหมู่ แถว ${i + 1}`)} aria-invalid={!!e.category}
@@ -322,9 +318,17 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
                     {e.category && <span className="exp-err">{errText('category', e.category)}</span>}
                   </span>
                   <span role="cell" className="xs-method">
-                    <select className="select" value={r.method} disabled={!edit} aria-label={T(`Paid by, row ${i + 1}`, `จ่ายโดย แถว ${i + 1}`)} onChange={(ev) => patch(r.key, { method: ev.target.value as PayMethod })}>
+                    <select className="select" value={r.method} disabled={!edit} aria-label={T(`Paid by, row ${i + 1}`, `จ่ายโดย แถว ${i + 1}`)} onChange={(ev) => changeMethod(r, ev.target.value as PayMethod)}>
                       {(Object.keys(METHOD_META) as PayMethod[]).map((m) => <option key={m} value={m}>{methodLabel(m)}</option>)}
                     </select>
+                    {needsBank(r.method) && (
+                      <select className={cx('select xs-bank', e.bank && 'bad')} value={r.bankId} disabled={!edit} data-testid="xs-bank" aria-label={T(`Bank account, row ${i + 1}`, `บัญชีธนาคาร แถว ${i + 1}`)} aria-invalid={!!e.bank}
+                        onChange={(ev) => { patch(r.key, { bankId: ev.target.value }); clearErr(r.key, 'bank'); }}>
+                        <option value="">{T('Bank account…', 'เลือกบัญชีธนาคาร…')}</option>
+                        {banks.map((b) => <option key={b.id} value={b.id}>{bankLabel(lang, b)}</option>)}
+                        {r.bankId && !bankById[r.bankId] && <option value={r.bankId}>{T('(account no longer active)', '(บัญชีปิดใช้แล้ว)')}</option>}
+                      </select>)}
+                    {e.bank && <span className="exp-err">{errText('bank', e.bank)}</span>}
                   </span>
                   <span role="cell" className="xs-amt">
                     <span className={cx('xs-money', e.amount && 'bad')}>
@@ -357,7 +361,6 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
             {totals.unsaved > 0 && <Badge tone="warn" dot>{T(`${totals.unsaved} not saved`, `ยังไม่บันทึก ${totals.unsaved}`)}</Badge>}
           </span>
           <span className="xs-bar-act">
-            {anyDraft && <Button onClick={() => void submitDay()}>{busy === 'submit' ? T('Sending…', 'กำลังส่ง…') : <><Send size={15} />{' '}{T('Send day for approval', 'ส่งอนุมัติทั้งวัน')}</>}</Button>}
             <Button variant="primary" data-testid="xs-save" onClick={() => { void save().then((ok) => { if (ok && totals.unsaved === 0) toast('info', T('Everything on this day is already saved', 'บันทึกครบทุกรายการแล้ว')); }); }}>
               {busy === 'save' ? T('Saving…', 'กำลังบันทึก…') : totals.unsaved > 0 ? T(`Save ${totals.unsaved} expense(s)`, `บันทึก ${totals.unsaved} รายการ`) : T('Save expenses', 'บันทึกรายการ')}
             </Button>
@@ -365,7 +368,7 @@ export function DailySheet({ refreshKey, onOpen, onChanged }: { refreshKey: numb
         </div>)}
 
       <div className="xs-foot muted">
-        <span className="xs-keys">{T('Enter in Amount or Notes goes to the next row · Ctrl+S saves · Saved rows stay editable until you send them for approval.', 'กด Enter ที่ช่องจำนวนเงินหรือหมายเหตุเพื่อไปแถวถัดไป · Ctrl+S บันทึก · รายการที่บันทึกแล้วยังแก้ไขได้จนกว่าจะส่งอนุมัติ')}</span>
+        <span className="xs-keys">{T('Enter in Amount or Notes goes to the next row · Ctrl+S saves · Saved rows are drafts: they stay editable until they are approved & posted to accounting.', 'กด Enter ที่ช่องจำนวนเงินหรือหมายเหตุเพื่อไปแถวถัดไป · Ctrl+S บันทึก · รายการที่บันทึกเป็นแบบร่าง แก้ไขได้จนกว่าจะอนุมัติและลงบัญชี')}</span>
         <button type="button" className="exp-more" onClick={() => setFull(true)}><FileText size={15} />{' '}{T('Detailed entry (receipt photo, VAT, vendor)', 'บันทึกแบบละเอียด (ถ่ายใบเสร็จ, VAT, ร้านค้า)')}</button>
       </div>
       {full && <Modal title={T('New expense (detailed)', 'บันทึกรายจ่ายแบบละเอียด')} size="lg" onClose={() => setFull(false)}>

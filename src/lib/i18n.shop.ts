@@ -119,7 +119,7 @@ export const TH_SHOP: Record<string, string> = {
   'Invoice cancelled': 'ยกเลิกใบแจ้งหนี้', 'Bank transfer received': 'รับเงินโอนธนาคาร',
   'Customer credit applied to invoice': 'ใช้เครดิตลูกค้าชำระใบแจ้งหนี้', 'Receipt reversed': 'ย้อนรายการใบเสร็จ',
   'Invoice paid from wallet': 'ชำระใบแจ้งหนี้จากกระเป๋าเงิน', 'Wallet adjustment': 'ปรับยอดกระเป๋าเงิน',
-  'Wallet transaction reversed': 'ย้อนรายการกระเป๋าเงิน', 'A line of this entry has no amount.': 'มีบรรทัดในรายการนี้ที่ไม่มียอดเงิน',
+  'Wallet transaction reversed': 'ย้อนรายการกระเป๋าเงิน', 'Expense paid': 'จ่ายค่าใช้จ่าย', 'Expense reversed': 'กลับรายการค่าใช้จ่าย', 'A line of this entry has no amount.': 'มีบรรทัดในรายการนี้ที่ไม่มียอดเงิน',
   'This entry has no lines.': 'รายการนี้ไม่มีบรรทัดบัญชี', 'The journal has no lines': 'สมุดรายวันไม่มีบรรทัดบัญชี',
   'Choose how invoices are taxed (Payments & wallet → Accounting ledger → Accounting settings) before invoices are posted.': 'เลือกวิธีจัดการภาษีของใบแจ้งหนี้ (การชำระเงินและกระเป๋าเงิน → สมุดบัญชี (GL) → ตั้งค่าบัญชี) ก่อนบันทึกใบแจ้งหนี้',
   // reports

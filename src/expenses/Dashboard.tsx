@@ -34,16 +34,16 @@ export function Dashboard({ onOpen, refreshKey }: { onOpen: (c: Claim) => void; 
   return (
     <div className="col gap-16">
       <div className="grid g4">
-        <Kpi label={T('Spent today', 'รายจ่ายวันนี้')} value={money0(data?.today_total ?? 0)} sub={T('submitted, approved and posted', 'ส่งแล้ว อนุมัติแล้ว และบันทึกบัญชีแล้ว')} />
+        <Kpi label={T('Spent today', 'รายจ่ายวันนี้')} value={money0(data?.today_total ?? 0)} sub={T('recorded and posted', 'บันทึกแล้วและลงบัญชีแล้ว')} />
         <Kpi label={T('Spent this month', 'รายจ่ายเดือนนี้')} value={money0(data?.month_total ?? 0)} sub={T('up to today', 'ถึงวันนี้')} />
-        <Kpi label={T('Pending approval', 'รออนุมัติ')} value={st('submitted').n} tone={st('submitted').n ? 'bad' : undefined} sub={money0(st('submitted').amount)} />
-        <Kpi label={T('Approved, not yet posted', 'อนุมัติแล้ว รอลงบัญชี')} value={st('approved').n} sub={money0(st('approved').amount)} />
+        <Kpi label={T('Waiting for approval & posting', 'รออนุมัติและลงบัญชี')} value={st('draft').n + st('submitted').n + st('approved').n} tone={st('draft').n + st('submitted').n + st('approved').n ? 'bad' : undefined}
+          sub={money0(st('draft').amount + st('submitted').amount + st('approved').amount)} />
+        <Kpi label={T('Posted to the ledger', 'บันทึกบัญชีแล้ว')} value={st('posted').n} tone="good" sub={money0(st('posted').amount)} />
       </div>
       <div className="grid g4">
-        <Kpi label={T('Posted to the ledger', 'บันทึกบัญชีแล้ว')} value={st('posted').n} tone="good" sub={money0(st('posted').amount)} />
-        <Kpi label={T('Rejected', 'ไม่อนุมัติ')} value={st('rejected').n} sub={money0(st('rejected').amount)} />
+        <Kpi label={T('Sent back for a fix', 'ส่งกลับให้แก้ไข')} value={st('rejected').n} sub={money0(st('rejected').amount)} />
         <Kpi label={T('Drafts', 'แบบร่าง')} value={st('draft').n} sub={money0(st('draft').amount)} />
-        <Kpi label={T('Total in the selected period', 'รวมในช่วงที่เลือก')} value={money0(data?.range_total ?? 0)} sub={T('not counting drafts, rejected, cancelled', 'ไม่นับแบบร่าง ไม่อนุมัติ ยกเลิก')} />
+        <Kpi label={T('Total in the selected period', 'รวมในช่วงที่เลือก')} value={money0(data?.range_total ?? 0)} sub={T('recorded and posted; not counting sent back or cancelled', 'บันทึกแล้วและลงบัญชีแล้ว ไม่นับที่ส่งกลับหรือยกเลิก')} />
       </div>
 
       <Card title={T('Filters', 'ตัวกรอง')}>
