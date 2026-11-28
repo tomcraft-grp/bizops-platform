@@ -4,7 +4,7 @@
 
 ## What a customer and the shop get
 
-> **Changed by docs/checkout-lineman.md (2026-11-28, not yet published):** the checkout no longer shows the map form. Delivery is called **เรียก Line Man** and takes the address from the account's address book (default chosen, Change / Edit / + Add, the editor opens over the checkout and saves to the account); pick-up asks for nothing but an optional note. The paragraphs below describe the editor and the shop side, which are unchanged.
+> **Changed by docs/checkout-lineman.md (2026-11-28, LIVE 23:20):** the checkout no longer shows the map form. Delivery is called **เรียก Line Man** and takes the address from the account's address book (default chosen, Change / Edit / + Add, the editor opens over the checkout and saves to the account); pick-up asks for nothing but an optional note. The paragraphs below describe the editor and the shop side, which are unchanged.
 
 **Customer (checkout, delivery):** a *Delivery location* section. The customer chooses the place on a map: search a place / building / village / condominium / address, tap the map, drag the pin, use the phone's position, or paste a Google Maps link or coordinates. Nothing counts until they press **Confirm this location**. Then they add the details (address, house / building / unit, village / condo, floor, landmark, extra directions, a note for the driver with quick phrases, and, if it goes to somebody else, that person's name and phone). The card shows the distance from the shop: the **straight line** and, when the routing service answers, the **driving distance and time** (the straight line is never called a driving distance). The confirmation sheet repeats who / where before the order is placed.
 
