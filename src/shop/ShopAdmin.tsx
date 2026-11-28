@@ -14,6 +14,8 @@ import { STATUS as PAY_STATUS } from '../finance/api';
 import { AdminCategory, AdminOrder, AdminOrdersPage, AdminProduct, AdminSettings, ContentPatch, OrderStatus, ShopError, ShopSpec, shopAdmin } from './api';
 import { preError } from '../preorders/view';
 import { pickupLabel } from './preorderView';
+import { StaffDelivery } from './geo/StaffDelivery';
+import { destinationUrl, readMapsInput } from './geo/geo';
 
 type Panel = 'orders' | 'products' | 'settings';
 const publicUrl = (path: string) => supabase.storage.from('shop-products').getPublicUrl(path).data.publicUrl;
@@ -76,7 +78,7 @@ function OrdersPanel({ T, onCounts }: { T: TFn; onCounts: (c: AdminOrdersPage['c
           <table className="t"><thead><tr><th>{T('Order')}</th><th>{T('Date')}</th><th>{T('Customer')}</th><th className="r">{T('Total')}</th><th>{T('Payment')}</th><th>{T('Status')}</th></tr></thead>
             <tbody>{page.orders.map((o) => (
               <tr key={o.id} className="click" tabIndex={0} onClick={() => setOpen(o.id)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(o.id); }}>
-                <td><b className="mono">{o.order_no}</b>{o.order_type === 'preorder' && o.pickup_at && <div><Badge tone="info">{T('Preorder')}</Badge> <span className="muted">{pickupLabel(o.pickup_at, lang)}</span></div>}</td><td>{dateTimeFmt(o.created_at)}</td><td>{o.contact_name}<div className="muted">{o.contact_phone}</div></td>
+                <td><b className="mono">{o.order_no}</b>{o.order_type === 'preorder' && o.pickup_at && <div><Badge tone="info">{T('Preorder')}</Badge> <span className="muted">{pickupLabel(o.pickup_at, lang)}</span></div>}{o.delivery && <div><Badge tone="good">{T('Pinned')}</Badge></div>}</td><td>{dateTimeFmt(o.created_at)}</td><td>{o.contact_name}<div className="muted">{o.contact_phone}</div></td>
                 <td className="r">{money(o.total)}</td>
                 <td><PayBadge code={o.invoice.status_code} T={T} /></td><td><Badge tone={TONE[o.status]}>{T(STATUS_LABEL[o.status])}</Badge></td>
               </tr>))}</tbody></table>
@@ -129,10 +131,12 @@ function OrderDrawer({ id, T, onClose, onChanged }: { id: string; T: TFn; onClos
             {o.order_type === 'preorder' && o.pickup_at && <span data-testid="drawer-pickup"><b>{T('Pickup')}: {pickupLabel(o.pickup_at, lang)}</b> · <Link to={`/preorders?order=${o.id}`}>{T('Manage in Preorders')}</Link></span>}
             <b>{o.contact_name}</b><span>{o.contact_phone}</span>
             {o.customer && <span className="muted">{T('Customer account')}: {o.customer.code}{o.customer.line_user_id ? ' · LINE' : ''}</span>}
-            {o.delivery_address && <span style={{ whiteSpace: 'pre-wrap' }}>{o.delivery_address}</span>}
-            {o.fulfilment === 'delivery' && !o.delivery_address && <span className="muted">{T('No delivery address given: please call the customer')}</span>}
+            {!o.delivery && o.delivery_address && <span style={{ whiteSpace: 'pre-wrap' }}>{o.delivery_address}</span>}
+            {!o.delivery && o.fulfilment === 'delivery' && !o.delivery_address && <span className="muted">{T('No delivery address given: please call the customer')}</span>}
+            {!o.delivery && <StaffDelivery o={o} T={T} lang={lang} />}
             {o.note && <span className="muted">{T(o.order_type === 'preorder' ? 'Customer instructions' : 'Customer note')}: {o.note}</span>}
           </div>
+          {o.delivery && <div className="card card-b"><StaffDelivery o={o} T={T} lang={lang} /></div>}
           <table className="t"><thead><tr><th>{T('Item')}</th><th style={{ textAlign: 'right' }}>{T('Qty')}</th><th style={{ textAlign: 'right' }}>{T('Amount')}</th></tr></thead>
             <tbody>{o.items.map((i) => <tr key={i.line_no}><td>{i.name}<div className="muted mono">{i.sku_code} · {money(i.unit_price)}</div></td><td style={{ textAlign: 'right' }}>{i.qty}</td><td style={{ textAlign: 'right' }}>{money(i.line_total)}</td></tr>)}
               <tr><td colSpan={2} className="muted">{T('Shipping')}</td><td style={{ textAlign: 'right' }}>{money(o.shipping_fee)}</td></tr>
@@ -277,9 +281,11 @@ function SettingsPanel({ T }: { T: TFn }) {
   const [cats, setCats] = useState<AdminCategory[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({ closed_message: '', pickup_note: '', shipping_fee: '0', free_shipping_min: '' });
+  const [store, setStore] = useState({ name: '', lat: '', lng: '', url: '', paste: '' });
+  const [storeMsg, setStoreMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => {
-    shopAdmin.settings().then((r) => { setS(r); setForm({ closed_message: r.closed_message ?? '', pickup_note: r.pickup_note ?? '', shipping_fee: String(r.shipping_fee), free_shipping_min: r.free_shipping_min != null ? String(r.free_shipping_min) : '' }); setError(null); }).catch((e) => setError(msg(e)));
+    shopAdmin.settings().then((r) => { setS(r); setForm({ closed_message: r.closed_message ?? '', pickup_note: r.pickup_note ?? '', shipping_fee: String(r.shipping_fee), free_shipping_min: r.free_shipping_min != null ? String(r.free_shipping_min) : '' }); setStore({ name: r.store_name ?? '', lat: r.store_lat != null ? String(r.store_lat) : '', lng: r.store_lng != null ? String(r.store_lng) : '', url: r.store_maps_url ?? '', paste: '' }); setError(null); }).catch((e) => setError(msg(e)));
     shopAdmin.categories().then(setCats).catch((e) => setError(msg(e)));
   }, []);
   useEffect(load, [load]);
@@ -288,6 +294,13 @@ function SettingsPanel({ T }: { T: TFn }) {
     try { setS(await shopAdmin.saveSettings(patch)); toast('success', T(ok)); } catch (e) { toast('error', msg(e)); } finally { setBusy(false); }
   };
   const saveText = () => save({ closed_message: form.closed_message, pickup_note: form.pickup_note, shipping_fee: Number(form.shipping_fee) || 0, free_shipping_min: form.free_shipping_min.trim() === '' ? null : Number(form.free_shipping_min) });
+  const saveStore = () => save({ store_name: store.name, store_lat: Number(store.lat), store_lng: Number(store.lng), store_maps_url: store.url.trim() || null }, 'The starting point was saved. New orders use it; earlier orders keep the one they were placed with.');
+  const readPaste = () => {
+    const r = readMapsInput(store.paste);
+    if (r.ok) { setStore({ ...store, lat: String(r.pin.lat), lng: String(r.pin.lng), paste: '' }); setStoreMsg(null); }
+    else setStoreMsg(T(r.reason === 'short' ? 'A short link (maps.app.goo.gl) cannot be read here: open it in Google Maps, then paste the coordinates or the full link.' : r.reason === 'range' ? 'This place is outside Thailand.' : 'No coordinates could be read from this.'));
+  };
+  const storePin = Number.isFinite(Number(store.lat)) && Number.isFinite(Number(store.lng)) && store.lat.trim() !== '' && store.lng.trim() !== '' ? { lat: Number(store.lat), lng: Number(store.lng) } : null;
   const check = (ok: boolean, label: ReactNode) => <li style={{ color: ok ? 'var(--good-text)' : 'var(--warn-text)' }}>{ok ? '✓' : '○'} {label}</li>;
   if (error && !s) return <Banner tone="bad">{error}</Banner>;
   if (!s) return <Skeleton h={200} />;
@@ -315,6 +328,25 @@ function SettingsPanel({ T }: { T: TFn }) {
         <Field label={T('Message shown while the shop is closed')}><Input maxLength={200} value={form.closed_message} onChange={(e) => setForm({ ...form, closed_message: e.target.value })} /></Field>
         <div><Button variant="primary" loading={busy} disabled={busy} onClick={saveText}>{T('Save')}</Button></div>
       </div>
+      {s.store_lat != null && (
+        <div className="card card-b col gap-12" data-testid="store-card">
+          <b>{T('Delivery map')}</b>
+          <div className="muted" style={{ fontSize: 12.5 }}>{T('Delivery routes start at this place. Customers pin their address on a map and the shop opens it in Google Maps.')}</div>
+          <Switch checked={s.delivery_pin_required !== false} onChange={(v) => save({ delivery_pin_required: v })} label="Delivery orders need a map pin" />
+          <div className="muted" style={{ fontSize: 12.5 }}>{T('Customers must confirm a pin on the map to place a delivery order. Switch it off to let them order with a typed address only.')}</div>
+          <Field label={T('Name of the starting point')}><Input value={store.name} maxLength={100} onChange={(e) => setStore({ ...store, name: e.target.value })} data-testid="store-name" /></Field>
+          <div className="row"><Field label={T('Latitude')}><Input value={store.lat} inputMode="decimal" onChange={(e) => setStore({ ...store, lat: e.target.value })} data-testid="store-lat" /></Field>
+            <Field label={T('Longitude')}><Input value={store.lng} inputMode="decimal" onChange={(e) => setStore({ ...store, lng: e.target.value })} data-testid="store-lng" /></Field></div>
+          <Field label={T('Paste a Google Maps link or coordinates to fill in the latitude and longitude')}>
+            <div className="row"><Input value={store.paste} onChange={(e) => setStore({ ...store, paste: e.target.value })} data-testid="store-paste" /><Button disabled={!store.paste.trim()} onClick={readPaste} data-testid="store-paste-use">{T('Use these coordinates')}</Button></div></Field>
+          {storeMsg && <Banner tone="warn">{storeMsg}</Banner>}
+          <Field label={T('Google Maps link of the starting point (optional)')}><Input value={store.url} maxLength={300} onChange={(e) => setStore({ ...store, url: e.target.value })} data-testid="store-url" /></Field>
+          <div className="row wrap">
+            <Button variant="primary" loading={busy} disabled={busy || !storePin || !store.name.trim()} onClick={saveStore} data-testid="store-save">{T('Save the starting point')}</Button>
+            {storePin && <a className="btn" href={destinationUrl(storePin)} target="_blank" rel="noopener noreferrer">{T('Check this place in Google Maps')}</a>}
+          </div>
+        </div>
+      )}
       <CategoriesCard cats={cats} T={T} onSaved={load} />
     </div>
   );

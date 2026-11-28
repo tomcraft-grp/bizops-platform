@@ -1,7 +1,7 @@
 // The top of the Account tab: who the customer is, how many orders / payments are open, shortcuts and the language choice.
 // (The name / phone / consent form and the feedback centre below it stay in pages/CustomerApp.tsx.)
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, ClipboardList, Coins, Gift, ShoppingBag, ShoppingCart, Wallet as WalletIcon } from 'lucide-react';
+import { ChevronRight, ClipboardList, Coins, Gift, MapPin, ShoppingBag, ShoppingCart, Wallet as WalletIcon } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 import { cx } from '../lib/util';
 import { shop } from './api';
@@ -11,6 +11,8 @@ import { transfers, type TransferOverview } from '../rewards/transferApi';
 import { PointTransferView } from './PointTransfer';
 import * as PV from './pointsView';
 import { RewardsView } from './Rewards';
+import { AddressBook } from './geo/AddressBook';
+import { useSettings } from './hooks';
 import { baht } from './format';
 import { useCartCount } from './cart';
 import { useShopHost, useShopNav } from './nav';
@@ -28,6 +30,8 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
   const [balance, setBalance] = useState<number | null>(null);
   const [rewardsOn, setRewardsOn] = useState(false);          // the "Rewards & event" row: only when the server says rewards are on (ships dark; an older database simply has none)
   const [inRewards, setInRewards] = useState(false);
+  const [inAddresses, setInAddresses] = useState(false);       // "My delivery addresses": only when the database has the delivery-pin migration
+  const settings = useSettings();
   const rewardsRow = useRef<HTMLButtonElement>(null);
   const wasInRewards = useRef(false);
   const [tov, setTov] = useState<TransferOverview | null>(null);   // the "Transfer points" row: only when the server says transfers are on (they ship off)
@@ -67,6 +71,7 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
   // The Rewards screen takes the place of this page (shop.css hides what the host renders after it: the member form, the feedback centre).
   if (inRewards) return <div className="sp-account rw-open"><RewardsView onBack={() => setInRewards(false)} /></div>;
   if (inTransfer) return <div className="sp-account rw-open"><PointTransferView onBack={() => setInTransfer(false)} /></div>;
+  if (inAddresses) return <div className="sp-account rw-open"><AddressBook onBack={() => setInAddresses(false)} /></div>;
   return (
     <div className="sp-account">
       <div className="sp-me">
@@ -88,6 +93,13 @@ export function AccountSummary({ onOpenWallet }: { onOpenWallet?: () => void } =
         {row(<ClipboardList size={20} />, t('acc.myOrders'), t('acc.myOrdersHint'), 'pay', toPay || 0)}
         {row(<ShoppingCart size={20} />, t('acc.cart'), t('acc.cartHint'), 'cart', cartN)}
         {row(<ShoppingBag size={20} />, t('acc.shop'), t('acc.shopHint'), 'shop')}
+        {settings?.store && (
+          <button type="button" className="sp-linkrow" onClick={() => setInAddresses(true)} data-testid="addresses-row">
+            <span className="sp-linkrow-ic"><MapPin size={20} /></span>
+            <span className="grow"><b>{t('ab.title')}</b><small>{t('ab.rowHint')}</small></span>
+            <ChevronRight size={18} aria-hidden />
+          </button>
+        )}
         {rewardsOn && (
           <button type="button" className="sp-linkrow" ref={rewardsRow} onClick={() => setInRewards(true)} data-testid="rewards-row">
             <span className="sp-linkrow-ic"><Gift size={20} /></span>

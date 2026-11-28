@@ -1,0 +1,53 @@
+/* Delivery pin: the map, its markers, the picker sheet and the staff delivery card. Uses the app's design tokens with fallbacks (the customer app and the back office share them). */
+.dp-map { position: relative; width: 100%; min-height: 220px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border, #d6dae1); background: var(--surface-3, #e8ebf0); isolation: isolate; }
+.dp-map .leaflet-container { width: 100%; height: 100%; font: inherit; background: var(--surface-3, #e8ebf0); }
+.dp-map .leaflet-control-attribution { font-size: 10px; }
+.dp-map-down { position: absolute; inset: auto 8px 8px 8px; z-index: 500; padding: 8px 10px; border-radius: 8px; background: var(--warn-soft, #fff4d6); color: var(--warn-text, #6b4a00); font-size: 12.5px; line-height: 1.4; }
+.dp-marker { background: none; border: 0; }
+.dp-pin { position: relative; display: block; width: 30px; height: 40px; }
+.dp-pin::before { content: ''; position: absolute; left: 1px; top: 0; width: 28px; height: 28px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); transform-origin: center; background: var(--crit, #d03b3b); border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, .35); }
+.dp-pin::after { content: ''; position: absolute; left: 9px; top: 8px; width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+.dp-pin-shop::before { background: var(--brand, #2a78d6); }
+.dp-pin-label { position: absolute; left: 50%; top: -18px; transform: translateX(-50%); white-space: nowrap; font: 700 11px/1 var(--font, system-ui); padding: 3px 6px; border-radius: 6px; background: #fff; color: #222; box-shadow: 0 1px 4px rgba(0, 0, 0, .3); }
+
+/* the picker sheet (customer app) */
+.dp-sheet { position: fixed; inset: 0; z-index: 1200; display: flex; flex-direction: column; background: var(--surface, #fff); color: var(--text, #1a1d23); }
+.dp-sheet-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border, #d6dae1); }
+.dp-sheet-head h2 { margin: 0; flex: 1; font-size: 16px; font-weight: 750; }
+.dp-sheet-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; overflow-y: auto; }
+.dp-sheet-body .dp-map { flex: 1 0 280px; min-height: 280px; }
+.dp-sheet-foot { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border, #d6dae1); background: var(--surface, #fff); }
+.dp-search { display: flex; gap: 6px; }
+.dp-search input { flex: 1; min-width: 0; border: 1px solid var(--border-strong, var(--border, #d6dae1)); border-radius: 10px; background: var(--surface, #fff); color: inherit; padding: 10px 12px; font: inherit; font-size: 15px; }
+.dp-results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--border, #d6dae1); border-radius: 10px; overflow: hidden; max-height: 190px; overflow-y: auto; }
+.dp-results button { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border, #d6dae1); background: var(--surface, #fff); color: inherit; padding: 9px 12px; font: inherit; font-size: 13.5px; line-height: 1.35; cursor: pointer; }
+.dp-results li:last-child button { border-bottom: 0; }
+.dp-results button:hover, .dp-results button:focus-visible { background: var(--surface-3, #eef0f4); }
+.dp-results b { display: block; font-weight: 700; }
+.dp-results span { color: var(--muted, #6b7280); font-size: 12.5px; }
+.dp-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.dp-tools .btn { flex: 1 1 auto; }
+.dp-coords { font-size: 12.5px; color: var(--muted, #6b7280); word-break: break-word; }
+.dp-link { display: flex; flex-direction: column; gap: 6px; }
+
+/* the delivery card in the checkout and in an order */
+.dp-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border, #d6dae1); border-radius: 12px; background: var(--surface, #fff); }
+.dp-card.ok { border-color: var(--good, #2e9e5b); }
+.dp-card.todo { border-style: dashed; border-color: var(--brand, #2a78d6); }
+.dp-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 13.5px; }
+.dp-line b { font-weight: 700; }
+.dp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dp-chip { border: 1px solid var(--border-strong, var(--border, #d6dae1)); border-radius: 999px; background: var(--surface, #fff); color: inherit; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.dp-chip.on { background: var(--brand, #2a78d6); border-color: var(--brand, #2a78d6); color: var(--on-brand, #fff); }
+.dp-addr { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border, #d6dae1); border-radius: 12px; background: var(--surface, #fff); }
+.dp-addr.def { border-color: var(--brand, #2a78d6); }
+.dp-addr-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.dp-check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.dp-check input { width: 18px; height: 18px; }
+.dp-staff { display: flex; flex-direction: column; gap: 10px; }
+.dp-staff .dp-map { height: 220px; min-height: 220px; }
+.dp-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.dp-actions > * { flex: 1 1 180px; }
+.dp-actions a { text-decoration: none; text-align: center; }
+.dp-note-driver { padding: 8px 10px; border-radius: 8px; background: var(--warn-soft, #fff4d6); color: var(--warn-text, #6b4a00); white-space: pre-wrap; font-size: 13.5px; }
+@media (min-width: 700px) { .dp-sheet { inset: 4vh 0; margin: 0 auto; max-width: 640px; border-radius: 16px; overflow: hidden; box-shadow: 0 12px 48px rgba(0, 0, 0, .35); border: 1px solid var(--border, #d6dae1); } }

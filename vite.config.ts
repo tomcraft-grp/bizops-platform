@@ -23,5 +23,6 @@ export default defineConfig({
   plugins: [react(), brandHtml(), viteSingleFile()],
   define: { __APP_VERSION__: JSON.stringify(appVersion) },
   server: { port: 5173 },
+  optimizeDeps: { include: ['leaflet'] },       // the map is only loaded by a screen: pre-bundle it so a fresh dev server does not re-optimise (and reload the page) in the middle of a test run
   build: { target: 'es2020', chunkSizeWarningLimit: 4000 },
 });

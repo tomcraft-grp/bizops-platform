@@ -12,6 +12,7 @@ import { FakeRewards } from './fakeRewards';
 import { FakeLine } from './fakeLine';
 import { FakeTransfers } from './fakeTransfers';
 import { FakePreorders } from './fakePreorders';
+import { FakeDelivery } from './fakeDelivery';
 
 export const USER_ID = '11111111-1111-4111-8111-111111111111';
 const HOST = 'hlvravynjalculvplrxc.supabase.co';
@@ -51,6 +52,8 @@ export class FakeShop {
   tr = new FakeTransfers(this);
   /** preorders: the slot calendar, capacity, the change window, the checklist, notices and the staff screens (fakePreorders.ts) */
   po = new FakePreorders(this);
+  /** the delivery pin: the store location, saved addresses and the frozen delivery of an order (fakeDelivery.ts) */
+  dl = new FakeDelivery(this);
   private fail = new Map<string, number>();
   private drop = new Set<string>();
   private seq = 0;
@@ -143,7 +146,7 @@ export class FakeShop {
   }
   private orderJson(o: FOrder) {
     const { key: _k, hash: _h, invoice, ...rest } = o; void _k; void _h;
-    return { ...rest, channel: 'LINE', updated_at: o.created_at, cancelled_at: null, invoice: this.invoiceRow(invoice), ...this.po.orderExtra(o) };
+    return { ...rest, channel: 'LINE', updated_at: o.created_at, cancelled_at: null, invoice: this.invoiceRow(invoice), ...this.po.orderExtra(o), ...this.dl.orderExtra(o) };
   }
   /** the order as the customer app reads it (for the preorder fake) */
   orderJsonPublic(o: FOrder) { return this.orderJson(o); }
@@ -172,7 +175,7 @@ export class FakeShop {
     switch (fn) {
       case 'get_published_customer_layout': return this.layout;
       case 'customer_app_query': return { columns: [{ key: 'sku_code', label: 'SKU', type: 'text' }, { key: 'name_full', label: 'Name', type: 'text' }, { key: 'price', label: 'Price', type: 'money' }], rows: this.items.slice(0, 3).map((i) => ({ sku_code: i.sku_code, name_full: i.name, price: i.price })) };
-      case 'shop_settings_public': return { ...this.settings, shop_open: this.settings.shop_open, ...this.po.publicSetting() };
+      case 'shop_settings_public': return { ...this.settings, shop_open: this.settings.shop_open, ...this.po.publicSetting(), ...this.dl.publicSetting() };
       case 'shop_facets': {
         const cats = new Map<string, FItem[]>(); for (const i of this.items) cats.set(i.category, [...(cats.get(i.category) ?? []), i]);
         const brands = new Map<string, number>(); for (const i of this.items) if (i.brand) brands.set(i.brand, (brands.get(i.brand) ?? 0) + 1);
@@ -254,7 +257,7 @@ export class FakeShop {
       }
       case 'finance_role': return this.w.role;
       case 'finance_staff': return null;
-      default: { const po = this.po.rpc(fn, a); if (po !== NOT_HANDLED) return po; const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const pt = this.tr.rpc(fn, a); if (pt !== NOT_HANDLED) return pt; const ln = this.ln.rpc(fn, a); if (ln !== NOT_HANDLED) return ln; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
+      default: { const dl = this.dl.rpc(fn, a); if (dl !== NOT_HANDLED) return dl; const po = this.po.rpc(fn, a); if (po !== NOT_HANDLED) return po; const r = this.w.rpc(fn, a); if (r !== NOT_HANDLED) return r; const x = this.rw.rpc(fn, a); if (x !== NOT_HANDLED) return x; const pt = this.tr.rpc(fn, a); if (pt !== NOT_HANDLED) return pt; const ln = this.ln.rpc(fn, a); if (ln !== NOT_HANDLED) return ln; const v = this.rv.rpc(fn, a); return v === NOT_HANDLED ? this.admin(fn, a) : v; }
     }
   }
 
@@ -302,7 +305,7 @@ export class FakeShop {
         m.role = role; return { changed: true, role };
       }
       case 'shop_admin_settings': return this.adminSettings();
-      case 'shop_admin_save_settings': { this.staff(); Object.assign(this.settings, a.p_patch as object); return this.adminSettings(); }
+      case 'shop_admin_save_settings': { this.staff(); Object.assign(this.settings, this.dl.consume(a.p_patch as Record<string, unknown>)); return this.adminSettings(); }
       case 'shop_admin_categories': {
         this.staff(); const cats = new Map<string, number>(); for (const i of this.items) cats.set(i.category, (cats.get(i.category) ?? 0) + 1);
         return [...cats].map(([code, count]) => ({ code, count, name_th: null, name_en: null, image_path: null, image_url: null, sort_order: 100, visible: true, ...(this.categories.get(code) ?? {}) }));
@@ -334,21 +337,23 @@ export class FakeShop {
   }
   private adminSettings() {
     this.staff();
-    return { ...this.settings, image_base_url: 'https://x.test/', updated_at: new Date().toISOString(), payment_account_ready: this.paymentAccountReady, visible_products: this.items.length - this.hidden.size, products_with_image: this.items.filter((i) => i.image_urls.length).length };
+    return { ...this.settings, ...this.dl.adminSetting(), image_base_url: 'https://x.test/', updated_at: new Date().toISOString(), payment_account_ready: this.paymentAccountReady, visible_products: this.items.length - this.hidden.size, products_with_image: this.items.filter((i) => i.image_urls.length).length };
   }
   slipHashes = new Set<string>();
   private place(a: Record<string, unknown>, viaHttp = false) {
     const key = String(a.p_key ?? '');
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) this.err('INVALID_KEY');
-    const norm = JSON.stringify({ i: (a.p_items as { sku_code: string; qty: number }[]).map((x) => [x.sku_code, x.qty]).sort(), f: a.p_fulfilment, n: String(a.p_name).trim(), p: String(a.p_phone).replace(/\D/g, ''), a: a.p_address ? String(a.p_address).trim() : null, note: a.p_note, ...(a.p_payment_method ? { pm: a.p_payment_method } : {}), ...(a.p_slip_sha256 ? { slip: a.p_slip_sha256 } : {}), ...(a.p_pickup_at ? { pu: a.p_pickup_at } : {}) });
+    const norm = JSON.stringify({ i: (a.p_items as { sku_code: string; qty: number }[]).map((x) => [x.sku_code, x.qty]).sort(), f: a.p_fulfilment, n: String(a.p_name).trim(), p: String(a.p_phone).replace(/\D/g, ''), a: a.p_address ? String(a.p_address).trim() : null, note: a.p_note, ...(a.p_payment_method ? { pm: a.p_payment_method } : {}), ...(a.p_slip_sha256 ? { slip: a.p_slip_sha256 } : {}), ...(a.p_delivery ? { dl: this.dl.hashPart(a.p_delivery) } : {}), ...(a.p_pickup_at ? { pu: a.p_pickup_at } : {}) });
     const have = this.orders.find((o) => o.key === key);
     if (have) { if (have.hash !== norm) this.err('KEY_REUSED'); return { replay: true, order: this.orderJson(have) }; }
     if (!this.settings.shop_open) this.err('SHOP_CLOSED');
+    this.dl.refuseUnpinned(a);
     const pm = a.p_payment_method ? String(a.p_payment_method) : null;     // 'wallet' | 'qr' | 'bank:<CODE>': validated like the database does
     if (pm && !(pm === 'wallet' || (pm === 'qr' && this.w.promptpay) || (pm.startsWith('bank:') && this.w.banks.some((b) => b.active && b.code === pm.slice(5))))) this.err('INVALID_PAYMENT_METHOD');
     // the transfer slip comes with the order (only an order paid from the wallet needs none)
     if (viaHttp && this.settings.require_payment_slip && pm !== 'wallet' && (!a.p_slip_path || !a.p_slip_sha256)) this.err('SLIP_REQUIRED');
     const phone = String(a.p_phone).replace(/\D/g, '');
+    this.dl.check(a);
     if (!String(a.p_name).trim()) this.err('INVALID_NAME'); if (!/^0\d{8,9}$/.test(phone)) this.err('INVALID_PHONE');
     if (String(a.p_address ?? '').trim().length > 400) this.err('INVALID_ADDRESS');                   // optional, but not unbounded
     const q = this.quote(a.p_items, String(a.p_fulfilment)) as unknown as { ok: boolean; problems: unknown[]; total: number; subtotal: number; shipping_fee: number; lines: { ok: boolean; sku_code: string; name: string; unit: string | null; unit_price: number; qty: number; line_total: number; image_url: string | null }[] };
@@ -357,7 +362,7 @@ export class FakeShop {
     if (a.p_pickup_at) this.po.checkNew(String(a.p_pickup_at), String(a.p_fulfilment), (q.lines as unknown as { ok: boolean; qty: number }[]).filter((l) => l.ok).reduce((s, l) => s + l.qty, 0));
     const n = this.orders.length + 1; const no = `ORD-${String(n).padStart(6, '0')}`; const now = new Date(Date.now() + n * 1000).toISOString();
     const inv: FInvoice = { id: `inv-${n}`, invoice_no: `INV-${String(n).padStart(6, '0')}`, amount: q.total, paid: 0, cancelled: false, evidence: [], req: null, source_ref: no, created_at: now };
-    const o: FOrder = { id: `ord-${n}`, order_no: no, status: 'new', fulfilment: String(a.p_fulfilment), contact_name: String(a.p_name).trim(), contact_phone: phone, delivery_address: a.p_fulfilment === 'delivery' ? (String(a.p_address ?? '').trim() || null) : null,
+    const o: FOrder = { id: `ord-${n}`, order_no: no, status: 'new', fulfilment: String(a.p_fulfilment), contact_name: String(a.p_name).trim(), contact_phone: phone, delivery_address: a.p_fulfilment === 'delivery' ? (this.dl.addressText(a) ?? (String(a.p_address ?? '').trim() || null)) : null,
       note: (a.p_note as string | null) ?? null, items: q.lines.map((l, i) => ({ line_no: i + 1, sku_code: l.sku_code, name: l.name, unit: l.unit, unit_price: l.unit_price, qty: l.qty, line_total: l.line_total, image_url: l.image_url })),
       subtotal: q.subtotal, discount: 0, shipping_fee: q.shipping_fee, total: q.total, created_at: now, key, hash: norm, invoice: inv, status_note: null, cancel_reason: null, payment_pref: pm };
     if (a.p_slip_path) {       // checked like finance_submit_evidence; any refusal creates nothing
@@ -369,6 +374,7 @@ export class FakeShop {
       this.w.noteSlip(id, pm?.startsWith('bank:') ? (this.w.banks.find((b) => b.code === pm.slice(5))?.id ?? null) : null);
     }
     this.orders.push(o);
+    this.dl.attach(o, a);
     if (a.p_pickup_at) this.po.attach(o, new Date(String(a.p_pickup_at)).toISOString());
     return { replay: false, order: this.orderJson(o) };
   }

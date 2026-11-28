@@ -11,6 +11,7 @@ import { MAX_QTY, useCart } from './cart';
 import { baht, packLabel } from './format';
 import { K, ShopLang, useShopLang, useT } from './i18n';
 import { payNotes } from './pay';
+import { DELIVERY_CODES } from './i18n.delivery';
 import { PREORDER_STEPS } from './preorderView';
 
 export function ProductImage({ src, alt, className }: { src?: string | null; alt: string; className?: string }) {
@@ -70,7 +71,7 @@ export function errText(t: ReturnType<typeof useT>, e: unknown): string {
     case 'INVALID_PAYMENT_METHOD': return t('err.method');
     case 'INVALID_NAME': return t('err.name');
     case 'FORBIDDEN': return t('err.signin');
-    default: return PREORDER_CODES.has(e.code) ? t(`po.err.${e.code}` as K) : t('err.generic');
+    default: return PREORDER_CODES.has(e.code) ? t(`po.err.${e.code}` as K) : DELIVERY_CODES.has(e.code) ? t(`dl.err.${e.code}` as K) : t('err.generic');
   }
 }
 

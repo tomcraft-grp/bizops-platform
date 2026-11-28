@@ -4,6 +4,7 @@
 import { supabase } from '../lib/supabase';
 import type { InvoiceRow } from '../finance/api';
 import { TimeoutError, withTimeout } from './timeout';
+import type { PinSource } from './geo/geo';
 
 // ---------------------------------------------------------------- types
 export interface ShopSpec { label: string; value: string }
@@ -24,6 +25,28 @@ export interface ShopSettings {
   shipping_fee: number; free_shipping_min: number | null; require_payment_slip?: boolean;
   /** Only a database with the preorder migration sends it: without it the app simply offers no preorder. */
   preorder_enabled?: boolean;
+  /** Only a database with the delivery-pin migration sends these: without them the app keeps the typed delivery address and offers no map. */
+  store?: { name: string; lat: number; lng: number };
+  delivery_pin_required?: boolean;
+}
+/** What the customer confirmed for a delivery (sent with the order). The database checks it again and builds the Google Maps links itself. */
+export interface DeliveryInput {
+  lat: number; lng: number; confirmed: true; pin_source: PinSource; recipient_name: string; recipient_phone: string; address_line: string;
+  unit_no?: string; village?: string; floor_no?: string; landmark?: string; directions?: string; driver_note?: string; place_label?: string; address_id?: string;
+  /** Measured by the routing service in the customer's browser; the database keeps it only when it is plausible. */
+  route?: { distance_m: number; duration_s: number; source: 'osrm' } | null;
+}
+/** The delivery destination an order keeps (frozen when the order was placed). */
+export interface DeliveryInfo {
+  recipient_name: string; recipient_phone: string; address_line: string; unit_no: string | null; village: string | null; floor_no: string | null; landmark: string | null;
+  directions: string | null; driver_note: string | null; place_label: string | null; lat: number; lng: number; pin_source: PinSource; confirmed_at: string;
+  origin: { name: string; lat: number; lng: number }; maps_url: string; directions_url: string; straight_m: number;
+  route: { distance_m: number; duration_s: number; source: 'osrm'; at: string | null } | null;
+}
+/** A delivery address the customer saved for later. */
+export interface SavedAddress {
+  id: string; label: string | null; recipient_name: string; recipient_phone: string; address_line: string; unit_no: string | null; village: string | null; floor_no: string | null; landmark: string | null;
+  directions: string | null; driver_note: string | null; place_label: string | null; lat: number; lng: number; pin_source: PinSource; confirmed_at: string; is_default: boolean; updated_at: string;
 }
 export type SortKey = 'recommended' | 'newest' | 'price_asc' | 'price_desc' | 'name';
 export interface CatalogQuery { search?: string; category?: string; brand?: string; sort?: SortKey; limit?: number; offset?: number; featured?: boolean }
@@ -64,12 +87,16 @@ export interface ShopOrder {
   // preorder (all absent from a database without the preorder migration)
   order_type?: OrderType; pickup_at?: string | null; confirmed_at?: string | null; preparing_at?: string | null; ready_at?: string | null; completed_at?: string | null;
   cancel_kind?: 'customer' | 'rejected' | 'staff' | null; reschedule_count?: number; prep?: { checked: number; total: number } | null; change?: ChangeRules | null; notices?: OrderNotice[];
+  /** The pinned destination (a database with the delivery-pin migration; null for pick-up and for orders placed without a pin). */
+  delivery?: DeliveryInfo | null;
 }
 export type OrderFilter = 'all' | 'unpaid' | 'to_ship' | 'to_receive' | 'done' | 'cancelled' | 'preorder';
 export interface OrdersPage { total: number; orders: ShopOrder[] }
 export interface PlaceOrderInput { key: string; items: { sku_code: string; qty: number }[]; fulfilment: Fulfilment; name: string; phone: string; address: string; note: string; paymentMethod?: string | null; slip?: { path: string; sha256: string; type: string; transferAt?: string | null; ref?: string | null } | null; expectedTotal: number | null;
   /** A preorder: the start of the chosen pickup slot (ISO). Pick-up only. */
-  pickupAt?: string | null }
+  pickupAt?: string | null;
+  /** The confirmed pin and the details around it (delivery only). */
+  delivery?: DeliveryInput | null }
 
 // staff
 export interface AdminOrder extends ShopOrder {
@@ -79,6 +106,7 @@ export interface AdminOrder extends ShopOrder {
 export interface AdminOrdersPage { total: number; counts: Partial<Record<OrderStatus, number>>; orders: AdminOrder[] }
 export interface AdminSettings extends ShopSettings {
   image_base_url: string; updated_at: string; payment_account_ready: boolean; visible_products: number; products_with_image: number;
+  store_name?: string; store_lat?: number; store_lng?: number; store_maps_url?: string | null;
 }
 export interface AdminCategory { code: string; count: number; name_th: string | null; name_en: string | null; image_path: string | null; image_url: string | null; sort_order: number; visible: boolean }
 export interface AdminProduct {
@@ -148,6 +176,7 @@ export const shop = {
       p_note: i.note || null, p_expected_total: i.expectedTotal, ...(i.paymentMethod ? { p_payment_method: i.paymentMethod } : {}),
       ...(i.slip ? { p_slip_path: i.slip.path, p_slip_sha256: i.slip.sha256, p_slip_type: i.slip.type, p_slip_transfer_at: i.slip.transferAt ?? null, p_slip_ref: i.slip.ref || null } : {}),
       ...(i.pickupAt ? { p_pickup_at: i.pickupAt } : {}),
+      ...(i.delivery ? { p_delivery: i.delivery } : {}),
     }, WRITE_TIMEOUT_MS);
     clearShopCache();
     return r;
@@ -155,6 +184,15 @@ export const shop = {
   myOrders: (filter: OrderFilter = 'all', limit = 20, offset = 0) => rpc<OrdersPage>('shop_my_orders', { p_filter: filter, p_limit: limit, p_offset: offset }),
   myOrder: (id: string) => rpc<ShopOrder>('shop_my_order', { p_id: id }),
   cancelMyOrder: (id: string, reason?: string) => rpc<ShopOrder>('shop_cancel_my_order', { p_id: id, p_reason: reason ?? null }),
+  // saved delivery addresses (a database with the delivery-pin migration)
+  addresses: {
+    list: () => rpc<SavedAddress[]>('shop_address_list'),
+    /** id null = a new address. The pin must be confirmed. */
+    save: (id: string | null, data: Omit<DeliveryInput, 'route' | 'address_id'>, label: string | null, makeDefault?: boolean) =>
+      rpc<SavedAddress>('shop_address_save', { p_id: id, p_data: data, p_label: label, p_default: makeDefault ?? null }, WRITE_TIMEOUT_MS),
+    setDefault: (id: string) => rpc<SavedAddress>('shop_address_set_default', { p_id: id }, WRITE_TIMEOUT_MS),
+    remove: (id: string) => rpc<null>('shop_address_delete', { p_id: id }, WRITE_TIMEOUT_MS),
+  },
   // preorders
   preorderOptions: () => rpc<PreorderOptions>('preorder_options'),
   preorderSlots: (day: string, units: number) => rpc<PreorderSlots>('preorder_slots', { p_day: day, p_units: Math.max(1, units) }),
@@ -198,7 +236,7 @@ export const shopAdmin = {
   setStatus: (id: string, status: OrderStatus, note?: string, overrideReason?: string) =>
     rpc<ShopOrder>('shop_admin_set_status', { p_order: id, p_status: status, p_note: note || null, p_override_reason: overrideReason || null }),
   settings: () => rpc<AdminSettings>('shop_admin_settings'),
-  saveSettings: (patch: Partial<Omit<ShopSettings, 'free_shipping_min'>> & { free_shipping_min?: number | null }) => rpc<AdminSettings>('shop_admin_save_settings', { p_patch: patch }),
+  saveSettings: (patch: Partial<Omit<ShopSettings, 'free_shipping_min' | 'store'>> & { free_shipping_min?: number | null } & Partial<{ store_name: string; store_lat: number; store_lng: number; store_maps_url: string | null }>) => rpc<AdminSettings>('shop_admin_save_settings', { p_patch: patch }),
   categories: () => rpc<AdminCategory[]>('shop_admin_categories'),
   saveCategory: (code: string, patch: Partial<{ name_th: string; name_en: string; image_path: string; sort_order: number; visible: boolean }>) => rpc<void>('shop_admin_save_category', { p_code: code, p_patch: patch }),
   products: (p: { search?: string; filter?: string; limit?: number; offset?: number }) =>

@@ -20,6 +20,9 @@ import { RewardsPreview } from './Rewards';
 import { CheckoutQrPanel, PayToBank } from '../wallet/PayTo';
 import { RecentOrders } from './RecentOrders';
 import { PickupPicker, PreorderSummary, QuickPhrases } from './Preorder';
+import { DeliveryForm, DeliverySummary, useDrivingRoute } from './geo/DeliveryForm';
+import { deliveryProblems, draftFromSaved, pinOf, toDeliveryInput } from './geo/deliveryDraft';
+import type { SavedAddress } from './api';
 import { preorderUnits } from './preorderView';
 import { Choice, PayMethodPicker, useMethods } from '../wallet/ui';
 import { removeOrderSlip, slipFingerprint, slipProblem, uploadOrderSlip } from '../wallet/api';
@@ -127,6 +130,28 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   const preorder = fulfilment === 'pickup' && draft.preorder === true && settings?.preorder_enabled === true;
   const pickupAt = preorder ? draft.pickupAt ?? '' : '';
   const units = preorderUnits(quote.lines.filter((l) => l.ok));
+  // delivery pin (a database with the delivery-pin migration): the place the customer confirmed on the map replaces the typed address
+  const store = settings?.store;
+  const pinAvailable = fulfilment === 'delivery' && !!store;
+  const pinRequired = pinAvailable && settings?.delivery_pin_required !== false;
+  const dl = draft.delivery ?? {};
+  const contact = { name, phone };
+  const dlPin = pinAvailable ? pinOf(dl) : null;
+  const dlActive = pinAvailable && (pinRequired || !!dlPin);                                   // a pin that is optional but was chosen is checked like a required one
+  const dlProblems = dlActive ? deliveryProblems(dl, contact) : [];
+  const route = useDrivingRoute(store, dlActive && dl.confirmed ? dlPin : null);
+  const [book, setBook] = useState<SavedAddress[]>([]);
+  const bookLoaded = useRef(false);
+  useEffect(() => {
+    if (!pinAvailable || bookLoaded.current) return;
+    bookLoaded.current = true;
+    shop.addresses.list().then((list) => {
+      setBook(list);
+      const def = list.find((a) => a.is_default);
+      if (def && !useCheckoutDraft.getState().text.delivery) useCheckoutDraft.getState().setDelivery(draftFromSaved(def, { name, phone }));   // the default address is chosen for the customer
+    }).catch(() => undefined);                                                                  // no saved addresses: the customer pins a new one
+  }, [pinAvailable]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveIt = dl.saveIt ?? (!book.length && !dl.addressId);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -168,6 +193,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
   // one section open at a time; the contact form starts open only while there is something to fill in
   const [sec, setSec] = useState<'contact' | 'items' | 'payment' | null>(() => (!nameOk || !phoneOk || (fulfilment === 'delivery' && !address.trim() && draft.address === undefined) ? 'contact' : null));
   const toggle = (id: 'contact' | 'items' | 'payment') => setSec((s) => (s === id ? null : id));
+  useEffect(() => { if (pinAvailable && nameOk && phoneOk) setSec((s) => (s === 'contact' && draft.address === undefined ? null : s)); }, [pinAvailable]); // eslint-disable-line react-hooks/exhaustive-deps
   const openPayment = () => { setSec('payment'); setTimeout(() => document.getElementById('fold-payment-h')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0); };
   const contactDone = () => { setTouched(true); if (!formOk) return; patch({ name, phone, address }); setSec(null); };
   const pickSlip = async (f: File) => {
@@ -177,6 +203,10 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
 
   const ask = () => {
     setTouched(true); setErr(null);
+    if (dlProblems.length) {
+      setErr(t(dlProblems.includes('pin') || dlProblems.includes('confirm') ? 'dl.pinFirst' : dlProblems.includes('address') ? 'dl.err.address' : 'dl.err.recipient'));
+      document.querySelector('[data-testid="delivery-section"]')?.scrollIntoView({ block: 'start' }); return;
+    }
     if (needsSlip && !slip) { setErr(t('co.slipMissing')); slipSec.current?.scrollIntoView({ block: 'center' }); return; }
     if (preorder && !pickupAt) { setErr(t('po.pickFirst')); document.querySelector('[data-testid="pickup-picker"]')?.scrollIntoView({ block: 'center' }); return; }
     if (!formOk) { setSec('contact'); setTimeout(() => document.querySelector<HTMLElement>('[data-fold="contact"] [aria-invalid="true"]')?.focus(), 0); return; }
@@ -191,14 +221,22 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
     try {
       const items = toQuoteItems(lines);
       const fp = needsSlip && slip ? await slipFingerprint(slip.file) : null;
-      const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? address.trim() : '', note: note.trim(), pm: methodPref, slip: fp?.sha256 ?? null, pu: pickupAt || null });
+      const dlInput = dlActive && dl.confirmed ? toDeliveryInput(dl, contact, route.status === 'ok' && route.info ? { distance_m: route.info.distance_m, duration_s: route.info.duration_s } : null) : null;
+      const addrText = pinAvailable ? (dl.addressLine ?? '').trim() : address.trim();
+      const payload = JSON.stringify({ items, fulfilment, name: name.trim(), phone: digits(phone), address: fulfilment === 'delivery' ? addrText : '', note: note.trim(), pm: methodPref, slip: fp?.sha256 ?? null, pu: pickupAt || null, dl: dlInput ? { ...dlInput, route: null } : null });
       const key = attemptKey(sessionStorage, uid, payload);
       // the same key gives the same file: a retry never leaves a second one. A stalled upload gives up after 60 s so the button comes back (FB-001019)
       if (fp && slip) { setUploading(true); uploaded = await withTimeout(() => uploadOrderSlip(slip.file, key, fp), 60_000); setUploading(false); }
-      const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: address.trim(), note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total, pickupAt: pickupAt || null,
+      const r = await shop.placeOrder({ key, items, fulfilment, name: name.trim(), phone: digits(phone), address: addrText, note: note.trim(), paymentMethod: methodPref, expectedTotal: quote.total, pickupAt: pickupAt || null, delivery: dlInput,
         slip: fp && uploaded ? { path: uploaded, sha256: fp.sha256, type: fp.type, transferAt: slipWhen ? new Date(slipWhen).toISOString() : null, ref: slipRef.trim() || null } : null });
       try { localStorage.setItem(CONTACT_KEY(uid), JSON.stringify({ name: name.trim(), phone: digits(phone), address: address.trim() } satisfies Contact)); } catch { /* ignore */ }
       forgetAttempt(sessionStorage, uid);
+      // the order is placed; saving the address for next time is a favour that never holds anything up (a failure is said, the order stays)
+      if (dlInput && (saveIt || (dl.updateSaved && dl.addressId))) {
+        const { route: _route, address_id: _aid, ...data } = dlInput; void _route; void _aid;
+        const update = !!(dl.updateSaved && dl.addressId);
+        void shop.addresses.save(update ? dl.addressId! : null, data, (dl.saveLabel ?? '').trim() || null, update ? undefined : !book.length ? true : undefined).catch(() => toast('error', t('dl.saveFailed')));
+      }
       // the order and its slip are saved: ask the AI reader to look at the slip, once, best effort. Never awaited and it never throws (analyze swallows every error),
       // so a slow or broken reader cannot delay the order page or fail the order; the shop checks every slip by hand whatever the reader does.
       // (the answer is read defensively: an order without an invoice object must never throw after the order exists, so then the reader is simply not asked)
@@ -236,6 +274,11 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
         {fulfilment === 'pickup' && settings?.pickup_note && <div className="sp-note"><b>{t('co.pickupNote')}:</b> {settings.pickup_note}</div>}
       </section>
 
+      {pinAvailable && store && (
+        <DeliveryForm value={{ ...dl, saveIt }} onChange={(p) => useCheckoutDraft.getState().patchDelivery(p)} contact={contact} shop={store} touched={touched} required={pinRequired} route={route}
+          saved={book} onUseSaved={(a) => useCheckoutDraft.getState().setDelivery(draftFromSaved(a, contact))} onNew={() => useCheckoutDraft.getState().setDelivery(undefined)} offerSave />
+      )}
+
       {preorder && (
         <section className="sp-sec" data-testid="preorder-section"><h3>{t('po.title')} <span className="bad" aria-hidden>*</span></h3>
           <div className="sp-note">{t('po.prepNote')}</div>
@@ -245,14 +288,14 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
 
       <Fold id="contact" title={t('co.contact')} open={sec === 'contact'} onToggle={() => toggle('contact')} action={t('pm.change')}
         summary={nameOk && phoneOk
-          ? <span className="sp-fold-lines"><span>{name.trim()} · {phone}</span>{fulfilment === 'delivery' && <span>{address.trim() || t('co.noAddress')}</span>}{note.trim() && <span>{note.trim()}</span>}</span>
+          ? <span className="sp-fold-lines"><span>{name.trim()} · {phone}</span>{fulfilment === 'delivery' && <span>{(pinAvailable ? dl.addressLine ?? '' : address).trim() || t('co.noAddress')}</span>}{note.trim() && <span>{note.trim()}</span>}</span>
           : <span className="bad">{t('co.contactMissing')}</span>}>
         <div className="sp-form">
           <label>{t('co.name')}<input value={name} maxLength={100} autoComplete="name" aria-invalid={touched && !nameOk} onChange={(e) => patch({ name: e.target.value })} /></label>
           {touched && !nameOk && <small className="bad">{t('err.name')}</small>}
           <label>{t('co.phone')}<input value={phone} type="tel" inputMode="numeric" autoComplete="tel" maxLength={14} placeholder="08xxxxxxxx" aria-invalid={touched && !phoneOk} onChange={(e) => patch({ phone: e.target.value })} /></label>
           {touched && !phoneOk && <small className="bad">{t('err.phone')}</small>}
-          {fulfilment === 'delivery' && (
+          {fulfilment === 'delivery' && !pinAvailable && (
             <>
               <label>{t('co.address')} <small className="muted">({t('co.addressOptional')})</small><textarea value={address} rows={3} maxLength={400} autoComplete="street-address" placeholder={t('co.addressHint')} aria-invalid={touched && !addrOk} onChange={(e) => patch({ address: e.target.value })} /></label>
               {touched && !addrOk && <small className="bad">{t('err.address')}</small>}
@@ -317,7 +360,7 @@ function Checkout({ quote, loading, fulfilment, setFulfilment, onBack, refresh }
 
       {asking && <ConfirmSheet title={t(preorder ? 'po.cf.title' : 'co.confirmTitle')} body={preorder
         ? <PreorderSummary lines={quote.lines.filter((l) => l.ok)} pickupAt={pickupAt} note={note} total={quote.total} method={methodLabel(t, method, bank?.code)} />
-        : t(needsSlip ? 'co.confirmBodySlip' : 'co.confirmBody', { total: baht(quote.total) })} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} busyLabel={t(uploading ? 'co.uploading' : 'co.placing')} onConfirm={place} onCancel={() => setAsking(false)} />}
+        : <>{t(needsSlip ? 'co.confirmBodySlip' : 'co.confirmBody', { total: baht(quote.total) })}{dlActive && dlPin && store && <DeliverySummary value={dl} contact={contact} shop={store} />}</>} confirmLabel={t('co.place')} cancelLabel={t('common.back')} busy={busy} busyLabel={t(uploading ? 'co.uploading' : 'co.placing')} onConfirm={place} onCancel={() => setAsking(false)} />}
     </div>
   );
 }
