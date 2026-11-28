@@ -1,6 +1,6 @@
 # Delivery location pin (map, Google Maps links, saved addresses)
 
-**Status (2026-11-28): BUILT AND TESTED, NOT YET APPLIED OR PUBLISHED.** Migration `20261128130000_delivery_pin.sql` has only been run inside rolled-back transactions against the live project (117/117 checks, rollback proven). The app code is on branch `feat/delivery-pin`, not committed, not merged, not deployed. Nothing a customer or the shop uses has changed yet.
+**Status (2026-11-28, 20:05 Bangkok): LIVE.** Migration `20261128130000` was applied to the live project (after rolled-back rehearsals of the same file, 117/117, the last one minutes before; afterwards the 117 checks pass again on the applied schema and the live counts are unchanged: 25 orders, no pins, no saved addresses yet). App published: `main` 874ae77 (source 66ae8a8), `gh-pages` ef14e9a (rollback target b92eb59, `ocr/` kept); the page serves `0.1.0+66ae8a8`. The gap between the migration and the new app was 24 seconds. **Not yet exercised on the real database from a browser:** the first real delivery order with a pin (see Rollout, step 3).
 
 ## What a customer and the shop get
 
@@ -60,9 +60,9 @@ These are shared public services meant for light use. If the shop grows, or a se
 
 ## Rollout
 
-1. Apply `supabase/migrations/20261128130000_delivery_pin.sql` (only after the owner's OK; no data changes: defaults only). From that moment a delivery order **needs a pin**, so apply it and publish the app together: an old, cached copy of the app that tries a delivery order is told, in Thai, to reload the page.
-2. Publish the app (main → `gh-pages`, keep `ocr/`).
-3. Check once with a real order: place a delivery order with a pin, open it in the shop, tap *Open route from the store*.
+1. Apply `supabase/migrations/20261128130000_delivery_pin.sql` (no data changes: defaults only). From that moment a delivery order **needs a pin**, so apply it and publish the app together: an old, cached copy of the app that tries a delivery order is told, in Thai, to reload the page. (Done 2026-11-28.)
+2. Publish the app (main → `gh-pages`, keep `ocr/`). (Done 2026-11-28.)
+3. **Still to do:** check once with a real order: place a delivery order with a pin, open it in the shop (Online shop → Orders → the order), tap *Open route from the store*.
 4. If the map misbehaves in production, switch off *Delivery orders need a map pin* (Settings) to let customers order with a typed address while it is fixed.
 
 **Rollback:** `supabase/rollbacks/20261128130000_delivery_pin_down.sql` restores the four replaced functions verbatim and drops the new objects. It **refuses** while any order carries a pin or any saved address exists (they would be lost): export `shop_order_delivery` / `shop_addresses` first.
@@ -73,4 +73,5 @@ These are shared public services meant for light use. If the shop grows, or a se
 * `bash scripts/run-delivery-pin-down-proof.sh` (+ `control`, `guard`, `guard-pin`): the rollback restores all 449 functions, 109 tables, 1142 columns, 610 constraints, 242 indexes, 86 triggers and 61 policies exactly (9/9); without the rollback the comparison finds the differences; the rollback refuses while an address or a pin exists.
 * Unit tests `tests/unit/deliveryPin.test.ts` (32): distances equal the database's (4832 m), the exact link strings, reading pasted links (including the real link the shop's short link redirects to), the draft and what is sent, saved addresses, and that every text exists in Thai and English.
 * Browser tests (Chrome, 390 px and 320 px wide): `tests/shop-e2e/delivery.spec.ts` (22: choosing the place all five ways, the whole order journey, validation, services failing, saved addresses, old database, optional pin, English, no sideways scroll, accessibility) and `delivery-admin.spec.ts` (14: the card, the exact links, copy and the copy fallback, orders without a pin, Thai, phone, settings). They run against a fake backend that mirrors the database contract and test answers for the three map services (`tests/shop-e2e/mapMocks.ts`); the provider answers were checked by hand against the live services on 2026-11-28 (shapes and CORS).
+* Regression before publishing: the shop browser suites that touch checkout, orders, Account and settings (14 files, 317 tests): 316 passed; the one that failed (`paymentPolicy.spec.ts:119`, checks a request right after the click without waiting for it) passes on its own. `checkout-ux` and `dailyExpenses` (45 tests) pass on an unloaded machine (they had failed once while the machine was busy). The complete suite of 654 tests was not run to the end (it takes hours on this machine).
 * **Not tested:** the screens against the real database from a browser (the migration is not applied), real taps on the Google Maps links on a phone, a real LINE in-app browser (the phone's position may be refused there: the other four ways remain), and the public map services under real traffic.
