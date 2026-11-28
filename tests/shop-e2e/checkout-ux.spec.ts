@@ -75,7 +75,7 @@ test.describe('payment methods at checkout', () => {
   });
 
   test('copying an account number does not choose the bank or close the list', async ({ page, context }) => {
-    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:4179' });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://localhost:${process.env.SHOP_PORT ?? 4179}` });
     const fake = new FakeShop(); await start(page, fake); await toCheckout(page); await openMethods(page);
     await page.locator('[data-bank="BBL"] .wl-copy button').click();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('9380319542');
@@ -85,7 +85,7 @@ test.describe('payment methods at checkout', () => {
   test('one section open at a time', async ({ page }) => {
     const fake = new FakeShop(); await start(page, fake); await toCheckout(page);
     expect(await openFolds(page)).toBeLessThanOrEqual(1);
-    for (const id of ['items', 'contact', 'payment']) { await openFold(page, id); expect(await openFolds(page)).toBe(1); }
+    for (const id of ['items', 'payment']) { await openFold(page, id); expect(await openFolds(page)).toBe(1); }
   });
 
   test('the methods could not be loaded: the screen says so and Try again brings them back', async ({ page }) => {
@@ -106,14 +106,14 @@ test.describe('the PromptPay QR at checkout (pay first)', () => {
     await expect(page.getByTestId('qr-amount')).toHaveText('฿370'); await expect(page.getByTestId('qr-panel')).toContainText('TEST SHOP');
     expect(Object.keys(fake.calls.find((c) => c.fn === 'shop_checkout_qr')!.args).sort()).toEqual(['p_fulfilment', 'p_items']);   // never an amount
     await page.screenshot({ path: `${SHOTS}/ux-3-checkout-qr.png`, fullPage: true });
-    for (const id of ['items', 'contact', 'payment']) { await openFold(page, id); await expect(page.getByTestId('pay-qr')).toBeVisible(); }
+    for (const id of ['items', 'payment']) { await openFold(page, id); await expect(page.getByTestId('pay-qr')).toBeVisible(); }
     await methodFold(page).locator('.sp-fold-h').click(); await expect(page.getByTestId('pay-qr')).toBeVisible();
     const n = fake.count('shop_checkout_qr'); await openFold(page, 'items'); expect(fake.count('shop_checkout_qr')).toBe(n);      // and it is not asked for again
     const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: t('qr.save') }).click()]);
     expect(dl.suggestedFilename()).toBe('payment-qr-checkout-370.png');
     const saved = Png.sync.read(await (async () => { const s = await dl.createReadStream(); const b: Buffer[] = []; for await (const x of s) b.push(x as Buffer); return Buffer.concat(b); })());
     expect(jsQR(new Uint8ClampedArray(saved.data), saved.width, saved.height)?.data).toBe(promptPayPayload('0812345678', 370));   // the saved picture scans too
-    await openFold(page, 'contact'); await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ');
+    await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ');
     await attach(page);
     await expect(page.getByTestId('pay-qr')).toHaveCount(0);                                     // paid and attached: out of the way…
     await page.getByRole('button', { name: t('co.payShow') }).click(); expect(await scan(page)).toBe(promptPayPayload('0812345678', 370));   // …one tap away
@@ -225,16 +225,15 @@ test.describe('pay later: the QR on the order page', () => {
 });
 
 test.describe('moving between steps', () => {
-  test('cart and back, another tab and back: contact, note, way of getting it, method and slip are all still there', async ({ page }) => {
+  test('cart and back, another tab and back: note, way of getting it, method and slip are all still there; the account gives the name and phone', async ({ page }) => {
     const fake = new FakeShop(); await start(page, fake); await toCheckout(page);
-    await page.getByRole('radio', { name: t('co.pickup') }).click(); await openFold(page, 'contact');
-    await page.getByLabel(t('co.name')).fill('คุณทดสอบ ใจดี'); await page.getByLabel(t('co.phone')).fill('0899999999'); await page.getByLabel(t('co.note')).fill('ฝากไว้หน้าร้าน');
-    await page.getByRole('button', { name: t('co.contactDone') }).click();
-    await expect(page.locator('[data-fold="contact"]')).toContainText('คุณทดสอบ ใจดี · 0899999999'); expect(await openFolds(page)).toBe(0);
+    await page.getByRole('radio', { name: t('co.pickup') }).click();
+    await expect(page.getByTestId('contact-section')).toHaveCount(0);                            // the account has a name and a phone: nothing to ask
+    await page.getByLabel(t('co.note')).fill('ฝากไว้หน้าร้าน');
     await pickMethod(page, 'BBL'); await attach(page); await page.getByLabel(t('co.slipRef')).fill('REF-9');
     const same = async () => {
       await expect(page.getByRole('radio', { name: t('co.pickup') })).toHaveAttribute('aria-checked', 'true');
-      await expect(page.locator('[data-fold="contact"]')).toContainText('คุณทดสอบ ใจดี · 0899999999'); await expect(page.locator('[data-fold="contact"]')).toContainText('ฝากไว้หน้าร้าน');
+      await expect(page.getByLabel(t('co.note'))).toHaveValue('ฝากไว้หน้าร้าน');
       await expect(chosen(page)).toHaveAttribute('data-chosen', 'BBL'); await expect(page.getByTestId('slip-preview')).toBeVisible(); await expect(page.getByLabel(t('co.slipRef'))).toHaveValue('REF-9');
       expect(await openFolds(page)).toBe(0);
     };
@@ -242,19 +241,19 @@ test.describe('moving between steps', () => {
     await tab(page, t('nav.shop')).click(); await tab(page, t('nav.cart')).click(); await page.getByRole('button', { name: t('cart.checkout') }).click(); await same();
     await placeBtn(page).click(); await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click(); await expect(page.locator('.sp-order-detail')).toBeVisible();
     const a = fake.calls.find((c) => c.fn === 'shop_place_order')!.args;
-    expect([a.p_name, a.p_phone, a.p_note, a.p_fulfilment, a.p_payment_method, a.p_slip_ref]).toEqual(['คุณทดสอบ ใจดี', '0899999999', 'ฝากไว้หน้าร้าน', 'pickup', 'bank:BBL', 'REF-9']);
+    expect([a.p_name, a.p_phone, a.p_note, a.p_fulfilment, a.p_payment_method, a.p_slip_ref]).toEqual(['สมชาย ใจดี', '0812345678', 'ฝากไว้หน้าร้าน', 'pickup', 'bank:BBL', 'REF-9']);
   });
 
   test('the in-app browser reloads while the customer is in the bank app: the text and the method are still there, the QR comes back (the slip picture must be attached again)', async ({ page }) => {
-    const fake = new FakeShop(); await start(page, fake); await toCheckout(page); await openFold(page, 'contact'); await page.getByLabel(t('co.address')).fill('99/1 ถนนทดสอบ'); await pickMethod(page, 'qr');
+    const fake = new FakeShop(); await start(page, fake); await toCheckout(page); await page.getByLabel(t('co.address')).fill('99/1 ถนนทดสอบ'); await pickMethod(page, 'qr');
     await expect(page.getByTestId('pay-qr')).toBeVisible();
     await page.reload(); await expect(page.locator('.phone-nav')).toBeVisible(); await tab(page, t('nav.cart')).click(); await page.getByRole('button', { name: t('cart.checkout') }).click();
-    await expect(page.locator('[data-fold="contact"]')).toContainText('99/1 ถนนทดสอบ'); await expect(chosen(page)).toHaveAttribute('data-chosen', 'qr');
+    await expect(page.getByLabel(t('co.address'))).toHaveValue('99/1 ถนนทดสอบ'); await expect(chosen(page)).toHaveAttribute('data-chosen', 'qr');
     expect(await scan(page)).toBe(promptPayPayload('0812345678', 370));
   });
 
   test('a finished order leaves nothing behind: the next checkout starts clean', async ({ page }) => {
-    const fake = new FakeShop(); await start(page, fake); await toCheckout(page); await openFold(page, 'contact'); await page.getByLabel(t('co.note')).fill('ครั้งเดียว'); await pickMethod(page, 'BBL'); await attach(page);
+    const fake = new FakeShop(); await start(page, fake); await toCheckout(page); await page.getByLabel(t('co.note')).fill('ครั้งเดียว'); await pickMethod(page, 'BBL'); await attach(page);
     await placeBtn(page).click(); await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click(); await expect(page.locator('.sp-order-detail')).toBeVisible();
     await toCheckout(page, 'FG-000002');
     await expect(page.getByTestId('slip-preview')).toHaveCount(0); await expect(chosen(page)).toHaveAttribute('data-chosen', 'SCB'); await expect(page.locator('body')).not.toContainText('ครั้งเดียว');
@@ -273,18 +272,23 @@ test.describe('moving between steps', () => {
     await pickMethod(page, 'qr'); await expect(page.getByTestId('pay-qr')).toBeVisible(); await expect(page.getByTestId('slip-preview')).toBeVisible();
   });
 
-  test('a mistake in a closed section: the section opens on the field, nothing is sent', async ({ page }) => {
-    const fake = new FakeShop(); await start(page, fake); await toCheckout(page); await openFold(page, 'contact'); await page.getByLabel(t('co.phone')).fill('12'); await openFold(page, 'items'); await attach(page);
+  test('an account without a phone: only then the contact details are asked; a mistake puts the focus on the field and nothing is sent', async ({ page }) => {
+    const fake = new FakeShop(); fake.profile.phone = ''; await start(page, fake); await toCheckout(page);
+    await expect(page.getByTestId('contact-section')).toBeVisible(); await expect(page.getByLabel(t('co.name'))).toHaveValue('สมชาย ใจดี');
+    await page.getByLabel(t('co.phone')).fill('12'); await openFold(page, 'items'); await attach(page);
     await placeBtn(page).click();
-    await expect(page.locator('[data-fold="contact"]')).toHaveClass(/open/); await expect(page.getByLabel(t('co.phone'))).toBeFocused(); await expect(page.getByText(t('err.phone'))).toBeVisible();
+    await expect(page.getByLabel(t('co.phone'))).toBeFocused(); await expect(page.getByText(t('err.phone'))).toBeVisible();
     expect(fake.count('shop_place_order')).toBe(0);
+    await page.getByLabel(t('co.phone')).fill('0899999999');
+    await placeBtn(page).click(); await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click(); await expect(page.locator('.sp-order-detail')).toBeVisible();
+    expect(fake.calls.find((c) => c.fn === 'shop_place_order')!.args.p_phone).toBe('0899999999');
   });
 
   test('a returning customer sees a short page: everything closed, one tap to change', async ({ page }) => {
     const fake = new FakeShop(); await start(page, fake);
     await page.evaluate(() => localStorage.setItem('tc.shop.contact:11111111-1111-4111-8111-111111111111', JSON.stringify({ name: 'ลูกค้าเดิม', phone: '0812345678', address: '1 ถนนเดิม' })));
     await toCheckout(page); expect(await openFolds(page)).toBe(0);
-    await expect(page.locator('[data-fold="contact"]')).toContainText('1 ถนนเดิม');
+    await expect(page.getByLabel(t('co.address'))).toHaveValue('1 ถนนเดิม'); await expect(page.getByTestId('contact-section')).toHaveCount(0);
   });
 });
 
@@ -299,7 +303,7 @@ test.describe('fits and is accessible', () => {
         const bad = r.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious').map((v) => `${v.id}: ${v.nodes.slice(0, 3).map((nn) => nn.target.join(' ')).join(' | ')}`);
         expect(bad, `${name}: ${bad.join('\n')}`).toEqual([]);
       };
-      await check('contact open'); await openMethods(page); await check('methods open'); await pickMethod(page, 'qr'); await expect(page.getByTestId('pay-qr')).toBeVisible(); await check('qr');
+      await check('closed'); await openMethods(page); await check('methods open'); await pickMethod(page, 'qr'); await expect(page.getByTestId('pay-qr')).toBeVisible(); await check('qr');
       expect(await scan(page)).toBe(promptPayPayload('0812345678', 370));
       await page.screenshot({ path: `${SHOTS}/ux-fit-${vp.w}-qr.png`, fullPage: true });
       await attach(page); await check('slip');

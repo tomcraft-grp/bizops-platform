@@ -58,7 +58,7 @@ test.describe('payment methods on an invoice', () => {
   });
 
   test('the copy button copies exactly the digits of that bank\'s account number', async ({ page, context }) => {
-    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:4179' });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://localhost:${process.env.SHOP_PORT ?? 4179}` });
     const fake = new FakeShop(); seedOrder(fake); await open(page, fake); await openOrderInvoice(page);
     await page.locator('[data-bank="SCB"] .wl-copy button').click();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('5194026251');

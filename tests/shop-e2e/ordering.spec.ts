@@ -34,7 +34,7 @@ async function toCheckout(page: Page, sku = 'FG-000001') {
   await expect(page.getByRole('heading', { name: t('co.payment') })).toBeVisible();
 }
 async function fillAndPlace(page: Page) {
-  await openFold(page, 'contact'); await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
+  await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
   await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
   await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click();
   await expect(page.locator('.sp-order-detail')).toBeVisible();
@@ -53,7 +53,7 @@ test.describe('checkout: how to pay', () => {
   });
 
   test('with the slip rule switched off (pay later): the choice travels with the order and is pre-selected on the payment screen, with the invoice number as the reference', async ({ page, context }) => {
-    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:4179' });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://localhost:${process.env.SHOP_PORT ?? 4179}` });
     const fake = new FakeShop(); fake.decorate(); fake.settings.require_payment_slip = false; await open(page, fake); await toCheckout(page);
     await pickMethod(page, 'BBL');
     await fillAndPlace(page);
@@ -113,7 +113,7 @@ test.describe('checkout: how to pay', () => {
 
   test('a double tap on place order still creates ONE order with the choice', async ({ page }) => {
     const fake = new FakeShop(); fake.decorate(); await open(page, fake); await toCheckout(page);
-    await pickMethod(page, 'BBL'); await openFold(page, 'contact');
+    await pickMethod(page, 'BBL');
     await page.getByLabel(t('co.address')).fill('99 ถนนทดสอบ แขวงทดลอง เขตทดสอบ กรุงเทพ 10110');
     await attachSlip(page); await page.getByRole('button', { name: new RegExp(t('co.place')) }).click();
     await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).dblclick();
@@ -225,7 +225,7 @@ test.describe('pay first: the transfer slip comes with the order', () => {
   test('an order paid from the wallet needs no slip', async ({ page }) => {
     const fake = new FakeShop(); fake.decorate(); fake.w.seedBalance(1000); await open(page, fake); await toCheckout(page);
     await expect(page.getByTestId('slip-section')).toBeVisible();
-    await pickMethod(page, 'wallet'); await openFold(page, 'contact');
+    await pickMethod(page, 'wallet');
     await expect(page.getByTestId('slip-section')).toHaveCount(0);
     await page.getByLabel(t('co.address')).fill(addr);
     await placeClick(page).click(); await confirm(page).click();

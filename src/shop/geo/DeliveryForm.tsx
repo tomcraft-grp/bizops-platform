@@ -1,11 +1,11 @@
-// Delivery pin: the customer's delivery location form (checkout and "My delivery addresses"). A pin card (choose / change the place on the map, its distance from the shop),
-// then the address details. Everything lives in a DeliveryDraft owned by the parent; this component only edits it.
+// Delivery pin: the form of ONE saved delivery address (the address editor: "My delivery addresses" and the "+ Add a delivery address" sheet at checkout).
+// A pin card (choose / change the place on the map, its distance from the shop), then the address details. Everything lives in a DeliveryDraft owned by
+// the parent; this component only edits it. The checkout itself never shows this form: it shows the chosen saved address (geo/ShipTo.tsx).
 import { useEffect, useRef, useState } from 'react';
-import { MapPin } from 'lucide-react';
+import { ChevronDown, MapPin } from 'lucide-react';
 import { cx } from '../../lib/util';
-import type { SavedAddress } from '../api';
 import { useShopLang, useT } from '../i18n';
-import { Contact, DeliveryDraft, deliveryProblems, pinOf, recipientOf, sameAsSaved } from './deliveryDraft';
+import { Contact, DeliveryDraft, deliveryProblems, pinOf, recipientOf } from './deliveryDraft';
 import { addressText, coordsText, fmtDistance, fmtDuration, LatLng, straightMetres } from './geo';
 import { MapView } from './MapView';
 import { PinPicker } from './PinPicker';
@@ -47,14 +47,11 @@ export interface DeliveryFormProps {
   value: DeliveryDraft; onChange: (p: Partial<DeliveryDraft>) => void; contact: Contact; shop: Shop; touched: boolean;
   /** the pin must be confirmed to order (the shop's switch); false = optional */
   required: boolean; route: RouteState;
-  saved?: SavedAddress[]; onUseSaved?: (a: SavedAddress) => void; onNew?: () => void;
-  /** offer "save this address" (checkout) */
-  offerSave?: boolean;
   /** no title and heading (the form sits inside another heading) */
   bare?: boolean;
 }
 
-export function DeliveryForm({ value, onChange, contact, shop, touched, required, route, saved, onUseSaved, onNew, offerSave, bare }: DeliveryFormProps) {
+export function DeliveryForm({ value, onChange, contact, shop, touched, required, route, bare }: DeliveryFormProps) {
   const t = useT();
   const [picking, setPicking] = useState(false);
   const [filling, setFilling] = useState(false);
@@ -62,8 +59,8 @@ export function DeliveryForm({ value, onChange, contact, shop, touched, required
   const problems = deliveryProblems(value, contact);
   const ok = !!pin && !!value.confirmed;
   const line = useRef<HTMLTextAreaElement>(null);
-  const from = saved?.find((a) => a.id === value.addressId);
-  const edited = !!from && !sameAsSaved(value, from, contact);
+  // the details few customers need stay folded until asked for (open from the start when one of them already has a value)
+  const [more, setMore] = useState(() => !!(value.village || value.floor || value.landmark || value.directions));
   const addrBad = touched && problems.includes('address');
   const recBad = touched && problems.includes('recipient');
 
@@ -86,19 +83,6 @@ export function DeliveryForm({ value, onChange, contact, shop, touched, required
       {!bare && <h3>{t('dl.title')} {required ? <span className="bad" aria-hidden>*</span> : <small className="muted">({t('dl.optional')})</small>}</h3>}
       {!bare && <div className="sp-note">{t('dl.intro')}</div>}
 
-      {!!saved?.length && (
-        <div className="col gap-6" data-testid="saved-chips">
-          <small className="muted">{t('dl.saved')}</small>
-          <div className="dp-chips" role="group" aria-label={t('dl.saved')}>
-            {saved.map((a) => (
-              <button key={a.id} type="button" className={cx('dp-chip', value.addressId === a.id && 'on')} aria-pressed={value.addressId === a.id} onClick={() => onUseSaved?.(a)} data-testid="saved-chip">
-                {a.label || a.address_line.slice(0, 18)}{a.is_default ? ` · ${t('dl.default')}` : ''}
-              </button>))}
-            <button type="button" className={cx('dp-chip', !value.addressId && 'on')} aria-pressed={!value.addressId} onClick={() => onNew?.()} data-testid="new-address-chip">+ {t('dl.newAddress')}</button>
-          </div>
-        </div>
-      )}
-
       <div className={cx('dp-card', ok ? 'ok' : 'todo')} data-testid="pin-card" aria-invalid={touched && !ok && required}>
         {pin
           ? (
@@ -120,34 +104,28 @@ export function DeliveryForm({ value, onChange, contact, shop, touched, required
         {addrBad && <small className="bad">{t('dl.err.address')}</small>}
         {pin && <button type="button" className="sp-link" disabled={filling} onClick={() => void fillFromMap()} data-testid="dl-fill">{t('dl.f.addressFill')}</button>}
         {field('unit', t('dl.f.unit'), 60)}
-        {field('village', t('dl.f.village'), 100)}
-        {field('floor', t('dl.f.floor'), 20)}
-        {field('landmark', t('dl.f.landmark'), 120, { hint: t('dl.f.landmarkHint') })}
-        <label>{t('dl.f.directions')}<textarea rows={2} maxLength={300} value={value.directions ?? ''} placeholder={t('dl.f.directionsHint')} onChange={(e) => onChange({ directions: e.target.value })} data-testid="dl-directions" /></label>
+        <button type="button" className="sp-link dp-more" aria-expanded={more} onClick={() => setMore(!more)} data-testid="dl-more">{t('dl.f.more')} <ChevronDown size={15} aria-hidden className={cx(more && 'up')} /></button>
+        {more && (
+          <>
+            {field('village', t('dl.f.village'), 100)}
+            {field('floor', t('dl.f.floor'), 20)}
+            {field('landmark', t('dl.f.landmark'), 120, { hint: t('dl.f.landmarkHint') })}
+            <label>{t('dl.f.directions')}<textarea rows={2} maxLength={300} value={value.directions ?? ''} placeholder={t('dl.f.directionsHint')} onChange={(e) => onChange({ directions: e.target.value })} data-testid="dl-directions" /></label>
+          </>
+        )}
         <label>{t('dl.f.driverNote')}<textarea rows={2} maxLength={300} value={value.driverNote ?? ''} onChange={(e) => onChange({ driverNote: e.target.value })} data-testid="dl-driver" /></label>
         <div className="col gap-6"><small className="muted">{t('dl.f.phrases')}</small>
           <div className="dp-chips">{PHRASES.map((k) => <button key={k} type="button" className="dp-chip" onClick={() => addPhrase(k)}>{t(k)}</button>)}</div></div>
 
+        {!value.other && (contact.name.trim() || contact.phone) && <div className="dp-line muted" data-testid="dl-recipient"><b>{t('dl.f.recipient')}</b><span>{[contact.name.trim(), contact.phone].filter(Boolean).join(' · ')}</span></div>}
         <label className="dp-check"><input type="checkbox" checked={!!value.other} onChange={(e) => onChange({ other: e.target.checked || undefined })} data-testid="dl-other" /> {t('dl.f.other')}</label>
         {value.other && (
           <>
             {field('rname', t('dl.f.rname'), 100)}
             {field('rphone', t('dl.f.rphone'), 14, { mode: 'tel', hint: '08xxxxxxxx' })}
-            {recBad && <small className="bad" role="alert">{t('dl.err.recipient')}</small>}
           </>
         )}
-
-        {offerSave && (
-          <div className="col gap-6">
-            {edited && <label className="dp-check"><input type="checkbox" checked={!!value.updateSaved} onChange={(e) => onChange({ updateSaved: e.target.checked || undefined })} data-testid="dl-update-saved" /> {t('dl.saveUpdate')}</label>}
-            {(!from || !value.updateSaved) && !(from && !edited) && (
-              <>
-                <label className="dp-check"><input type="checkbox" checked={!!value.saveIt} onChange={(e) => onChange({ saveIt: e.target.checked })} data-testid="dl-save" /> {t('dl.save')}</label>
-                {value.saveIt && <label>{t('dl.saveLabel')}<input value={value.saveLabel ?? ''} maxLength={40} onChange={(e) => onChange({ saveLabel: e.target.value })} data-testid="dl-save-label" /></label>}
-              </>
-            )}
-          </div>
-        )}
+        {recBad && <small className="bad" role="alert">{t('dl.err.recipient')}</small>}
       </div>
 
       {picking && (
