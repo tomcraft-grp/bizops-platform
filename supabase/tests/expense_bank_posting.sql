@@ -192,16 +192,16 @@ select pg_temp.chk('X1 the manager marks drafts reviewed (a mark, not a stage)',
 select public.expense_reject(pg_temp.c('c_fg')::uuid, 'Wrong amount, please check the receipt');
 select pg_temp.chk('X2 the manager can send a draft back with a reason', pg_temp.claim(pg_temp.c('c_fg'), 'status') = 'rejected');
 select pg_temp.as_user(pg_temp.c('E'));
-select public.expense_save(pg_temp.c('c_draft')::uuid, current_date, pg_temp.c('cat_office')::uuid, 'Still a draft', 998, 'none', 'bank_transfer', null, null, null, null, null, pg_temp.c('BBL')::uuid);
-select public.expense_save(pg_temp.c('c_fg')::uuid, current_date, null, 'FG restock', 280, 'none', 'cash', null, null, null, null, pg_temp.c('FG'), null);
+select public.expense_save(pg_temp.c('c_draft')::uuid, (now() at time zone 'Asia/Bangkok')::date, pg_temp.c('cat_office')::uuid, 'Still a draft', 998, 'none', 'bank_transfer', null, null, null, null, null, pg_temp.c('BBL')::uuid);
+select public.expense_save(pg_temp.c('c_fg')::uuid, (now() at time zone 'Asia/Bangkok')::date, null, 'FG restock', 280, 'none', 'cash', null, null, null, null, pg_temp.c('FG'), null);
 select pg_temp.chk('X3 an edit after review clears the review; a sent-back expense is a draft again after the fix',
   pg_temp.claim(pg_temp.c('c_draft'), 'reviewed_at') is null and pg_temp.claim(pg_temp.c('c_fg'), 'status') = 'draft' and pg_temp.claim(pg_temp.c('c_fg'), 'amount_paid') = '280.00');
 select pg_temp.as_user(pg_temp.c('M'));
 select pg_temp.put('c_mine', pg_temp.save('Manager own taxi', pg_temp.c('cat_office'), 80, 'cash', null, null));
 select pg_temp.err_like('X4 a manager cannot "send back" his own draft (he edits it)', format($q$select public.expense_reject(%L, 'own draft reason')$q$, pg_temp.c('c_mine')), '%your own draft%');
 select pg_temp.chk('X5 the dashboard counts drafts as spending (recorded, waiting for accounting)',
-  (public.expense_dashboard(current_date, current_date) -> 'by_status' -> 'draft' ->> 'n')::int >= 3
-  and (public.expense_dashboard(current_date, current_date) ->> 'range_total')::numeric >= 998 + 280 + 80 + 2500 + 100 + 107);
+  (public.expense_dashboard((now() at time zone 'Asia/Bangkok')::date, (now() at time zone 'Asia/Bangkok')::date) -> 'by_status' -> 'draft' ->> 'n')::int >= 3
+  and (public.expense_dashboard((now() at time zone 'Asia/Bangkok')::date, (now() at time zone 'Asia/Bangkok')::date) ->> 'range_total')::numeric >= 998 + 280 + 80 + 2500 + 100 + 107);
 
 -- ================================================================================================ R. reversal
 select pg_temp.err_like('R1 a manager cannot reverse a posted expense (accountant / admin)', format($q$select public.expense_reverse(%L, 'Wrong supplier')$q$, pg_temp.c('c_rm')), '%not allowed%');
