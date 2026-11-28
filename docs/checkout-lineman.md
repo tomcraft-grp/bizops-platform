@@ -1,6 +1,6 @@
 # Checkout: LINE MAN delivery or pick-up (address book at checkout)
 
-**Status (2026-11-28): built on branch `feat/checkout-lineman`, not published.** App-only change: **no database change, no migration**. It uses the address book and the order function that went live with the delivery pin (`20261128130000_delivery_pin.sql`, see docs/delivery-pin.md).
+**Status (2026-11-28, 23:20 Bangkok): LIVE.** Branch `feat/checkout-lineman` (3ca5e28) merged into main (982051f), dist 8139735, `gh-pages` dc17ab2 (rollback target ef14e9a, keep `ocr/`); the page serves `0.1.0+982051f`. **Not yet exercised for real:** one LINE MAN order and one pick-up order from a phone. App-only change: **no database change, no migration**. It uses the address book and the order function that went live with the delivery pin (`20261128130000_delivery_pin.sql`, see docs/delivery-pin.md).
 
 ## What the customer sees
 
