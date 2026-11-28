@@ -13,6 +13,7 @@ import { ReaderCard } from '../slipReader/ReaderCard';
 import { isPicture, ownReader, readEvidence, type OwnReaderStatus } from '../slipReader/store';
 import { readerAvailable, ReaderError } from '../slipReader/engine';
 import RecordPayment, { type RecordTarget } from './RecordPayment';
+import { ReadingVerdict, SlipInsightCard } from './SlipInsight';
 import {
   AI_RESULT, isDuplicateSuspect, REASON_CODES, REASON_TEXT, refOk, review, STAGE, type AiResult, type Bilingual, type PostResult, type ReviewDetail, type ReviewFilter, type ReviewItem, type ReviewPage, type ReviewSettings,
   type ReviewStage, type ReviewSummary, type SlipAnalysis,
@@ -277,6 +278,7 @@ export default function SlipReview({ role, onChanged, initialOpenId }: { role: F
       )}
 
       {reader && (reader.can_manage || (reader.enabled && reader.can_read)) && <ReaderCard status={reader} onStatus={setReader} onRead={refresh} />}
+      <SlipInsightCard canManage={role === 'manager'} />
       {role === 'manager' && settings && <SettingsCard settings={settings} onSaved={setSettings} />}
 
       {openId && (
@@ -522,6 +524,7 @@ function Detail({ id, role, settings, reader, busy, run, postOne, rejectOne, onC
                 {newest.overall_confidence != null && <span className="muted"><Tx>Confidence</Tx>: {percent(newest.overall_confidence)}</span>}
               </div>
             )}
+            {newest?.status === 'done' && <div style={{ marginTop: 8 }}><ReadingVerdict a={newest} canJudge={canAct} onSaved={() => void load()} /></div>}
             {canRunAi && <div style={{ marginTop: 8 }}><Button size="sm" disabled={off || mode !== 'view'} loading={busy === 'ai'} onClick={runAi}><Play size={13} /> <Tx>Run AI check</Tx></Button></div>}
             {reading && <div style={{ marginTop: 8 }}><Banner tone="info"><Tx>Reading the slip in this browser…</Tx></Banner></div>}
             {mayRead && !reading && !nowRunning && d.analyses.length < 5 && <div style={{ marginTop: 8 }}><Button size="sm" disabled={off || mode !== 'view' || !readerAvailable()} onClick={() => void readNow(false)}><ScanLine size={13} /> <Tx>{newest ? 'Read the slip again' : 'Read the slip'}</Tx></Button></div>}

@@ -113,5 +113,7 @@ export function readSlip(rawTexts: string[], qr: SlipQr, now: Date): Reading {
     field_confidence: { amount: aConf, date: date.confidence, time: time.confidence, receiver: 0, ref: ref.confidence }, overall_confidence: Math.min(aConf, date.confidence), tamper_signals: [],
   };
   const n = normalize(raw, now);
-  return { extracted: n.extracted, confidence: n.confidence, signals: n.signals, text: all.slice(0, 6000) };
+  // the readings are kept apart by a form feed: the database takes one receiver per reading by its place on the slip, and needs two readings to agree before it calls the
+  // receiver someone else (20261128150000_slip_recipient_check.sql). An older database reads the same text as one.
+  return { extracted: n.extracted, confidence: n.confidence, signals: n.signals, text: texts.map((t) => t.slice(0, 3800)).join('\n\f\n') };
 }

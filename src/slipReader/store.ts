@@ -1,20 +1,21 @@
 // The reader and the database: is it switched on, read one slip of the private bucket in this browser, store what was read (finance_store_reading judges it with the same rules as the AI
 // reader and finds the receiver itself). Nothing here confirms, posts or rejects a payment.
 import { finance, must, sha256 } from '../finance/api';
-import { review, type AiResult, type ReviewDetail } from '../finance/review';
+import { review, type AiResult, type ReviewDetail, type SlipDecision } from '../finance/review';
 import { supabase } from '../lib/supabase';
 import { withTimeout } from '../shop/timeout';
 import { ENGINE, ReaderError, readPicture } from './engine';
 import type { Reading, SlipQr } from './parse';
 
-/** `checkout`: the check the customer sees before ordering (its own switch; absent on an older database); `before_min` / `after_min`: how far from now a slip may be dated */
-export interface OwnReaderStatus { enabled: boolean; can_read: boolean; can_manage: boolean; checkout?: boolean; before_min?: number; after_min?: number }
+/** `checkout`: the check the customer sees before ordering (its own switch; absent on an older database); `before_min` / `after_min`: how far from now a slip may be dated;
+ *  `recipients`: the names a slip may show as its receiver (the names on the payment card; absent on a database before 20261128150000) */
+export interface OwnReaderStatus { enabled: boolean; can_read: boolean; can_manage: boolean; checkout?: boolean; before_min?: number; after_min?: number; recipients?: string[] }
 export const ownReader = {
   /** null = a database without the reader */
   async status(): Promise<OwnReaderStatus | null> { const r = await supabase.rpc('finance_own_reader'); return r.error ? null : (r.data as OwnReaderStatus); },
   async setOn(on: boolean): Promise<OwnReaderStatus> { return must(await supabase.rpc('finance_set_own_reader', { p_on: on }), 'Save the reader setting'); },
   async setCheckout(on: boolean): Promise<OwnReaderStatus> { return must(await supabase.rpc('finance_set_checkout_check', { p_on: on }), 'Save the reader setting'); },
-  async store(evidenceId: string, r: Reading & { qr: SlipQr }, fileSha256: string): Promise<{ result: AiResult; receiver_found: boolean }> {
+  async store(evidenceId: string, r: Reading & { qr: SlipQr }, fileSha256: string): Promise<{ result: AiResult; receiver_found: boolean; decision?: SlipDecision }> {
     return must(await supabase.rpc('finance_store_reading', { p_evidence: evidenceId, p_extracted: r.extracted, p_qr: { ...r.qr, file_sha256: fileSha256 }, p_confidence: r.confidence, p_text: r.text, p_engine: ENGINE }), 'Store the reading');
   },
 };

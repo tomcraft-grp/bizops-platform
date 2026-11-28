@@ -4,7 +4,8 @@ import jsQR from 'jsqr';
 import { interpretPayload } from '../../supabase/functions/slip-analyze/qrPayload.ts';
 import { readSlip, type Reading, type SlipQr } from './parse';
 
-export const ENGINE = 'browser-ocr/1';
+/** 2: the readings are sent apart (form feed), so the database can take one receiver per reading */
+export const ENGINE = 'browser-ocr/2';
 const asset = (f: string) => new URL(`ocr/${f}`, document.baseURI).href;
 interface Ocr { setParameters(p: Record<string, string>): Promise<unknown>; recognize(i: HTMLCanvasElement): Promise<{ data: { text: string } }>; terminate(): Promise<unknown> }
 

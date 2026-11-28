@@ -193,6 +193,10 @@ export class FakeReview {
       case 'finance_set_checkout_check': case 'finance_own_reader': case 'finance_set_own_reader': case 'finance_store_reading': if (this.ownReader === null) this.err(`Could not find the function public.${fn} in the schema cache`); break;
       case 'finance_reject_evidence': break;
       case 'finance_invoice_overview': break;
+      // 20261128150000 (the receiver check, feedback, the accuracy card): a database without it has none of these
+      case 'finance_slip_learning': case 'finance_slip_recipients': case 'finance_slip_feedback_add': case 'finance_slip_variant_impact': case 'finance_slip_variant_add': case 'finance_slip_variant_retire':
+        if (!this.learning) this.err(`Could not find the function public.${fn} in the schema cache`);
+        return this.learn(fn, a);
       default: return NOT_HANDLED;
     }
     switch (fn) {
@@ -379,7 +383,40 @@ export class FakeReview {
   ownReader: boolean | null = null;
   /** migration 20261124120000 (the customer's own switch); undefined = a database without it */
   checkout: boolean | undefined = undefined;
-  private readerStatus() { const may = (n: 'verify' | 'manage') => !!this.shop.w.role && RANK[this.shop.w.role as keyof typeof RANK] >= NEED[n]; return { enabled: !!this.ownReader, can_read: may('verify'), can_manage: may('manage'), ...(this.checkout === undefined ? {} : { checkout: this.checkout, before_min: 120, after_min: 10 }) }; }
+  /** migration 20261128150000 (the receiver names the phone compares with); undefined = a database without it */
+  recipients: string[] | undefined = undefined;
+  /** migration 20261128150000: the accuracy report, the recipients and the feedback (false = a database without it). The numbers are invented; the real ones are proved in SQL. */
+  learning = false;
+  feedback: Record<string, unknown>[] = [];
+  variants: { id: string; holder: string; variant: string; kind: string; source: string; status: string; note: string | null; created_at: string; created_by: string | null; retired_at: string | null; retire_reason: string | null; impact: Record<string, number> }[] = [];
+  private learn(fn: string, a: Record<string, unknown>): unknown {
+    const holders = [{ holder: 'ณัฐพร อยู่ยิ้ม', accounts: 2 }, { holder: 'ณัฐพล อยู่ยิ้ม', accounts: 1 }];
+    switch (fn) {
+      case 'finance_slip_learning': this.need('view', 'see how the slip check performs'); return {
+        from: '2026-08-30T00:00:00Z', days: Number(a.p_days ?? 90), rules_version: 'rules-2026-11-28', readings: 14, slips: 12,
+        decisions: { verified: 5, review_required: 5, rejected: 2 }, recipient: { match: 7, mismatch: 1, uncertain: 2, unclear: 2 }, unreadable: 2,
+        feedback: { correct: 3, wrong: 2, recipient_corrected: 2 },
+        outcomes: { verified_posted: 4, verified_rejected: 0, review_posted: 2, review_rejected: 1, rejected_posted: 0, rejected_rejected: 1, open: 4 },
+        amount_on_posted: { right: 5, wrong: 0, blank: 1 }, date_on_posted: { right: 6, wrong: 0, blank: 0 },
+        calibration: [{ band: '0.90-1.00', n: 4, right: 4, wrong: 0 }, { band: '0.50-0.79', n: 2, right: 1, wrong: 0 }],
+        weeks: [{ week: '2026-11-23', n: 9, verified: 4, review_required: 4, rejected: 1 }, { week: '2026-11-16', n: 3, verified: 1, review_required: 1, rejected: 1 }],
+        reasons: [{ code: 'RECEIVER_UNCLEAR', n: 2 }],
+        corrections: [{ read: 'ณัฐพธ อยู่ยิ้ม', holder: 'ณัฐพร อยู่ยิ้ม', slips: 2, posted: 2, rejected: 0, distance: 0.5, proposed: true },
+                      { read: 'ณัฐพล อย่ยม', holder: 'ณัฐพล อยู่ยิ้ม', slips: 1, posted: 0, rejected: 0, distance: 1.5, proposed: false }],
+      };
+      case 'finance_slip_recipients': this.need('view', 'see the shop\'s recipients'); return { holders, names: [], variants: this.variants };
+      case 'finance_slip_feedback_add': { this.need('verify', 'give feedback on a slip reading'); this.feedback.push(a); return { id: `fb-${this.feedback.length}`, correct_decision: a.p_correct_decision ?? null }; }
+      case 'finance_slip_variant_impact': this.need('view', 'see the slip readings'); return { readings: 2, evidence: 2, posted: 2, rejected: 0, open: 0, would_change: 2, distance: 0.5 };
+      case 'finance_slip_variant_add': {
+        this.need('manage', 'approve a recipient spelling');
+        const v = { id: `var-${this.variants.length + 1}`, holder: String(a.p_holder), variant: String(a.p_variant), kind: String(a.p_kind), source: String(a.p_source ?? 'manager'), status: 'active', note: null, created_at: this.clockIso, created_by: null, retired_at: null, retire_reason: null, impact: {} };
+        this.variants.push(v); return v;
+      }
+      case 'finance_slip_variant_retire': { this.need('manage', 'retire a recipient spelling'); const v = this.variants.find((x) => x.id === a.p_id); if (!v) this.err('NOT_FOUND: no active spelling with this id'); v!.status = 'retired'; return v; }
+    }
+    return NOT_HANDLED;
+  }
+  private readerStatus() { const may = (n: 'verify' | 'manage') => !!this.shop.w.role && RANK[this.shop.w.role as keyof typeof RANK] >= NEED[n]; return { enabled: !!this.ownReader, can_read: may('verify'), can_manage: may('manage'), ...(this.checkout === undefined ? {} : { checkout: this.checkout, before_min: 120, after_min: 10 }), ...(this.recipients === undefined ? {} : { recipients: this.recipients }) }; }
   /** what finance_store_reading answers about the amount only (the real rules are proved in the database) */
   private storeReading(a: Record<string, unknown>) {
     this.need('verify', 'read a payment slip');

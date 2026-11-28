@@ -1,6 +1,7 @@
 # The shop's own slip reader (no AI service)
 
 Builds on [slip-review.md](slip-review.md) and [premium-qr-slip-check.md](premium-qr-slip-check.md). Owner's decision (2026-11-23): own code instead of an AI key.
+Since 20261128150000 the receiver is found by its place on the slip and is a critical check, with three outcomes and staff feedback: see [slip-recipient-check.md](slip-recipient-check.md).
 
 ## How it works
 

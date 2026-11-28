@@ -628,12 +628,14 @@ select pg_temp.cl('S2 receiver: a different name and no digits is clearly not ou
 select pg_temp.cl('S2 receiver: digits of another account and no name is clearly not ours', pg_temp.rc(pg_temp.hint(null, pg_temp.c('hint_none'))), 'suspicious_slip', array['RECEIVER_MISMATCH'], array['RECEIVER_UNCLEAR']);
 select pg_temp.cl('S2 receiver: other digits AND another name is not ours either', pg_temp.rc(pg_temp.hint('นาย สมชาย ใจดี', pg_temp.c('hint_none'))), 'suspicious_slip', array['RECEIVER_MISMATCH']);
 select pg_temp.cl('S2 receiver: the name matches although the digits do not (either is enough)', pg_temp.rc(pg_temp.hint(pg_temp.c('nm_title'), pg_temp.c('hint_none'))), 'match', array[]::text[], array['RECEIVER_MISMATCH'], p_n => 0);
-select pg_temp.cl('S2 receiver: the digits match although the name does not (either is enough)', pg_temp.rc(pg_temp.hint('นาย สมชาย ใจดี', pg_temp.c('hint_scb'))), 'match', array[]::text[], array['RECEIVER_MISMATCH'], p_n => 0);
-select pg_temp.cl('S2 receiver: no receiver at all is unclear, and the other rules decide (RECEIVER_UNCLEAR, match)', pg_temp.ex('{"receiver": null}'), 'match', array['RECEIVER_UNCLEAR'], array['RECEIVER_MISMATCH'], p_n => 1);
-select pg_temp.cl('S2 receiver: an empty receiver is unclear too', pg_temp.ex('{"receiver": {}}'), 'match', array['RECEIVER_UNCLEAR'], array['RECEIVER_MISMATCH'], p_n => 1);
-select pg_temp.cl('S2 receiver: two visible digits are too few to judge (unclear, not a mismatch)', pg_temp.rc(pg_temp.hint(null, 'xxx-x-x40x-xx')), 'match', array['RECEIVER_UNCLEAR'], array['RECEIVER_MISMATCH'], p_n => 1);
-select pg_temp.cl('S2 receiver: a name that is only a title is unclear', pg_temp.rc(pg_temp.hint('น.ส.', null)), 'match', array['RECEIVER_UNCLEAR'], array['RECEIVER_MISMATCH'], p_n => 1);
-select pg_temp.cl('S2 receiver: a two-character name is too short to judge', pg_temp.rc(pg_temp.hint('ณั', null)), 'match', array['RECEIVER_UNCLEAR'], array['RECEIVER_MISMATCH'], p_n => 1);
+-- (since 20261128150000: a name that is clearly someone else's beside digits that look like ours is a conflict a person decides; it used to be "either is enough")
+select pg_temp.cl('S2 receiver: the digits match although the name clearly does not: a person decides (RECEIVER_UNCERTAIN)', pg_temp.rc(pg_temp.hint('นาย สมชาย ใจดี', pg_temp.c('hint_scb'))), 'manual_review', array['RECEIVER_UNCERTAIN'], array['RECEIVER_MISMATCH'], p_n => 1);
+-- (since 20261128150000 the receiver is critical: an unclear one sends the slip to a person, manual_review, where it used to be only a note beside "match")
+select pg_temp.cl('S2 receiver: no receiver at all is unclear: a person decides (RECEIVER_UNCLEAR, manual_review)', pg_temp.ex('{"receiver": null}'), 'manual_review', array['RECEIVER_UNCLEAR'], array['RECEIVER_MISMATCH'], p_n => 1);
+select pg_temp.cl('S2 receiver: an empty receiver is unclear too', pg_temp.ex('{"receiver": {}}'), 'manual_review', array['RECEIVER_UNCLEAR'], array['RECEIVER_MISMATCH'], p_n => 1);
+select pg_temp.cl('S2 receiver: two visible digits are too few to judge (unclear, not a mismatch)', pg_temp.rc(pg_temp.hint(null, 'xxx-x-x40x-xx')), 'manual_review', array['RECEIVER_UNCLEAR'], array['RECEIVER_MISMATCH'], p_n => 1);
+select pg_temp.cl('S2 receiver: a name that is only a title is unclear', pg_temp.rc(pg_temp.hint('น.ส.', null)), 'manual_review', array['RECEIVER_UNCLEAR'], array['RECEIVER_MISMATCH'], p_n => 1);
+select pg_temp.cl('S2 receiver: a two-character name is too short to judge', pg_temp.rc(pg_temp.hint('ณั', null)), 'manual_review', array['RECEIVER_UNCLEAR'], array['RECEIVER_MISMATCH'], p_n => 1);
 select pg_temp.cl('S2 receiver: an unclear receiver does not hide an amount mismatch', pg_temp.ex(jsonb_build_object('receiver', null, 'amount', pg_temp.t3() / 2)), 'amount_mismatch', array['RECEIVER_UNCLEAR', 'AMOUNT_UNDER']);
 select pg_temp.runs_ok('S2 receiver: the BBL account is switched off (inside this run)', $q$update public.finance_bank_accounts set active = false where code = 'BBL'$q$);
 select pg_temp.cl('S2 receiver: an account that is switched off is not a receiver (the BBL digits are now not ours)', pg_temp.rc(pg_temp.hint(null, pg_temp.c('hint_bbl'))), 'suspicious_slip', array['RECEIVER_MISMATCH']);
@@ -2430,8 +2432,8 @@ select pg_temp.q('S4h analyses: attempt 2 in full: what was read, the QR, what w
 select pg_temp.q('S4h analyses: attempt 1: the mismatch, with its reason, the amount it read (300), the amount it expected (310), made by the system (nobody asked)',
   $$select pg_temp.dj('D_t', 'analyses.2.result') = 'amount_mismatch' and pg_temp.dj('D_t', 'analyses.2.reasons.0.code') = 'AMOUNT_UNDER' and pg_temp.dj('D_t', 'analyses.2.reasons.0.severity') = 'high' and pg_temp.dj('D_t', 'analyses.2.extracted.amount')::numeric = 300
        and pg_temp.dj('D_t', 'analyses.2.expected.amount')::numeric = 310 and pg_temp.dv('D_t', 'analyses.2.requested_by') = 'null'::jsonb$$);
-select pg_temp.q('S4h analyses: each attempt has the 17 keys of the analysis (the slip''s id is not repeated)',
-  $$select bool_and((select array_agg(k order by k) from jsonb_object_keys(a) k) = array['attempt', 'created_at', 'engine', 'error', 'expected', 'extracted', 'finished_at', 'id', 'overall_confidence', 'prompt_version', 'qr', 'reasons', 'requested_by', 'result', 'signals', 'started_at', 'status'])
+select pg_temp.q('S4h analyses: each attempt has the 20 keys of the analysis (the slip''s id is not repeated; decision, recipient and rules_version since 20261128150000)',
+  $$select bool_and((select array_agg(k order by k) from jsonb_object_keys(a) k) = array['attempt', 'created_at', 'decision', 'engine', 'error', 'expected', 'extracted', 'finished_at', 'id', 'overall_confidence', 'prompt_version', 'qr', 'reasons', 'recipient', 'requested_by', 'result', 'rules_version', 'signals', 'started_at', 'status'])
      from t_ctx x, jsonb_array_elements(x.v::jsonb -> 'analyses') a where x.k = 'D_t'$$);
 select pg_temp.q('S4h analyses: a failed reader shows the failure (status, the error, manual_review, the AI_UNAVAILABLE reason); the stage is manual review',
   $$select jsonb_array_length(pg_temp.dv('D_f', 'analyses')) = 1 and pg_temp.dj('D_f', 'analyses.0.status') = 'failed' and pg_temp.dj('D_f', 'analyses.0.error') = 'S4 no API key' and pg_temp.dj('D_f', 'analyses.0.result') = 'manual_review'

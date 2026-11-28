@@ -25,7 +25,42 @@ test.describe('staff', () => {
   const openSlip = async (page: Page, no: string) => { await page.locator('table.t tbody tr', { hasText: no }).getByRole('button', { name: /Review|View/ }).click(); await expect(dlg(page)).toBeVisible(); };
 
   test('a database without the reader: nothing of it is shown', async ({ page }) => {
-    const fake = new FakeShop(); await open(page, fake); await expect(page.getByTestId('own-reader')).toHaveCount(0);
+    const fake = new FakeShop(); await open(page, fake); await expect(page.getByTestId('own-reader')).toHaveCount(0); await expect(page.getByTestId('slip-insight')).toHaveCount(0);
+  });
+
+  // 20261128150000: the outcome and the receiver of a reading, a verifier's judgement of it, and the accuracy card with the spellings a manager approves
+  test('the receiver and the outcome of a reading; a verifier judges it; a manager approves a proposed spelling', async ({ page }) => {
+    const errs = watch(page); const fake = new FakeShop(); fake.rv.learning = true; await open(page, fake);
+    const card = page.getByTestId('slip-insight'); await expect(card).toBeVisible(); await expect(card.getByTestId('outcomes')).toContainText('Checks passed');
+    await expect(card.getByTestId('recipients')).toContainText('ณัฐพร อยู่ยิ้ม'); await expect(card.getByTestId('recipients')).toContainText('ณัฐพล อยู่ยิ้ม');
+    await expect(card.getByTestId('corrections').getByRole('button', { name: 'Approve' })).toHaveCount(1);                       // only the proposal with two posted slips
+    await card.scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/shop/slip-insight.png', fullPage: true });
+    await card.getByTestId('corrections').getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByRole('dialog').last()).toContainText('2 posted after the bank check'); await page.getByRole('dialog').last().getByRole('button', { name: 'Approve' }).click();
+    await expect.poll(() => fake.rv.variants.length).toBe(1); expect(fake.rv.variants[0]).toMatchObject({ holder: 'ณัฐพร อยู่ยิ้ม', variant: 'ณัฐพธ อยู่ยิ้ม', kind: 'ocr', source: 'learned' });
+    await expect(card.getByTestId('recipients')).toContainText('ณัฐพธ อยู่ยิ้ม');
+
+    const a = fake.rv.analyses.find((x) => x.evidence_id === 'ev-1')!;
+    Object.assign(a, { decision: 'verified', rules_version: 'rules-2026-11-28', recipient: { status: 'match', holder: 'ณัฐพร อยู่ยิ้ม', method: 'masked', confidence: 0.95, agree: { match: 1, other: 0, soft: 0 }, version: 'recipient-v1',
+      candidates: [{ name: 'น.ส. ณัฐพร อ.', account_hint: 'xxx-x-x9542-x', how: 'reader', verdict: 'match', method: 'masked', holder: 'ณัฐพร อยู่ยิ้ม', distance: 0 }] } });
+    await openSlip(page, 'INV-000101');
+    const v = dlg(page).getByTestId('reading-verdict'); await expect(v).toHaveAttribute('data-decision', 'verified'); await expect(v).toContainText('Still check the bank record');
+    await expect(v.getByTestId('recipient-check')).toHaveAttribute('data-status', 'match'); await expect(v.getByTestId('recipient-check')).toContainText('surname masked by the bank');
+    await v.getByRole('button', { name: 'Wrong, correct it' }).click(); await expect(dlg(page).locator('[data-panel="feedback"]').getByRole('button', { name: 'Save correction' })).toBeDisabled();
+    await dlg(page).locator('[data-panel="feedback"]').getByLabel('Who the slip really pays').selectOption('ณัฐพล อยู่ยิ้ม');
+    await dlg(page).locator('[data-panel="feedback"]').getByRole('button', { name: 'Save correction' }).click();
+    await expect.poll(() => fake.rv.feedback.length).toBe(1); expect(fake.rv.feedback[0]).toMatchObject({ p_analysis: a.id, p_verdict: 'wrong', p_recipient_truth: 'ณัฐพล อยู่ยิ้ม', p_correct_decision: null });
+    expect(fake.count('finance_confirm_evidence') + fake.count('finance_post_evidence') + fake.count('finance_reject_evidence')).toBe(0);              // feedback moves no money
+    expect(errs).toEqual([]);
+  });
+
+  test('a verifier judges but cannot approve; a viewer only looks', async ({ page }) => {
+    const fake = new FakeShop(); fake.rv.learning = true; await open(page, fake, 'verifier');
+    await expect(page.getByTestId('slip-insight').getByRole('button', { name: 'Approve' })).toHaveCount(0); await expect(page.getByTestId('slip-insight').getByText('Proposed', { exact: true })).toBeVisible();
+    await openSlip(page, 'INV-000101'); await dlg(page).getByTestId('reading-verdict').getByRole('button', { name: 'Right' }).click();
+    await expect.poll(() => fake.rv.feedback.length).toBe(1); expect(fake.rv.feedback[0]).toMatchObject({ p_verdict: 'correct' });
+    const p2 = await page.context().newPage(); const f2 = new FakeShop(); f2.rv.learning = true; await open(p2, f2, 'viewer');
+    await openSlip(p2, 'INV-000101'); await expect(dlg(p2).getByTestId('reading-verdict')).toBeVisible(); await expect(dlg(p2).getByTestId('reading-verdict').getByRole('button')).toHaveCount(0);
   });
 
   test('off: a manager sees the switch and can turn it on; a verifier sees nothing', async ({ page }) => {
@@ -43,7 +78,7 @@ test.describe('staff', () => {
     await expect(dlg(page)).toContainText('Slip reading (no AI)'); await expect(dlg(page)).toContainText('hint, not proof');
     const c = fake.calls.filter((x) => x.fn === 'finance_store_reading'); expect(c).toHaveLength(1);
     const x = c[0].args.p_extracted as Record<string, unknown>; expect(x.amount).toBe(430); expect(String(x.transfer_at).slice(0, 16)).toBe('2026-12-04T21:53'); expect(x.trans_ref).toBe('2026120489720200627462');
-    expect(c[0].args.p_qr).toMatchObject({ found: true, crc_ok: true, sending_bank: '004', trans_ref: '2026120489720200627462' }); expect(String((c[0].args.p_qr as Record<string, unknown>).file_sha256)).toMatch(/^[0-9a-f]{64}$/); expect(c[0].args.p_engine).toBe('browser-ocr/1');
+    expect(c[0].args.p_qr).toMatchObject({ found: true, crc_ok: true, sending_bank: '004', trans_ref: '2026120489720200627462' }); expect(String((c[0].args.p_qr as Record<string, unknown>).file_sha256)).toMatch(/^[0-9a-f]{64}$/); expect(c[0].args.p_engine).toBe('browser-ocr/2'); expect(String(c[0].args.p_text).split(String.fromCharCode(12))).toHaveLength(3);   // the three readings kept apart (20261128150000)
     expect(Object.keys(c[0].args).filter((k) => /expected|result|status|receiver/.test(k))).toEqual([]);
     for (const fn of ['finance_confirm_evidence', 'finance_post_evidence', 'finance_reject_evidence']) expect(fake.count(fn), fn).toBe(0);
     expect(fake.rv.evidence.find((e) => e.id === 'ev-4')!.status).toBe('submitted'); expect(out).toEqual([]); expect(errs).toEqual([]);
@@ -105,6 +140,23 @@ test.describe('the slip check before ordering', () => {
     await place(page).click(); await expect(page.locator('.sp-sheet')).toHaveCount(0);
     await live(page).getByRole('checkbox').check(); await place(page).click(); await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click(); await expect(page.locator('.sp-order-detail')).toBeVisible();
     expect(fake.orders).toHaveLength(1); expect(fake.orders[0].invoice.paid).toBe(0); const a = fake.calls.find((c) => c.fn === 'shop_place_order')!.args; expect(JSON.stringify(a)).not.toContain('430'); expect(fake.count('finance_store_reading')).toBe(0);
+  });
+
+  // the receiver (20261128150000): invented-430-th.jpg pays "น.ส. ทดสอบ ผู้รับ" (the sender "น.ส. สมหญิง รักดี" is printed first)
+  test('the receiver is one of the shop names: a third green row with that name, nothing to tick', async ({ page }) => {
+    const fake = on(); fake.rv.recipients = ['ทดสอบ ผู้รับ']; await toSlip(page, fake, { total: 430, now: DAY });
+    await expect(live(page)).toHaveAttribute('data-state', 'ok', DONE); await expect(live(page)).toContainText(t('sv.okAll'));
+    await expect(live(page).locator('[data-row="recipient"]')).toHaveAttribute('data-row-state', 'ok'); await expect(live(page).locator('[data-row="recipient"]')).toContainText('ทดสอบ ผู้รับ');
+    await expect(live(page).getByRole('checkbox')).toHaveCount(0); await live(page).scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/shop/slip-live-recipient-ok.png' });
+  });
+  test('the slip pays someone else (the right amount and day): said plainly, and the order waits for the tick', async ({ page }) => {
+    const fake = on(); fake.rv.recipients = ['ณัฐพร อยู่ยิ้ม', 'ณัฐพล อยู่ยิ้ม']; await toSlip(page, fake, { total: 430, now: DAY });
+    await expect(live(page)).toHaveAttribute('data-state', 'differs', DONE); await expect(live(page).locator('[data-row="recipient"]')).toHaveAttribute('data-row-state', 'differs');
+    await expect(live(page).locator('[data-row="recipient"]')).toContainText(t('sv.recipientDiff')); await expect(live(page).locator('[data-row="amount"]')).toHaveAttribute('data-row-state', 'ok');
+    await live(page).scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/shop/slip-live-recipient-differs.png' });
+    await place(page).click(); await expect(page.getByTestId('checkout-error')).toContainText(t('sv.must')); expect(fake.orders).toHaveLength(0);
+    await live(page).getByRole('checkbox').check(); await place(page).click(); await page.locator('.sp-sheet').getByRole('button', { name: t('co.place') }).click(); await expect(page.locator('.sp-order-detail')).toBeVisible();
+    expect(fake.orders).toHaveLength(1); expect(fake.orders[0].invoice.paid).toBe(0);                      // a tick moves no money: the shop still checks the bank
   });
 
   test('an earlier day: said with the date, and must be ticked', async ({ page }) => {

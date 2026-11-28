@@ -1,3 +1,4 @@
+-- (since 20261128150000 the receiver label must start a line, as OCR prints it: the slip texts below have the line break)
 -- Tests for 20261124110000_own_slip_reader.sql, run inside one transaction that is rolled back: <migration> ; <this file>  (the local harness, see docs/own-slip-reader.md)
 create temp table t_res (n serial, test text, ok boolean, detail text);
 create temp table t_ctx (k text primary key, v text);
@@ -42,7 +43,7 @@ create or replace function pg_temp.ex(n int, p jsonb default '{}') returns jsonb
   select jsonb_build_object('is_slip', true, 'amount', pg_temp.c('tot' || n)::numeric, 'transfer_at', to_char(now() at time zone 'Asia/Bangkok', 'YYYY-MM-DD"T"HH24:MI:SS') || '+07:00', 'time_known', true, 'bank', '004',
     'sender', jsonb_build_object('name', 'x'), 'receiver', jsonb_build_object('name', null), 'trans_ref', 'OWNREF00000' || n, 'trans_id', null, 'status_text', 'สำเร็จ',
     'field_confidence', jsonb_build_object('amount', 0.95, 'date', 0.95, 'time', 0.95, 'receiver', 0, 'ref', 0.95)) || p $$;
-create or replace function pg_temp.store(n int, p jsonb default '{}', p_text text default 'โอนเงินสำเร็จ ไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', p_conf numeric default 0.95, p_qr jsonb default '{}', p_engine text default 'browser-ocr/1') returns text language plpgsql as $$
+create or replace function pg_temp.store(n int, p jsonb default '{}', p_text text default E'โอนเงินสำเร็จ\nไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', p_conf numeric default 0.95, p_qr jsonb default '{}', p_engine text default 'browser-ocr/1') returns text language plpgsql as $$
 begin return public.finance_store_reading(pg_temp.ev(n), pg_temp.ex(n, p), jsonb_build_object('found', true, 'crc_ok', true, 'sending_bank', '004', 'trans_ref', 'OWNREF00000' || n, 'file_sha256', pg_temp.sha(n)) || p_qr, p_conf, p_text, p_engine) ->> 'result'; end $$;
 create or replace function pg_temp.codes(n int) returns text language sql as $$ select string_agg(r ->> 'code', ',' order by r ->> 'code') from public.finance_slip_analysis a, jsonb_array_elements(a.reasons) r where a.evidence_id = pg_temp.ev(n) $$;
 create or replace function pg_temp.told(n int) returns jsonb language plpgsql as $$ begin perform pg_temp.as_user(pg_temp.c('A')::uuid); return public.finance_my_slip_check(pg_temp.c('inv' || n)::uuid); end $$;
@@ -75,7 +76,8 @@ select pg_temp.chk('G4 it is in the log with the engine and who asked, and the t
 
 -- =========================================================================================== the receiver is found by the database, never taken from the browser
 select pg_temp.place(2); select pg_temp.staff();
-select pg_temp.chk('R1 a receiver the browser claims is ignored; not found in the text = never a match', pg_temp.store(2, '{"receiver": {"name": "ณัฐพร อยู่ยิ้ม", "account_hint": "9380319542"}}', 'โอนเงินสำเร็จ ไปยัง นาย คนอื่น ใจดี') = 'manual_review' and pg_temp.codes(2) like '%LOW_CONFIDENCE%RECEIVER_UNCLEAR%', pg_temp.codes(2));
+-- (since 20261128150000 the receiver is found by its place on the slip: "นาย คนอื่น ใจดี" is read as the receiver; one reading of an old reader cannot call it someone else's, so a person decides)
+select pg_temp.chk('R1 a receiver the browser claims is ignored; not found in the text = never a match', pg_temp.store(2, '{"receiver": {"name": "ณัฐพร อยู่ยิ้ม", "account_hint": "9380319542"}}', E'โอนเงินสำเร็จ\nไปยัง นาย คนอื่น ใจดี') = 'manual_review' and pg_temp.codes(2) like '%RECEIVER_UNCERTAIN%', pg_temp.codes(2));
 select pg_temp.place(3); select pg_temp.staff();
 select pg_temp.chk('R2 by the last digits of one of our accounts', (select pg_temp.store(3, '{}', 'ไปยัง xxx-x-x' || substr(right(account_no, 5), 1, 4) || '-' || right(account_no, 1) || ' จำนวน') from public.finance_bank_accounts where active and code = 'BBL') = 'match', pg_temp.codes(3));
 select pg_temp.place(4); select pg_temp.staff();
@@ -85,24 +87,24 @@ select pg_temp.chk('R3 those digits inside a longer number (a reference) are not
 select pg_temp.place(5); select pg_temp.staff();
 select pg_temp.chk('V1 another amount, surely read: told to the customer', pg_temp.store(5, '{"amount": 1.00}') = 'amount_mismatch' and pg_temp.told(5) ->> 'code' = 'AMOUNT', pg_temp.told(5)::text);
 select pg_temp.place(6); select pg_temp.staff();
-select pg_temp.chk('V2 another amount, NOT surely read: staff see it, the customer is not told a number that may be wrong', pg_temp.store(6, '{"amount": 1.00, "field_confidence": {"amount": 0.7, "date": 0.95, "time": 0.95, "receiver": 0, "ref": 0.9}}', 'โอนเงินสำเร็จ ไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.7) = 'amount_mismatch' and pg_temp.told(6) = '{"state": "review"}'::jsonb, pg_temp.told(6)::text);
+select pg_temp.chk('V2 another amount, NOT surely read: staff see it, the customer is not told a number that may be wrong', pg_temp.store(6, '{"amount": 1.00, "field_confidence": {"amount": 0.7, "date": 0.95, "time": 0.95, "receiver": 0, "ref": 0.9}}', E'โอนเงินสำเร็จ\nไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.7) = 'amount_mismatch' and pg_temp.told(6) = '{"state": "review"}'::jsonb, pg_temp.told(6)::text);
 select pg_temp.place(7); select pg_temp.staff();
-select pg_temp.chk('V3 nothing could be read: a person checks it, the customer is not blamed', pg_temp.store(7, '{"amount": null, "transfer_at": null}', 'โอนเงินสำเร็จ ไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0) = 'manual_review' and pg_temp.told(7) = '{"state": "review"}'::jsonb, pg_temp.told(7)::text);
+select pg_temp.chk('V3 nothing could be read: a person checks it, the customer is not blamed', pg_temp.store(7, '{"amount": null, "transfer_at": null}', E'โอนเงินสำเร็จ\nไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0) = 'manual_review' and pg_temp.told(7) = '{"state": "review"}'::jsonb, pg_temp.told(7)::text);
 select pg_temp.place(8); select pg_temp.staff();
 select pg_temp.chk('V4 two days ago', pg_temp.store(8, jsonb_build_object('transfer_at', to_char((now() - interval '2 days') at time zone 'Asia/Bangkok', 'YYYY-MM-DD"T"HH24:MI:SS') || '+07:00')) = 'date_mismatch' and pg_temp.told(8) ->> 'code' = 'DATE_PAST', pg_temp.told(8)::text);
 select pg_temp.place(9); select pg_temp.staff();
-select pg_temp.chk('V5 the reference of another slip', pg_temp.store(9, '{"trans_ref": "OWNREF000001"}', 'โอนเงินสำเร็จ ไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.95, '{"trans_ref": "OWNREF000001"}') = 'duplicate_suspected' and pg_temp.told(9) ->> 'code' = 'DUPLICATE', pg_temp.codes(9));
+select pg_temp.chk('V5 the reference of another slip', pg_temp.store(9, '{"trans_ref": "OWNREF000001"}', E'โอนเงินสำเร็จ\nไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.95, '{"trans_ref": "OWNREF000001"}') = 'duplicate_suspected' and pg_temp.told(9) ->> 'code' = 'DUPLICATE', pg_temp.codes(9));
 select pg_temp.place(10); select pg_temp.staff();
-select pg_temp.chk('V6 the same file as another slip', pg_temp.store(10, '{}', 'โอนเงินสำเร็จ ไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.95, jsonb_build_object('file_sha256', pg_temp.sha(1))) = 'duplicate_suspected' and pg_temp.codes(10) like '%DUPLICATE_FILE%', pg_temp.codes(10));
+select pg_temp.chk('V6 the same file as another slip', pg_temp.store(10, '{}', E'โอนเงินสำเร็จ\nไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.95, jsonb_build_object('file_sha256', pg_temp.sha(1))) = 'duplicate_suspected' and pg_temp.codes(10) like '%DUPLICATE_FILE%', pg_temp.codes(10));
 select pg_temp.place(11); select pg_temp.staff();
-select pg_temp.chk('V7 a slip QR with a wrong checksum', pg_temp.store(11, '{}', 'โอนเงินสำเร็จ ไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.95, '{"crc_ok": false}') = 'suspicious_slip' and pg_temp.told(11) = pg_temp.told(1), pg_temp.codes(11));
+select pg_temp.chk('V7 a slip QR with a wrong checksum', pg_temp.store(11, '{}', E'โอนเงินสำเร็จ\nไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.95, '{"crc_ok": false}') = 'suspicious_slip' and pg_temp.told(11) = pg_temp.told(1), pg_temp.codes(11));
 select pg_temp.place(12); select pg_temp.staff();
-select pg_temp.chk('V8 the QR names another transfer than the printed reference', pg_temp.store(12, '{}', 'โอนเงินสำเร็จ ไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.95, '{"trans_ref": "SOMETHINGELSE1"}') = 'suspicious_slip' and pg_temp.codes(12) like '%QR_REF_MISMATCH%', pg_temp.codes(12));
+select pg_temp.chk('V8 the QR names another transfer than the printed reference', pg_temp.store(12, '{}', E'โอนเงินสำเร็จ\nไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.95, '{"trans_ref": "SOMETHINGELSE1"}') = 'suspicious_slip' and pg_temp.codes(12) like '%QR_REF_MISMATCH%', pg_temp.codes(12));
 
 -- =========================================================================================== refusals
 select pg_temp.place(13); select pg_temp.staff();
-select pg_temp.err_like('X1 an engine name that is not ours', $q$select pg_temp.store(13, '{}', 'โอนเงินสำเร็จ ไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.95, '{}', 'claude-haiku-5-5')$q$, 'INVALID_READING%');
-select pg_temp.err_like('X2 a confidence above 1', $q$select pg_temp.store(13, '{}', 'โอนเงินสำเร็จ ไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 1.5)$q$, 'INVALID_READING%');
+select pg_temp.err_like('X1 an engine name that is not ours', $q$select pg_temp.store(13, '{}', E'โอนเงินสำเร็จ\nไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 0.95, '{}', 'claude-haiku-5-5')$q$, 'INVALID_READING%');
+select pg_temp.err_like('X2 a confidence above 1', $q$select pg_temp.store(13, '{}', E'โอนเงินสำเร็จ\nไปยัง นาง ณัฐพร อ*** xxx-x-x1111-x', 1.5)$q$, 'INVALID_READING%');
 select pg_temp.err_like('X3 an oversized reading', $q$select pg_temp.store(13, jsonb_build_object('x', repeat('a', 7000)))$q$, 'INVALID_READING%');
 select pg_temp.err_like('X4 an unknown slip', $q$select public.finance_store_reading(gen_random_uuid(), '{}', '{}', 0.5, '', 'browser-ocr/1')$q$, 'NOT_FOUND%');
 do $$ begin for k in 1..5 loop perform pg_temp.store(13); end loop; end $$;
